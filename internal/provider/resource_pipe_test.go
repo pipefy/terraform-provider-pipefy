@@ -34,7 +34,7 @@ func TestUnit_PipeResource_CRUD(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer testtoken" {
 			w.WriteHeader(http.StatusUnauthorized)
-			io.WriteString(w, `{"errors":[{"message":"unauthorized"}]}`)
+			_, _ = io.WriteString(w, `{"errors":[{"message":"unauthorized"}]}`)
 			return
 		}
 		var gr gqlReq
@@ -47,20 +47,22 @@ func TestUnit_PipeResource_CRUD(t *testing.T) {
 		switch {
 		case strings.Contains(q, "createPipe"):
 			st.ID = "pipe_123"
-			st.Name = gr.Variables["name"].(string)
-			io.WriteString(w, `{"data":{"createPipe":{"pipe":{"id":"`+st.ID+`","name":"`+st.Name+`"}}}}`)
+			if v, ok := gr.Variables["name"].(string); ok {
+				st.Name = v
+			}
+			_, _ = io.WriteString(w, `{"data":{"createPipe":{"pipe":{"id":"`+st.ID+`","name":"`+st.Name+`"}}}}`)
 		case strings.Contains(q, "updatePipe"):
 			if v, ok := gr.Variables["name"].(string); ok {
 				st.Name = v
 			}
-			io.WriteString(w, `{"data":{"updatePipe":{"pipe":{"id":"`+st.ID+`"}}}}`)
+			_, _ = io.WriteString(w, `{"data":{"updatePipe":{"pipe":{"id":"`+st.ID+`"}}}}`)
 		case strings.Contains(q, "deletePipe"):
 			st.DeletedCt++
-			io.WriteString(w, `{"data":{"deletePipe":{"success":true}}}`)
+			_, _ = io.WriteString(w, `{"data":{"deletePipe":{"success":true}}}`)
 		case strings.Contains(q, "pipe("):
-			io.WriteString(w, `{"data":{"pipe":{"id":"`+st.ID+`","name":"`+st.Name+`"}}}`)
+			_, _ = io.WriteString(w, `{"data":{"pipe":{"id":"`+st.ID+`","name":"`+st.Name+`"}}}`)
 		default:
-			io.WriteString(w, `{"data":{}}`)
+			_, _ = io.WriteString(w, `{"data":{}}`)
 		}
 	}))
 	defer srv.Close()

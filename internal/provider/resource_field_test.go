@@ -29,7 +29,7 @@ func TestUnit_FieldResource_CRUD(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer testtoken" {
 			w.WriteHeader(http.StatusUnauthorized)
-			io.WriteString(w, `{"errors":[{"message":"unauthorized"}]}`)
+			_, _ = io.WriteString(w, `{"errors":[{"message":"unauthorized"}]}`)
 			return
 		}
 		var gr gqlReq
@@ -42,20 +42,22 @@ func TestUnit_FieldResource_CRUD(t *testing.T) {
 		switch {
 		case strings.Contains(q, "createPhaseField"):
 			st.ID = "field_123"
-			st.Label = gr.Variables["label"].(string)
-			io.WriteString(w, `{"data":{"createPhaseField":{"phase_field":{"id":"`+st.ID+`","label":"`+st.Label+`"}}}}`)
+			if v, ok := gr.Variables["label"].(string); ok {
+				st.Label = v
+			}
+			_, _ = io.WriteString(w, `{"data":{"createPhaseField":{"phase_field":{"id":"`+st.ID+`","label":"`+st.Label+`"}}}}`)
 		case strings.Contains(q, "updatePhaseField"):
 			if v, ok := gr.Variables["label"].(string); ok {
 				st.Label = v
 			}
-			io.WriteString(w, `{"data":{"updatePhaseField":{"phase_field":{"id":"`+st.ID+`"}}}}`)
+			_, _ = io.WriteString(w, `{"data":{"updatePhaseField":{"phase_field":{"id":"`+st.ID+`"}}}}`)
 		case strings.Contains(q, "deletePhaseField"):
 			st.DeletedCt++
-			io.WriteString(w, `{"data":{"deletePhaseField":{"success":true}}}`)
+			_, _ = io.WriteString(w, `{"data":{"deletePhaseField":{"success":true}}}`)
 		case strings.Contains(q, "phase("):
-			io.WriteString(w, `{"data":{"phase":{"fields":[{"id":"`+st.ID+`","label":"`+st.Label+`"}]}}}`)
+			_, _ = io.WriteString(w, `{"data":{"phase":{"fields":[{"id":"`+st.ID+`","label":"`+st.Label+`"}]}}}`)
 		default:
-			io.WriteString(w, `{"data":{}}`)
+			_, _ = io.WriteString(w, `{"data":{}}`)
 		}
 	}))
 	defer srv.Close()

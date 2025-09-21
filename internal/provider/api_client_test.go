@@ -35,7 +35,7 @@ func TestApiClient_DoGraphQL_Non2xx(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("oops"))
+		_, _ = w.Write([]byte("oops"))
 	}))
 	defer ts.Close()
 
@@ -50,7 +50,7 @@ func TestApiClient_DoGraphQL_MalformedJSON(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("not json"))
+		_, _ = w.Write([]byte("not json"))
 	}))
 	defer ts.Close()
 
@@ -65,7 +65,7 @@ func TestApiClient_DoGraphQL_GraphQLError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"errors":[{"message":"boom"}]}`))
+		_, _ = w.Write([]byte(`{"errors":[{"message":"boom"}]}`))
 	}))
 	defer ts.Close()
 
@@ -80,7 +80,7 @@ func TestApiClient_DoGraphQL_OutNil_Succeeds(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"data":{"ok":true}}`))
+		_, _ = w.Write([]byte(`{"data":{"ok":true}}`))
 	}))
 	defer ts.Close()
 
@@ -94,7 +94,7 @@ func TestApiClient_DoGraphQL_MissingData(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{}`))
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer ts.Close()
 
@@ -111,14 +111,14 @@ func TestApiClient_DoGraphQL_SuccessDecode(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer testtoken" {
 			w.WriteHeader(http.StatusBadRequest)
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"errors":[{"message":"missing auth"}]}`))
+			_, _ = w.Write([]byte(`{"errors":[{"message":"missing auth"}]}`))
 			return
 		}
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "application/json")
 		resp := map[string]any{"data": echoData{Hello: "world"}}
 		b, _ := json.Marshal(resp)
-		w.Write(b)
+		_, _ = w.Write(b)
 	}))
 	defer ts.Close()
 
