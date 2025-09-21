@@ -24,7 +24,7 @@ var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServe
 // This lets the data be referenced in test assertions with state checks.
 var testAccProtoV6ProviderFactoriesWithEcho = map[string]func() (tfprotov6.ProviderServer, error){
 	"pipefy": providerserver.NewProtocol6WithError(New("test")()),
-	"echo":        echoprovider.NewProviderServer(),
+	"echo":   echoprovider.NewProviderServer(),
 }
 
 func testAccPreCheck(t *testing.T) {

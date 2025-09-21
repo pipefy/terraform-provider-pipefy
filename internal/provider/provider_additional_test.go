@@ -37,4 +37,3 @@ func TestProvider_Schema_HasAttributes(t *testing.T) {
 		t.Fatalf("expected token_url attribute in provider schema")
 	}
 }
-
