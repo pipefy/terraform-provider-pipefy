@@ -33,15 +33,17 @@ func (r *PhaseResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Phase resource",
 		Attributes: map[string]schema.Attribute{
-			"id": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"id":      schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"pipe_id": schema.StringAttribute{Required: true},
-			"name": schema.StringAttribute{Required: true},
+			"name":    schema.StringAttribute{Required: true},
 		},
 	}
 }
 
 func (r *PhaseResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil { return }
+	if req.ProviderData == nil {
+		return
+	}
 	api, ok := req.ProviderData.(*ApiClient)
 	if !ok {
 		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *ApiClient, got %T", req.ProviderData))
@@ -53,11 +55,20 @@ func (r *PhaseResource) Configure(ctx context.Context, req resource.ConfigureReq
 func (r *PhaseResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data PhaseModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
-	if resp.Diagnostics.HasError() { return }
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	mutation := "mutation($pipeId:ID!,$name:String!){ createPhase(input:{ pipe_id: $pipeId, name: $name }){ phase{ id name } } }"
 	vars := map[string]interface{}{"pipeId": data.PipeId.ValueString(), "name": data.Name.ValueString()}
-	var out struct{ CreatePhase struct{ Phase struct{ Id string `json:"id"`; Name string `json:"name"` } `json:"phase"` } `json:"createPhase"` }
+	var out struct {
+		CreatePhase struct {
+			Phase struct {
+				Id   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"phase"`
+		} `json:"createPhase"`
+	}
 	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
 		resp.Diagnostics.AddError("create phase failed", err.Error())
 		return
@@ -69,12 +80,21 @@ func (r *PhaseResource) Create(ctx context.Context, req resource.CreateRequest, 
 func (r *PhaseResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var data PhaseModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
-	if resp.Diagnostics.HasError() { return }
-	if data.Id.IsNull() || data.Id.ValueString() == "" { return }
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if data.Id.IsNull() || data.Id.ValueString() == "" {
+		return
+	}
 
 	query := "query($id:ID!){ phase(id:$id){ id name } }"
 	vars := map[string]interface{}{"id": data.Id.ValueString()}
-	var out struct{ Phase *struct{ Id string `json:"id"`; Name string `json:"name"` } `json:"phase"` }
+	var out struct {
+		Phase *struct {
+			Id   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"phase"`
+	}
 	if err := r.api.DoGraphQL(ctx, query, vars, &out); err != nil {
 		resp.Diagnostics.AddError("read phase failed", err.Error())
 		return
@@ -89,11 +109,21 @@ func (r *PhaseResource) Read(ctx context.Context, req resource.ReadRequest, resp
 func (r *PhaseResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var data PhaseModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
-	if resp.Diagnostics.HasError() { return }
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	mutation := "mutation($id:ID!,$name:String!){ updatePhase(input:{ id:$id, name:$name }){ phase{ id } } }"
 	vars := map[string]interface{}{"id": data.Id.ValueString()}
-	if !data.Name.IsNull() { vars["name"] = data.Name.ValueString() }
-	var out struct{ UpdatePhase struct{ Phase struct{ Id string `json:"id"` } `json:"phase"` } `json:"updatePhase"` }
+	if !data.Name.IsNull() {
+		vars["name"] = data.Name.ValueString()
+	}
+	var out struct {
+		UpdatePhase struct {
+			Phase struct {
+				Id string `json:"id"`
+			} `json:"phase"`
+		} `json:"updatePhase"`
+	}
 	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
 		resp.Diagnostics.AddError("update phase failed", err.Error())
 		return
@@ -104,10 +134,16 @@ func (r *PhaseResource) Update(ctx context.Context, req resource.UpdateRequest, 
 func (r *PhaseResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var data PhaseModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
-	if resp.Diagnostics.HasError() { return }
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	mutation := "mutation($id:ID!){ deletePhase(input:{ id:$id }){ success } }"
 	vars := map[string]interface{}{"id": data.Id.ValueString()}
-	var out struct{ DeletePhase struct{ Success bool `json:"success"` } `json:"deletePhase"` }
+	var out struct {
+		DeletePhase struct {
+			Success bool `json:"success"`
+		} `json:"deletePhase"`
+	}
 	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
 		resp.Diagnostics.AddError("delete phase failed", err.Error())
 		return

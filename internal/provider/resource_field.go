@@ -35,17 +35,19 @@ func (r *FieldResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Phase field resource",
 		Attributes: map[string]schema.Attribute{
-			"id": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"id":       schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"phase_id": schema.StringAttribute{Required: true},
-			"type": schema.StringAttribute{Required: true},
-			"label": schema.StringAttribute{Required: true},
+			"type":     schema.StringAttribute{Required: true},
+			"label":    schema.StringAttribute{Required: true},
 			"required": schema.BoolAttribute{Optional: true},
 		},
 	}
 }
 
 func (r *FieldResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil { return }
+	if req.ProviderData == nil {
+		return
+	}
 	api, ok := req.ProviderData.(*ApiClient)
 	if !ok {
 		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *ApiClient, got %T", req.ProviderData))
@@ -57,16 +59,27 @@ func (r *FieldResource) Configure(ctx context.Context, req resource.ConfigureReq
 func (r *FieldResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data FieldModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
-	if resp.Diagnostics.HasError() { return }
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	mutation := "mutation($phaseId:ID!,$type:ID!,$label:String!,$required:Boolean){ createPhaseField(input:{ phase_id:$phaseId, type:$type, label:$label, required:$required }){ phase_field{ id label } } }"
 	vars := map[string]interface{}{
 		"phaseId": data.PhaseId.ValueString(),
-		"type": data.Type.ValueString(),
-		"label": data.Label.ValueString(),
+		"type":    data.Type.ValueString(),
+		"label":   data.Label.ValueString(),
 	}
-	if !data.Required.IsNull() { vars["required"] = data.Required.ValueBool() }
-	var out struct{ CreatePhaseField struct{ PhaseField struct{ Id string `json:"id"`; Label string `json:"label"` } `json:"phase_field"` } `json:"createPhaseField"` }
+	if !data.Required.IsNull() {
+		vars["required"] = data.Required.ValueBool()
+	}
+	var out struct {
+		CreatePhaseField struct {
+			PhaseField struct {
+				Id    string `json:"id"`
+				Label string `json:"label"`
+			} `json:"phase_field"`
+		} `json:"createPhaseField"`
+	}
 	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
 		resp.Diagnostics.AddError("create field failed", err.Error())
 		return
@@ -78,13 +91,24 @@ func (r *FieldResource) Create(ctx context.Context, req resource.CreateRequest, 
 func (r *FieldResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var data FieldModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
-	if resp.Diagnostics.HasError() { return }
-	if data.Id.IsNull() || data.Id.ValueString() == "" { return }
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if data.Id.IsNull() || data.Id.ValueString() == "" {
+		return
+	}
 
 	// Query the phase to get the field information
 	query := "query($phaseId:ID!){ phase(id:$phaseId){ fields{ id label } } }"
 	vars := map[string]interface{}{"phaseId": data.PhaseId.ValueString()}
-	var out struct{ Phase *struct{ Fields []struct{ Id string `json:"id"`; Label string `json:"label"` } `json:"fields"` } `json:"phase"` }
+	var out struct {
+		Phase *struct {
+			Fields []struct {
+				Id    string `json:"id"`
+				Label string `json:"label"`
+			} `json:"fields"`
+		} `json:"phase"`
+	}
 	if err := r.api.DoGraphQL(ctx, query, vars, &out); err != nil {
 		resp.Diagnostics.AddError("read field failed", err.Error())
 		return
@@ -95,7 +119,10 @@ func (r *FieldResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	}
 
 	// Find the field with matching ID
-	var foundField *struct{ Id string `json:"id"`; Label string `json:"label"` }
+	var foundField *struct {
+		Id    string `json:"id"`
+		Label string `json:"label"`
+	}
 	for _, field := range out.Phase.Fields {
 		if field.Id == data.Id.ValueString() {
 			foundField = &field
@@ -114,12 +141,24 @@ func (r *FieldResource) Read(ctx context.Context, req resource.ReadRequest, resp
 func (r *FieldResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var data FieldModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
-	if resp.Diagnostics.HasError() { return }
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	mutation := "mutation($id:ID!,$label:String!,$required:Boolean){ updatePhaseField(input:{ id:$id, label:$label, required:$required }){ phase_field{ id } } }"
 	vars := map[string]interface{}{"id": data.Id.ValueString()}
-	if !data.Label.IsNull() { vars["label"] = data.Label.ValueString() }
-	if !data.Required.IsNull() { vars["required"] = data.Required.ValueBool() }
-	var out struct{ UpdatePhaseField struct{ PhaseField struct{ Id string `json:"id"` } `json:"phase_field"` } `json:"updatePhaseField"` }
+	if !data.Label.IsNull() {
+		vars["label"] = data.Label.ValueString()
+	}
+	if !data.Required.IsNull() {
+		vars["required"] = data.Required.ValueBool()
+	}
+	var out struct {
+		UpdatePhaseField struct {
+			PhaseField struct {
+				Id string `json:"id"`
+			} `json:"phase_field"`
+		} `json:"updatePhaseField"`
+	}
 	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
 		resp.Diagnostics.AddError("update field failed", err.Error())
 		return
@@ -130,10 +169,16 @@ func (r *FieldResource) Update(ctx context.Context, req resource.UpdateRequest, 
 func (r *FieldResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var data FieldModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
-	if resp.Diagnostics.HasError() { return }
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	mutation := "mutation($id:ID!){ deletePhaseField(input:{ id:$id }){ success } }"
 	vars := map[string]interface{}{"id": data.Id.ValueString()}
-	var out struct{ DeletePhaseField struct{ Success bool `json:"success"` } `json:"deletePhaseField"` }
+	var out struct {
+		DeletePhaseField struct {
+			Success bool `json:"success"`
+		} `json:"deletePhaseField"`
+	}
 	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
 		resp.Diagnostics.AddError("delete field failed", err.Error())
 		return

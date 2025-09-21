@@ -40,15 +40,17 @@ func (r *PipeResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
-			"name": schema.StringAttribute{Required: true},
+			"name":            schema.StringAttribute{Required: true},
 			"organization_id": schema.StringAttribute{Required: true},
-			"public": schema.BoolAttribute{Optional: true},
+			"public":          schema.BoolAttribute{Optional: true},
 		},
 	}
 }
 
 func (r *PipeResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil { return }
+	if req.ProviderData == nil {
+		return
+	}
 	api, ok := req.ProviderData.(*ApiClient)
 	if !ok {
 		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *ApiClient, got %T", req.ProviderData))
@@ -60,14 +62,23 @@ func (r *PipeResource) Configure(ctx context.Context, req resource.ConfigureRequ
 func (r *PipeResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data PipeModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
-	if resp.Diagnostics.HasError() { return }
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	mutation := "mutation($name:String!,$orgId:ID!){ createPipe(input:{name:$name, organization_id:$orgId}){ clientMutationId pipe{ id name } } }"
 	vars := map[string]interface{}{
-		"name": data.Name.ValueString(),
+		"name":  data.Name.ValueString(),
 		"orgId": data.OrganizationId.ValueString(),
 	}
-	var out struct{ CreatePipe struct{ Pipe struct{ Id string `json:"id"`; Name string `json:"name"` } `json:"pipe"` } `json:"createPipe"` }
+	var out struct {
+		CreatePipe struct {
+			Pipe struct {
+				Id   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"pipe"`
+		} `json:"createPipe"`
+	}
 	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
 		resp.Diagnostics.AddError("create pipe failed", err.Error())
 		return
@@ -79,12 +90,21 @@ func (r *PipeResource) Create(ctx context.Context, req resource.CreateRequest, r
 func (r *PipeResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var data PipeModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
-	if resp.Diagnostics.HasError() { return }
-	if data.Id.IsNull() || data.Id.ValueString() == "" { return }
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if data.Id.IsNull() || data.Id.ValueString() == "" {
+		return
+	}
 
 	query := "query($id:ID!){ pipe(id:$id){ id name } }"
 	vars := map[string]interface{}{"id": data.Id.ValueString()}
-	var out struct{ Pipe *struct{ Id string `json:"id"`; Name string `json:"name"` } `json:"pipe"` }
+	var out struct {
+		Pipe *struct {
+			Id   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"pipe"`
+	}
 	if err := r.api.DoGraphQL(ctx, query, vars, &out); err != nil {
 		resp.Diagnostics.AddError("read pipe failed", err.Error())
 		return
@@ -99,14 +119,26 @@ func (r *PipeResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 func (r *PipeResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var data PipeModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
-	if resp.Diagnostics.HasError() { return }
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	mutation := "mutation($id:ID!,$name:String,$public:Boolean){ updatePipe(input:{id:$id, name:$name, public:$public}){ pipe{ id } } }"
 	vars := map[string]interface{}{
 		"id": data.Id.ValueString(),
 	}
-	if !data.Name.IsNull() { vars["name"] = data.Name.ValueString() }
-	if !data.Public.IsNull() { vars["public"] = data.Public.ValueBool() }
-	var out struct{ UpdatePipe struct{ Pipe struct{ Id string `json:"id"` } `json:"pipe"` } `json:"updatePipe"` }
+	if !data.Name.IsNull() {
+		vars["name"] = data.Name.ValueString()
+	}
+	if !data.Public.IsNull() {
+		vars["public"] = data.Public.ValueBool()
+	}
+	var out struct {
+		UpdatePipe struct {
+			Pipe struct {
+				Id string `json:"id"`
+			} `json:"pipe"`
+		} `json:"updatePipe"`
+	}
 	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
 		resp.Diagnostics.AddError("update pipe failed", err.Error())
 		return
@@ -117,10 +149,16 @@ func (r *PipeResource) Update(ctx context.Context, req resource.UpdateRequest, r
 func (r *PipeResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var data PipeModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
-	if resp.Diagnostics.HasError() { return }
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	mutation := "mutation($id:ID!){ deletePipe(input:{id:$id}){ success } }"
 	vars := map[string]interface{}{"id": data.Id.ValueString()}
-	var out struct{ DeletePipe struct{ Success bool `json:"success"` } `json:"deletePipe"` }
+	var out struct {
+		DeletePipe struct {
+			Success bool `json:"success"`
+		} `json:"deletePipe"`
+	}
 	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
 		resp.Diagnostics.AddError("delete pipe failed", err.Error())
 		return
