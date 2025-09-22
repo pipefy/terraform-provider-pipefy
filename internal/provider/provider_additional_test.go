@@ -1,28 +1,29 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package provider
+package provider_test
 
 import (
 	"context"
 	"testing"
 
 	frameworkprovider "github.com/hashicorp/terraform-plugin-framework/provider"
+	providerpkg "github.com/pipefy/terraform-provider-pipefy/internal/provider"
 )
 
 func TestProvider_Metadata_TypeName(t *testing.T) {
-	p := &ScaffoldingProvider{version: "test"}
+	prov := providerpkg.New("test")()
 	resp := &frameworkprovider.MetadataResponse{}
-	p.Metadata(context.Background(), frameworkprovider.MetadataRequest{}, resp)
+	prov.Metadata(context.Background(), frameworkprovider.MetadataRequest{}, resp)
 	if resp.TypeName != "pipefy" {
 		t.Fatalf("expected provider type name 'pipefy', got %q", resp.TypeName)
 	}
 }
 
 func TestProvider_Schema_HasAttributes(t *testing.T) {
-	p := &ScaffoldingProvider{version: "test"}
+	prov := providerpkg.New("test")()
 	resp := &frameworkprovider.SchemaResponse{}
-	p.Schema(context.Background(), frameworkprovider.SchemaRequest{}, resp)
+	prov.Schema(context.Background(), frameworkprovider.SchemaRequest{}, resp)
 	attrs := resp.Schema.Attributes
 	if _, ok := attrs["endpoint"]; !ok {
 		t.Fatalf("expected endpoint attribute in provider schema")

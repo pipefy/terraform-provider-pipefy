@@ -15,6 +15,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
+	"github.com/pipefy/terraform-provider-pipefy/internal/provider/resources"
 	"golang.org/x/oauth2/clientcredentials"
 )
 
@@ -134,7 +136,7 @@ func (p *ScaffoldingProvider) Configure(ctx context.Context, req provider.Config
 		return
 	}
 
-	api := &ApiClient{HTTP: httpClient, Endpoint: endpoint, Token: apiToken}
+	api := &client.ApiClient{HTTP: httpClient, Endpoint: endpoint, Token: apiToken}
 
 	resp.DataSourceData = api
 	resp.ResourceData = api
@@ -142,9 +144,9 @@ func (p *ScaffoldingProvider) Configure(ctx context.Context, req provider.Config
 
 func (p *ScaffoldingProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
-		NewPipeResource,
-		NewPhaseResource,
-		NewFieldResource,
+		resources.NewPipeResource,
+		resources.NewPhaseResource,
+		resources.NewFieldResource,
 	}
 }
 

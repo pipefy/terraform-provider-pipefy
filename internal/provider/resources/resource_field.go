@@ -1,7 +1,7 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package provider
+package resources
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
 )
 
 var _ resource.Resource = &FieldResource{}
@@ -20,7 +21,7 @@ var _ resource.ResourceWithImportState = &FieldResource{}
 
 func NewFieldResource() resource.Resource { return &FieldResource{} }
 
-type FieldResource struct{ api *ApiClient }
+type FieldResource struct{ api *client.ApiClient }
 
 type FieldModel struct {
 	Id       types.String `tfsdk:"id"`
@@ -51,7 +52,7 @@ func (r *FieldResource) Configure(ctx context.Context, req resource.ConfigureReq
 	if req.ProviderData == nil {
 		return
 	}
-	api, ok := req.ProviderData.(*ApiClient)
+	api, ok := req.ProviderData.(*client.ApiClient)
 	if !ok {
 		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *ApiClient, got %T", req.ProviderData))
 		return
