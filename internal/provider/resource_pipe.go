@@ -86,7 +86,46 @@ func (r *PipeResource) Create(ctx context.Context, req resource.CreateRequest, r
 		resp.Diagnostics.AddError("create pipe failed", err.Error())
 		return
 	}
-	data.Id = types.StringValue(out.CreatePipe.Pipe.Id)
+
+	pipeId := out.CreatePipe.Pipe.Id
+	data.Id = types.StringValue(pipeId)
+	// TODO:When creating a pipe it creates 3 phases for it
+	// so we delete them.
+	// We need to find a better way to do this.
+	phasesQuery := "query($id:ID!){ pipe(id:$id){ id phases { id } } }"
+	phasesVars := map[string]interface{}{"id": pipeId}
+	var phasesOut struct {
+		Pipe struct {
+			Id     string `json:"id"`
+			Phases []struct {
+				Id string `json:"id"`
+			} `json:"phases"`
+		} `json:"pipe"`
+	}
+	if err := r.api.DoGraphQL(ctx, phasesQuery, phasesVars, &phasesOut); err != nil {
+		resp.Diagnostics.AddError("query pipe phases failed", err.Error())
+		return
+	}
+
+	for _, phase := range phasesOut.Pipe.Phases {
+		deleteMutation := "mutation($id:ID!){ deletePhase(input:{id:$id}){ clientMutationId success } }"
+		deleteVars := map[string]interface{}{"id": phase.Id}
+		var deleteOut struct {
+			DeletePhase struct {
+				ClientMutationId string `json:"clientMutationId"`
+				Success          bool   `json:"success"`
+			} `json:"deletePhase"`
+		}
+		if err := r.api.DoGraphQL(ctx, deleteMutation, deleteVars, &deleteOut); err != nil {
+			resp.Diagnostics.AddError("delete phase failed", fmt.Sprintf("failed to delete phase %s: %s", phase.Id, err.Error()))
+			return
+		}
+		if !deleteOut.DeletePhase.Success {
+			resp.Diagnostics.AddError("delete phase failed", fmt.Sprintf("failed to delete phase %s: operation returned success=false", phase.Id))
+			return
+		}
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -112,7 +151,7 @@ func (r *PipeResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		resp.Diagnostics.AddError("read pipe failed", err.Error())
 		return
 	}
-	if out.Pipe == nil { // pipe was deleted outside
+	if out.Pipe == nil {
 		resp.State.RemoveResource(ctx)
 		return
 	}

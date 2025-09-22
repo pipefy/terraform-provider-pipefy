@@ -24,9 +24,11 @@ type gqlReq struct {
 }
 
 type pipeState struct {
-	ID        string
-	Name      string
-	DeletedCt int
+	ID            string
+	Name          string
+	DeletedCt     int
+	PhaseDelCt    int
+	PhasesQueried bool
 }
 
 func TestUnit_PipeResource_CRUD(t *testing.T) {
@@ -59,6 +61,12 @@ func TestUnit_PipeResource_CRUD(t *testing.T) {
 		case strings.Contains(q, "deletePipe"):
 			st.DeletedCt++
 			_, _ = io.WriteString(w, `{"data":{"deletePipe":{"success":true}}}`)
+		case strings.Contains(q, "deletePhase"):
+			st.PhaseDelCt++
+			_, _ = io.WriteString(w, `{"data":{"deletePhase":{"clientMutationId":"","success":true}}}`)
+		case strings.Contains(q, "phases"):
+			st.PhasesQueried = true
+			_, _ = io.WriteString(w, `{"data":{"pipe":{"id":"`+st.ID+`","phases":[{"id":"phase_1"},{"id":"phase_2"}]}}}`)
 		case strings.Contains(q, "pipe("):
 			_, _ = io.WriteString(w, `{"data":{"pipe":{"id":"`+st.ID+`","name":"`+st.Name+`"}}}`)
 		default:
@@ -131,5 +139,11 @@ func TestUnit_PipeResource_CRUD(t *testing.T) {
 
 	if st.DeletedCt == 0 {
 		t.Fatalf("expected delete mutation to be called")
+	}
+	if !st.PhasesQueried {
+		t.Fatalf("expected phases query to be called")
+	}
+	if st.PhaseDelCt != 2 {
+		t.Fatalf("expected 2 phase deletions, got %d", st.PhaseDelCt)
 	}
 }
