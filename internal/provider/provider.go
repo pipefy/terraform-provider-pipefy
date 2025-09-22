@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
+	"github.com/pipefy/terraform-provider-pipefy/internal/provider/datasources"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/resources"
 	"golang.org/x/oauth2/clientcredentials"
 )
@@ -155,7 +156,10 @@ func (p *ScaffoldingProvider) EphemeralResources(ctx context.Context) []func() e
 }
 
 func (p *ScaffoldingProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
-	return []func() datasource.DataSource{}
+	return []func() datasource.DataSource{
+		datasources.NewPipeDataSource,
+		datasources.NewPhaseDataSource,
+	}
 }
 
 func New(version string) func() provider.Provider {
