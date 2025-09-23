@@ -19,9 +19,10 @@ import (
 )
 
 type fieldState struct {
-	ID        string
-	Label     string
-	DeletedCt int
+	ID         string
+	InternalId string
+	Label      string
+	DeletedCt  int
 }
 
 func TestUnit_FieldResource_CRUD(t *testing.T) {
@@ -42,20 +43,21 @@ func TestUnit_FieldResource_CRUD(t *testing.T) {
 		switch {
 		case strings.Contains(q, "createPhaseField"):
 			st.ID = "field_123"
+			st.InternalId = "456"
 			if v, ok := gr.Variables["label"].(string); ok {
 				st.Label = v
 			}
-			_, _ = io.WriteString(w, `{"data":{"createPhaseField":{"phase_field":{"id":"`+st.ID+`","label":"`+st.Label+`"}}}}`)
+			_, _ = io.WriteString(w, `{"data":{"createPhaseField":{"phase_field":{"id":"`+st.ID+`","internal_id":"`+st.InternalId+`","label":"`+st.Label+`"}}}}`)
 		case strings.Contains(q, "updatePhaseField"):
 			if v, ok := gr.Variables["label"].(string); ok {
 				st.Label = v
 			}
-			_, _ = io.WriteString(w, `{"data":{"updatePhaseField":{"phase_field":{"id":"`+st.ID+`"}}}}`)
+			_, _ = io.WriteString(w, `{"data":{"updatePhaseField":{"phase_field":{"id":"`+st.ID+`","internal_id":"`+st.InternalId+`"}}}}`)
 		case strings.Contains(q, "deletePhaseField"):
 			st.DeletedCt++
 			_, _ = io.WriteString(w, `{"data":{"deletePhaseField":{"success":true}}}`)
 		case strings.Contains(q, "phase("):
-			_, _ = io.WriteString(w, `{"data":{"phase":{"fields":[{"id":"`+st.ID+`","label":"`+st.Label+`"}]}}}`)
+			_, _ = io.WriteString(w, `{"data":{"phase":{"fields":[{"id":"`+st.ID+`","internal_id":"`+st.InternalId+`","label":"`+st.Label+`"}]}}}`)
 		default:
 			_, _ = io.WriteString(w, `{"data":{}}`)
 		}
@@ -125,6 +127,11 @@ func TestUnit_FieldResource_CRUD(t *testing.T) {
 					),
 					statecheck.ExpectKnownValue(
 						"pipefy_field.test",
+						tfjsonpath.New("internal_id"),
+						knownvalue.StringExact("456"),
+					),
+					statecheck.ExpectKnownValue(
+						"pipefy_field.test",
 						tfjsonpath.New("label"),
 						knownvalue.StringExact("My Field"),
 					),
@@ -133,6 +140,11 @@ func TestUnit_FieldResource_CRUD(t *testing.T) {
 			{
 				Config: strings.ReplaceAll(config, "My Field", "Renamed Field"),
 				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(
+						"pipefy_field.test",
+						tfjsonpath.New("internal_id"),
+						knownvalue.StringExact("456"),
+					),
 					statecheck.ExpectKnownValue(
 						"pipefy_field.test",
 						tfjsonpath.New("label"),
