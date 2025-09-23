@@ -28,3 +28,4 @@ Phase field resource
 ### Read-Only
 
 - `id` (String) The ID of this resource.
+- `internal_id` (String)

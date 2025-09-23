@@ -5,6 +5,6 @@ provider "terraform.local/pipefy/pipefy" {
   version     = "0.0.1"
   constraints = "0.0.1"
   hashes = [
-    "h1:M6DQapaY1NdJO4tUXY9TlXl/B6y8ldJck9PjVlOcVQ4=",
+    "h1:K4WufQnGqWuFuAk2dRlGEBZL0uE5pRRBOW9Jk/kFv0s=",
   ]
 }
