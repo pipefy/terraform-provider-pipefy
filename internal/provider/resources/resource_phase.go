@@ -64,7 +64,7 @@ func (r *PhaseResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 
 	mutation := "mutation($pipeId:ID!,$name:String!){ createPhase(input:{ pipe_id: $pipeId, name: $name }){ phase{ id name } } }"
-	vars := map[string]interface{}{"pipeId": data.PipeId.ValueString(), "name": data.Name.ValueString()}
+	vars := map[string]any{"pipeId": data.PipeId.ValueString(), "name": data.Name.ValueString()}
 	var out struct {
 		CreatePhase struct {
 			Phase struct {
@@ -92,7 +92,7 @@ func (r *PhaseResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	}
 
 	query := "query($id:ID!){ phase(id:$id){ id name } }"
-	vars := map[string]interface{}{"id": data.Id.ValueString()}
+	vars := map[string]any{"id": data.Id.ValueString()}
 	var out struct {
 		Phase *struct {
 			Id   string `json:"id"`
@@ -117,7 +117,7 @@ func (r *PhaseResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 	mutation := "mutation($id:ID!,$name:String!){ updatePhase(input:{ id:$id, name:$name }){ phase{ id } } }"
-	vars := map[string]interface{}{"id": data.Id.ValueString()}
+	vars := map[string]any{"id": data.Id.ValueString()}
 	if !data.Name.IsNull() {
 		vars["name"] = data.Name.ValueString()
 	}
@@ -142,7 +142,7 @@ func (r *PhaseResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		return
 	}
 	mutation := "mutation($id:ID!){ deletePhase(input:{ id:$id }){ success } }"
-	vars := map[string]interface{}{"id": data.Id.ValueString()}
+	vars := map[string]any{"id": data.Id.ValueString()}
 	var out struct {
 		DeletePhase struct {
 			Success bool `json:"success"`

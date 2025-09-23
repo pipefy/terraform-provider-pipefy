@@ -71,7 +71,7 @@ func (r *FieldResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 
 	mutation := "mutation($phaseId:ID!,$type:ID!,$label:String!,$required:Boolean){ createPhaseField(input:{ phase_id:$phaseId, type:$type, label:$label, required:$required }){ phase_field{ id internal_id label } } }"
-	vars := map[string]interface{}{
+	vars := map[string]any{
 		"phaseId": data.PhaseId.ValueString(),
 		"type":    data.Type.ValueString(),
 		"label":   data.Label.ValueString(),
@@ -109,7 +109,7 @@ func (r *FieldResource) Read(ctx context.Context, req resource.ReadRequest, resp
 
 	// Query the phase to get the field information
 	query := "query($phaseId:ID!){ phase(id:$phaseId){ fields{ id internal_id label } } }"
-	vars := map[string]interface{}{"phaseId": data.PhaseId.ValueString()}
+	vars := map[string]any{"phaseId": data.PhaseId.ValueString()}
 	var out struct {
 		Phase *struct {
 			Fields []struct {
@@ -157,7 +157,7 @@ func (r *FieldResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 	mutation := "mutation($id:ID!,$label:String!,$required:Boolean){ updatePhaseField(input:{ id:$id, label:$label, required:$required }){ phase_field{ id internal_id } } }"
-	vars := map[string]interface{}{"id": data.Id.ValueString()}
+	vars := map[string]any{"id": data.Id.ValueString()}
 	if !data.Label.IsNull() {
 		vars["label"] = data.Label.ValueString()
 	}
@@ -189,7 +189,7 @@ func (r *FieldResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 
 	// Fetch repo_id from the phase
 	phaseQuery := "query($id:ID!){ phase(id:$id){ repo_id } }"
-	phaseVars := map[string]interface{}{"id": data.PhaseId.ValueString()}
+	phaseVars := map[string]any{"id": data.PhaseId.ValueString()}
 	var phaseOut struct {
 		Phase *struct {
 			RepoId int `json:"repo_id"`
@@ -211,7 +211,7 @@ func (r *FieldResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 
 	// Fetch pipe uuid with repo_id
 	pipeQuery := "query($id:ID!){ pipe(id:$id){ uuid } }"
-	pipeVars := map[string]interface{}{"id": repoIDStr}
+	pipeVars := map[string]any{"id": repoIDStr}
 	var pipeOut struct {
 		Pipe *struct {
 			Uuid string `json:"uuid"`
@@ -227,7 +227,7 @@ func (r *FieldResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	}
 
 	mutation := "mutation($id:ID!,$pipeUuid:ID!){ deletePhaseField(input:{ id:$id, pipeUuid:$pipeUuid }){ success } }"
-	vars := map[string]interface{}{"id": data.Id.ValueString(), "pipeUuid": pipeOut.Pipe.Uuid}
+	vars := map[string]any{"id": data.Id.ValueString(), "pipeUuid": pipeOut.Pipe.Uuid}
 	var out struct {
 		DeletePhaseField struct {
 			Success bool `json:"success"`

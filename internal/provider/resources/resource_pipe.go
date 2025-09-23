@@ -71,7 +71,7 @@ func (r *PipeResource) Create(ctx context.Context, req resource.CreateRequest, r
 	}
 
 	mutation := "mutation($name:String!,$orgId:ID!){ createPipe(input:{name:$name, organization_id:$orgId}){ clientMutationId pipe{ id name } } }"
-	vars := map[string]interface{}{
+	vars := map[string]any{
 		"name":  data.Name.ValueString(),
 		"orgId": data.OrganizationId.ValueString(),
 	}
@@ -94,7 +94,7 @@ func (r *PipeResource) Create(ctx context.Context, req resource.CreateRequest, r
 	// so we delete them.
 	// We need to find a better way to do this.
 	phasesQuery := "query($id:ID!){ pipe(id:$id){ id phases { id } } }"
-	phasesVars := map[string]interface{}{"id": pipeId}
+	phasesVars := map[string]any{"id": pipeId}
 	var phasesOut struct {
 		Pipe struct {
 			Id     string `json:"id"`
@@ -110,7 +110,7 @@ func (r *PipeResource) Create(ctx context.Context, req resource.CreateRequest, r
 
 	for _, phase := range phasesOut.Pipe.Phases {
 		deleteMutation := "mutation($id:ID!){ deletePhase(input:{id:$id}){ clientMutationId success } }"
-		deleteVars := map[string]interface{}{"id": phase.Id}
+		deleteVars := map[string]any{"id": phase.Id}
 		var deleteOut struct {
 			DeletePhase struct {
 				ClientMutationId string `json:"clientMutationId"`
@@ -141,7 +141,7 @@ func (r *PipeResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	}
 
 	query := "query($id:ID!){ pipe(id:$id){ id name } }"
-	vars := map[string]interface{}{"id": data.Id.ValueString()}
+	vars := map[string]any{"id": data.Id.ValueString()}
 	var out struct {
 		Pipe *struct {
 			Id   string `json:"id"`
@@ -166,7 +166,7 @@ func (r *PipeResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 	mutation := "mutation($id:ID!,$name:String,$public:Boolean){ updatePipe(input:{id:$id, name:$name, public:$public}){ pipe{ id } } }"
-	vars := map[string]interface{}{
+	vars := map[string]any{
 		"id": data.Id.ValueString(),
 	}
 	if !data.Name.IsNull() {
@@ -196,7 +196,7 @@ func (r *PipeResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		return
 	}
 	mutation := "mutation($id:ID!){ deletePipe(input:{id:$id}){ success } }"
-	vars := map[string]interface{}{"id": data.Id.ValueString()}
+	vars := map[string]any{"id": data.Id.ValueString()}
 	var out struct {
 		DeletePipe struct {
 			Success bool `json:"success"`
