@@ -6,6 +6,7 @@ package resources
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -185,8 +186,48 @@ func (r *FieldResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation($id:ID!){ deletePhaseField(input:{ id:$id }){ success } }"
-	vars := map[string]interface{}{"id": data.Id.ValueString()}
+
+	// Fetch repo_id from the phase
+	phaseQuery := "query($id:ID!){ phase(id:$id){ repo_id } }"
+	phaseVars := map[string]interface{}{"id": data.PhaseId.ValueString()}
+	var phaseOut struct {
+		Phase *struct {
+			RepoId int `json:"repo_id"`
+		} `json:"phase"`
+	}
+	if err := r.api.DoGraphQL(ctx, phaseQuery, phaseVars, &phaseOut); err != nil {
+		resp.Diagnostics.AddError("delete field failed", fmt.Sprintf("failed to fetch phase repo_id: %s", err.Error()))
+		return
+	}
+	if phaseOut.Phase == nil {
+		resp.Diagnostics.AddError("delete field failed", "could not resolve phase from phase query")
+		return
+	}
+	repoIDStr := strconv.FormatInt(int64(phaseOut.Phase.RepoId), 10)
+	if repoIDStr == "0" {
+		resp.Diagnostics.AddError("delete field failed", "could not resolve valid phase repo_id from phase query")
+		return
+	}
+
+	// Fetch pipe uuid with repo_id
+	pipeQuery := "query($id:ID!){ pipe(id:$id){ uuid } }"
+	pipeVars := map[string]interface{}{"id": repoIDStr}
+	var pipeOut struct {
+		Pipe *struct {
+			Uuid string `json:"uuid"`
+		} `json:"pipe"`
+	}
+	if err := r.api.DoGraphQL(ctx, pipeQuery, pipeVars, &pipeOut); err != nil {
+		resp.Diagnostics.AddError("delete field failed", fmt.Sprintf("failed to fetch pipe uuid: %s", err.Error()))
+		return
+	}
+	if pipeOut.Pipe == nil || pipeOut.Pipe.Uuid == "" {
+		resp.Diagnostics.AddError("delete field failed", "could not resolve pipe uuid from pipe query")
+		return
+	}
+
+	mutation := "mutation($id:ID!,$pipeUuid:ID!){ deletePhaseField(input:{ id:$id, pipeUuid:$pipeUuid }){ success } }"
+	vars := map[string]interface{}{"id": data.Id.ValueString(), "pipeUuid": pipeOut.Pipe.Uuid}
 	var out struct {
 		DeletePhaseField struct {
 			Success bool `json:"success"`
