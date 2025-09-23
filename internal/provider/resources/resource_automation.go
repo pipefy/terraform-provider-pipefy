@@ -93,7 +93,7 @@ func (r *AutomationResource) Create(ctx context.Context, req resource.CreateRequ
 	if !data.ActionParams.IsNull() && data.ActionParams.ValueString() != "" {
 		var ap any
 		// Accept raw JSON string for action_params
-		if err := jsonUnmarshalString(data.ActionParams.ValueString(), &ap); err != nil {
+		if err := json.Unmarshal([]byte(data.ActionParams.ValueString()), &ap); err != nil {
 			resp.Diagnostics.AddError("invalid action_params JSON", err.Error())
 			return
 		}
@@ -101,7 +101,7 @@ func (r *AutomationResource) Create(ctx context.Context, req resource.CreateRequ
 	}
 	if !data.Condition.IsNull() && data.Condition.ValueString() != "" {
 		var cond any
-		if err := jsonUnmarshalString(data.Condition.ValueString(), &cond); err != nil {
+		if err := json.Unmarshal([]byte(data.Condition.ValueString()), &cond); err != nil {
 			resp.Diagnostics.AddError("invalid condition JSON", err.Error())
 			return
 		}
@@ -202,7 +202,7 @@ func (r *AutomationResource) Update(ctx context.Context, req resource.UpdateRequ
 	}
 	if !data.ActionParams.IsNull() && data.ActionParams.ValueString() != "" {
 		var ap any
-		if err := jsonUnmarshalString(data.ActionParams.ValueString(), &ap); err != nil {
+		if err := json.Unmarshal([]byte(data.ActionParams.ValueString()), &ap); err != nil {
 			resp.Diagnostics.AddError("invalid action_params JSON", err.Error())
 			return
 		}
@@ -210,7 +210,7 @@ func (r *AutomationResource) Update(ctx context.Context, req resource.UpdateRequ
 	}
 	if !data.Condition.IsNull() && data.Condition.ValueString() != "" {
 		var cond any
-		if err := jsonUnmarshalString(data.Condition.ValueString(), &cond); err != nil {
+		if err := json.Unmarshal([]byte(data.Condition.ValueString()), &cond); err != nil {
 			resp.Diagnostics.AddError("invalid condition JSON", err.Error())
 			return
 		}
@@ -262,17 +262,3 @@ func (r *AutomationResource) Delete(ctx context.Context, req resource.DeleteRequ
 func (r *AutomationResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
-
-// jsonUnmarshalString unmarshals a JSON string into v
-func jsonUnmarshalString(s string, v any) error {
-	var raw any
-	// Use json package via a local tiny wrapper to keep imports consistent with file style
-	return jsonUnmarshal([]byte(s), v, &raw)
-}
-
-// jsonUnmarshal is a tiny indirection to avoid importing encoding/json at top for clarity across files
-func jsonUnmarshal(b []byte, v any, _ *any) error {
-	return json.Unmarshal(b, v)
-}
-
-// local import to support JSON helpers
