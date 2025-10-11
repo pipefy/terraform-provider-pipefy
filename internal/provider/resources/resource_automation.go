@@ -31,6 +31,7 @@ type AutomationModel struct {
 	ActionId     types.String `tfsdk:"action_id"`
 	EventRepoId  types.String `tfsdk:"event_repo_id"`
 	ActionRepoId types.String `tfsdk:"action_repo_id"`
+	EventParams  types.String `tfsdk:"event_params"`
 	ActionParams types.String `tfsdk:"action_params"`
 	Condition    types.String `tfsdk:"condition"`
 	Active       types.Bool   `tfsdk:"active"`
@@ -56,6 +57,7 @@ func (r *AutomationResource) Schema(ctx context.Context, req resource.SchemaRequ
 			"event_repo_id":  schema.StringAttribute{Required: true},
 			"action_repo_id": schema.StringAttribute{Required: true},
 			// JSON strings for complex structures to avoid over-modeling in Terraform schema
+			"event_params":  schema.StringAttribute{Optional: true},
 			"action_params": schema.StringAttribute{Optional: true},
 			"condition":     schema.StringAttribute{Optional: true},
 			"active":        schema.BoolAttribute{Optional: true},
@@ -89,6 +91,15 @@ func (r *AutomationResource) Create(ctx context.Context, req resource.CreateRequ
 		"event_id":       data.EventId.ValueString(),
 		"event_repo_id":  data.EventRepoId.ValueString(),
 		"action_repo_id": data.ActionRepoId.ValueString(),
+	}
+	if !data.EventParams.IsNull() && data.EventParams.ValueString() != "" {
+		var ep any
+		// Accept raw JSON string for event_params
+		if err := json.Unmarshal([]byte(data.EventParams.ValueString()), &ep); err != nil {
+			resp.Diagnostics.AddError("invalid event_params JSON", err.Error())
+			return
+		}
+		input["event_params"] = ep
 	}
 	if !data.ActionParams.IsNull() && data.ActionParams.ValueString() != "" {
 		var ap any
@@ -199,6 +210,14 @@ func (r *AutomationResource) Update(ctx context.Context, req resource.UpdateRequ
 	}
 	if !data.ActionRepoId.IsNull() {
 		input["action_repo_id"] = data.ActionRepoId.ValueString()
+	}
+	if !data.EventParams.IsNull() && data.EventParams.ValueString() != "" {
+		var ep any
+		if err := json.Unmarshal([]byte(data.EventParams.ValueString()), &ep); err != nil {
+			resp.Diagnostics.AddError("invalid event_params JSON", err.Error())
+			return
+		}
+		input["event_params"] = ep
 	}
 	if !data.ActionParams.IsNull() && data.ActionParams.ValueString() != "" {
 		var ap any

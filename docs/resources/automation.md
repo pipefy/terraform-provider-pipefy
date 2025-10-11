@@ -28,6 +28,7 @@ Automation resource
 - `action_params` (String)
 - `active` (Boolean)
 - `condition` (String)
+- `event_params` (String)
 
 ### Read-Only
 

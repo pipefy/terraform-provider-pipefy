@@ -56,6 +56,10 @@ func TestUnit_FieldResource_CRUD(t *testing.T) {
 		case strings.Contains(q, "deletePhaseField"):
 			st.DeletedCt++
 			_, _ = io.WriteString(w, `{"data":{"deletePhaseField":{"success":true}}}`)
+		case strings.Contains(q, "phase(") && strings.Contains(q, "repo_id"):
+			_, _ = io.WriteString(w, `{"data":{"phase":{"repo_id":123}}}`)
+		case strings.Contains(q, "pipe(") && strings.Contains(q, "uuid"):
+			_, _ = io.WriteString(w, `{"data":{"pipe":{"uuid":"pipe-uuid-1"}}}`)
 		case strings.Contains(q, "phase("):
 			_, _ = io.WriteString(w, `{"data":{"phase":{"fields":[{"id":"`+st.ID+`","internal_id":"`+st.InternalId+`","label":"`+st.Label+`"}]}}}`)
 		default:
