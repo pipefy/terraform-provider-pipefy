@@ -45,7 +45,7 @@ func (r *PipeResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				},
 			},
 			"name":            schema.StringAttribute{Required: true},
-			"organization_id": schema.StringAttribute{Required: true},
+			"organization_id": schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 			"public":          schema.BoolAttribute{Optional: true},
 		},
 	}
