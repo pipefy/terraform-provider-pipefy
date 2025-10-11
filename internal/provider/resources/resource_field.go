@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
+	"github.com/pipefy/terraform-provider-pipefy/internal/provider/locks"
 )
 
 var _ resource.Resource = &FieldResource{}
@@ -69,6 +70,28 @@ func (r *FieldResource) Create(ctx context.Context, req resource.CreateRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	// Resolve repo_id from the phase to lock per repo
+	// pipefy api does not allow multiple field creations at the same time for the same repo
+	phaseQuery := "query($id:ID!){ phase(id:$id){ repo_id } }"
+	phaseVars := map[string]any{"id": data.PhaseId.ValueString()}
+	var phaseOut struct {
+		Phase *struct {
+			RepoId int `json:"repo_id"`
+		} `json:"phase"`
+	}
+	if err := r.api.DoGraphQL(ctx, phaseQuery, phaseVars, &phaseOut); err != nil {
+		resp.Diagnostics.AddError("create field failed", fmt.Sprintf("failed to fetch phase repo_id: %s", err.Error()))
+		return
+	}
+	if phaseOut.Phase == nil || phaseOut.Phase.RepoId == 0 {
+		resp.Diagnostics.AddError("create field failed", "could not resolve valid phase repo_id from phase query")
+		return
+	}
+	repoIDStr := strconv.FormatInt(int64(phaseOut.Phase.RepoId), 10)
+
+	unlock := locks.LockRepo(repoIDStr)
+	defer unlock()
 
 	mutation := "mutation($phaseId:ID!,$type:ID!,$label:String!,$required:Boolean){ createPhaseField(input:{ phase_id:$phaseId, type:$type, label:$label, required:$required }){ phase_field{ id internal_id label } } }"
 	vars := map[string]any{
