@@ -17,13 +17,13 @@ Pipe resource
 
 ### Required
 
-- `name` (String)
-- `organization_id` (String)
+- `name` (String) Name of the pipe
+- `organization_id` (String) The ID of the organization that the pipe belongs to
 
 ### Optional
 
-- `public` (Boolean)
+- `public` (Boolean) Whether the pipe is public or not
 
 ### Read-Only
 
-- `id` (String) The ID of this resource.
+- `id` (String) The ID of the pipe

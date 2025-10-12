@@ -17,18 +17,18 @@ Automation resource
 
 ### Required
 
-- `action_id` (String)
-- `action_repo_id` (String)
-- `event_id` (String)
-- `event_repo_id` (String)
-- `name` (String)
+- `action_id` (String) The type of the action that the automation performs
+- `action_repo_id` (String) The ID of the pipe that the automation performs actions on
+- `event_id` (String) The type of the event that the automation listens to
+- `event_repo_id` (String) The ID of the pipe that the automation listens to
+- `name` (String) Name of the automation
 
 ### Optional
 
-- `action_params` (String)
-- `active` (Boolean)
-- `condition` (String)
-- `event_params` (String)
+- `action_params` (String) The parameters of the action for the automation
+- `active` (Boolean) Whether the automation is active or not
+- `condition` (String) The condition for the automation to be executed
+- `event_params` (String) The parameters of the event for the automation
 
 ### Read-Only
 

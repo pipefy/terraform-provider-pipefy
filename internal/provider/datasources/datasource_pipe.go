@@ -34,10 +34,10 @@ func (d *PipeDataSource) Schema(ctx context.Context, req datasource.SchemaReques
 	resp.Schema = dsschema.Schema{
 		MarkdownDescription: "Pipe data source",
 		Attributes: map[string]dsschema.Attribute{
-			"id":              dsschema.StringAttribute{Required: true},
-			"name":            dsschema.StringAttribute{Computed: true},
-			"organization_id": dsschema.StringAttribute{Computed: true},
-			"public":          dsschema.BoolAttribute{Computed: true},
+			"id":              dsschema.StringAttribute{Required: true, Description: "The ID of the pipe"},
+			"name":            dsschema.StringAttribute{Computed: true, Description: "Name of the pipe"},
+			"organization_id": dsschema.StringAttribute{Computed: true, Description: "The ID of the organization that the pipe belongs to"},
+			"public":          dsschema.BoolAttribute{Computed: true, Description: "Whether the pipe is public or not"},
 		},
 	}
 }

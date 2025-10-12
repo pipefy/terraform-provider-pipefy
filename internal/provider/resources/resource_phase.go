@@ -37,9 +37,9 @@ func (r *PhaseResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Phase resource",
 		Attributes: map[string]schema.Attribute{
-			"id":      schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"pipe_id": schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-			"name":    schema.StringAttribute{Required: true},
+			"id":      schema.StringAttribute{Computed: true, Description: "The ID of the phase", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"pipe_id": schema.StringAttribute{Required: true, Description: "The ID of the pipe that the phase belongs to", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+			"name":    schema.StringAttribute{Required: true, Description: "Name of the phase"},
 		},
 	}
 }
