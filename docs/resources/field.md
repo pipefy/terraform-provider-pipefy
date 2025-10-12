@@ -17,15 +17,15 @@ Phase field resource
 
 ### Required
 
-- `label` (String)
-- `phase_id` (String)
-- `type` (String)
+- `label` (String) The displayed name of the field
+- `phase_id` (String) The ID of the phase that the field belongs to
+- `type` (String) The type of the field
 
 ### Optional
 
-- `required` (Boolean)
+- `required` (Boolean) Whether the field is required or not
 
 ### Read-Only
 
-- `id` (String) The ID of this resource.
-- `internal_id` (String)
+- `id` (String) The slug of the field
+- `internal_id` (String) The unique internal ID of the field

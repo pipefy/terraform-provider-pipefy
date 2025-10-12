@@ -39,14 +39,15 @@ func (r *PipeResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 		MarkdownDescription: "Pipe resource",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
-				Computed: true,
+				Computed:    true,
+				Description: "The ID of the pipe",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
-			"name":            schema.StringAttribute{Required: true},
-			"organization_id": schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-			"public":          schema.BoolAttribute{Optional: true},
+			"name":            schema.StringAttribute{Required: true, Description: "Name of the pipe"},
+			"organization_id": schema.StringAttribute{Required: true, Description: "The ID of the organization that the pipe belongs to", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+			"public":          schema.BoolAttribute{Optional: true, Description: "Whether the pipe is public or not"},
 		},
 	}
 }

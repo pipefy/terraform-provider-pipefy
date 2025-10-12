@@ -42,12 +42,12 @@ func (r *FieldResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Phase field resource",
 		Attributes: map[string]schema.Attribute{
-			"id":          schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"internal_id": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"phase_id":    schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-			"type":        schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-			"label":       schema.StringAttribute{Required: true},
-			"required":    schema.BoolAttribute{Optional: true},
+			"id":          schema.StringAttribute{Computed: true, Description: "The slug of the field", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"internal_id": schema.StringAttribute{Computed: true, Description: "The unique internal ID of the field", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"phase_id":    schema.StringAttribute{Required: true, Description: "The ID of the phase that the field belongs to", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+			"type":        schema.StringAttribute{Required: true, Description: "The type of the field", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+			"label":       schema.StringAttribute{Required: true, Description: "The displayed name of the field"},
+			"required":    schema.BoolAttribute{Optional: true, Description: "Whether the field is required or not"},
 		},
 	}
 }

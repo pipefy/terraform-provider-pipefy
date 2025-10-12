@@ -33,9 +33,9 @@ func (d *PhaseDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 	resp.Schema = dsschema.Schema{
 		MarkdownDescription: "Phase data source",
 		Attributes: map[string]dsschema.Attribute{
-			"id":      dsschema.StringAttribute{Required: true},
-			"pipe_id": dsschema.StringAttribute{Computed: true},
-			"name":    dsschema.StringAttribute{Computed: true},
+			"id":      dsschema.StringAttribute{Required: true, Description: "The ID of the phase"},
+			"pipe_id": dsschema.StringAttribute{Computed: true, Description: "The ID of the pipe that the phase belongs to"},
+			"name":    dsschema.StringAttribute{Computed: true, Description: "Name of the phase"},
 		},
 	}
 }

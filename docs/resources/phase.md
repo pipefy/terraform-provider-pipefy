@@ -17,9 +17,9 @@ Phase resource
 
 ### Required
 
-- `name` (String)
-- `pipe_id` (String)
+- `name` (String) Name of the phase
+- `pipe_id` (String) The ID of the pipe that the phase belongs to
 
 ### Read-Only
 
-- `id` (String) The ID of this resource.
+- `id` (String) The ID of the phase
