@@ -54,7 +54,7 @@ func (r *AutomationResource) Schema(ctx context.Context, req resource.SchemaRequ
 			"name":           schema.StringAttribute{Required: true},
 			"event_id":       schema.StringAttribute{Required: true},
 			"action_id":      schema.StringAttribute{Required: true},
-			"event_repo_id":  schema.StringAttribute{Required: true},
+			"event_repo_id":  schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 			"action_repo_id": schema.StringAttribute{Required: true},
 			// JSON strings for complex structures to avoid over-modeling in Terraform schema
 			"event_params":  schema.StringAttribute{Optional: true},
