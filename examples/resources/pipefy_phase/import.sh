@@ -1,1 +1,1 @@
-terraform import pipefy_phase.example "340681196"
+terraform import pipefy_phase.example <PHASE_ID>
