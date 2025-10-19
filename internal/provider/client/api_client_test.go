@@ -4,7 +4,6 @@
 package client
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -17,7 +16,7 @@ type echoData struct {
 
 func TestApiClient_DoGraphQL_HTTPNil(t *testing.T) {
 	c := &ApiClient{}
-	err := c.DoGraphQL(context.Background(), "query {}", nil, nil)
+	err := c.DoGraphQL(t.Context(), "query {}", nil, nil)
 	if err == nil || err.Error() != "api client http is nil" {
 		t.Fatalf("expected http nil error, got: %v", err)
 	}
@@ -25,7 +24,7 @@ func TestApiClient_DoGraphQL_HTTPNil(t *testing.T) {
 
 func TestApiClient_DoGraphQL_EndpointEmpty(t *testing.T) {
 	c := &ApiClient{HTTP: http.DefaultClient}
-	err := c.DoGraphQL(context.Background(), "query {}", nil, nil)
+	err := c.DoGraphQL(t.Context(), "query {}", nil, nil)
 	if err == nil || err.Error() != "api endpoint is empty" {
 		t.Fatalf("expected endpoint empty error, got: %v", err)
 	}
@@ -40,7 +39,7 @@ func TestApiClient_DoGraphQL_Non2xx(t *testing.T) {
 	defer ts.Close()
 
 	c := &ApiClient{HTTP: ts.Client(), Endpoint: ts.URL}
-	err := c.DoGraphQL(context.Background(), "query {}", nil, nil)
+	err := c.DoGraphQL(t.Context(), "query {}", nil, nil)
 	if err == nil {
 		t.Fatalf("expected non-2xx error, got nil")
 	}
@@ -55,7 +54,7 @@ func TestApiClient_DoGraphQL_MalformedJSON(t *testing.T) {
 	defer ts.Close()
 
 	c := &ApiClient{HTTP: ts.Client(), Endpoint: ts.URL}
-	err := c.DoGraphQL(context.Background(), "query {}", nil, nil)
+	err := c.DoGraphQL(t.Context(), "query {}", nil, nil)
 	if err == nil {
 		t.Fatalf("expected parse error, got nil")
 	}
@@ -70,7 +69,7 @@ func TestApiClient_DoGraphQL_GraphQLError(t *testing.T) {
 	defer ts.Close()
 
 	c := &ApiClient{HTTP: ts.Client(), Endpoint: ts.URL}
-	err := c.DoGraphQL(context.Background(), "query {}", nil, nil)
+	err := c.DoGraphQL(t.Context(), "query {}", nil, nil)
 	if err == nil || err.Error() != "graphql error: boom" {
 		t.Fatalf("expected graphql error, got: %v", err)
 	}
@@ -85,7 +84,7 @@ func TestApiClient_DoGraphQL_OutNil_Succeeds(t *testing.T) {
 	defer ts.Close()
 
 	c := &ApiClient{HTTP: ts.Client(), Endpoint: ts.URL}
-	if err := c.DoGraphQL(context.Background(), "query {}", nil, nil); err != nil {
+	if err := c.DoGraphQL(t.Context(), "query {}", nil, nil); err != nil {
 		t.Fatalf("expected nil error, got: %v", err)
 	}
 }
@@ -100,7 +99,7 @@ func TestApiClient_DoGraphQL_MissingData(t *testing.T) {
 
 	c := &ApiClient{HTTP: ts.Client(), Endpoint: ts.URL}
 	var out map[string]any
-	err := c.DoGraphQL(context.Background(), "query {}", nil, &out)
+	err := c.DoGraphQL(t.Context(), "query {}", nil, &out)
 	if err == nil || err.Error() != "graphql response missing data" {
 		t.Fatalf("expected missing data error, got: %v", err)
 	}
@@ -124,7 +123,7 @@ func TestApiClient_DoGraphQL_SuccessDecode(t *testing.T) {
 
 	c := &ApiClient{HTTP: ts.Client(), Endpoint: ts.URL, Token: "testtoken"}
 	var out echoData
-	if err := c.DoGraphQL(context.Background(), "query {}", nil, &out); err != nil {
+	if err := c.DoGraphQL(t.Context(), "query {}", nil, &out); err != nil {
 		t.Fatalf("expected nil error, got: %v", err)
 	}
 	if out.Hello != "world" {

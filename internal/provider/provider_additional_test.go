@@ -4,7 +4,6 @@
 package provider_test
 
 import (
-	"context"
 	"testing"
 
 	frameworkprovider "github.com/hashicorp/terraform-plugin-framework/provider"
@@ -14,7 +13,7 @@ import (
 func TestProvider_Metadata_TypeName(t *testing.T) {
 	prov := providerpkg.New("test")()
 	resp := &frameworkprovider.MetadataResponse{}
-	prov.Metadata(context.Background(), frameworkprovider.MetadataRequest{}, resp)
+	prov.Metadata(t.Context(), frameworkprovider.MetadataRequest{}, resp)
 	if resp.TypeName != "pipefy" {
 		t.Fatalf("expected provider type name 'pipefy', got %q", resp.TypeName)
 	}
@@ -23,7 +22,7 @@ func TestProvider_Metadata_TypeName(t *testing.T) {
 func TestProvider_Schema_HasAttributes(t *testing.T) {
 	prov := providerpkg.New("test")()
 	resp := &frameworkprovider.SchemaResponse{}
-	prov.Schema(context.Background(), frameworkprovider.SchemaRequest{}, resp)
+	prov.Schema(t.Context(), frameworkprovider.SchemaRequest{}, resp)
 	attrs := resp.Schema.Attributes
 	if _, ok := attrs["endpoint"]; !ok {
 		t.Fatalf("expected endpoint attribute in provider schema")
