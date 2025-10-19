@@ -1,12 +1,12 @@
 module github.com/pipefy/terraform-provider-pipefy
 
-go 1.23.7
+go 1.24.0
 
 require (
 	github.com/hashicorp/terraform-plugin-framework v1.14.1
 	github.com/hashicorp/terraform-plugin-go v0.26.0
 	github.com/hashicorp/terraform-plugin-testing v1.12.0
-	golang.org/x/oauth2 v0.23.0
+	golang.org/x/oauth2 v0.32.0
 )
 
 require (
