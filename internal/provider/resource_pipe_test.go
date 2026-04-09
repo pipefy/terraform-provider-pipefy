@@ -66,9 +66,9 @@ func TestUnit_PipeResource_CRUD(t *testing.T) {
 			_, _ = io.WriteString(w, `{"data":{"deletePhase":{"clientMutationId":"","success":true}}}`)
 		case strings.Contains(q, "phases"):
 			st.PhasesQueried = true
-			_, _ = io.WriteString(w, `{"data":{"pipe":{"id":"`+st.ID+`","phases":[{"id":"phase_1"},{"id":"phase_2"}]}}}`)
+			_, _ = io.WriteString(w, `{"data":{"pipe":{"id":"`+st.ID+`","startFormPhaseId":"sfp_1","phases":[{"id":"phase_1"},{"id":"phase_2"}]}}}`)
 		case strings.Contains(q, "pipe("):
-			_, _ = io.WriteString(w, `{"data":{"pipe":{"id":"`+st.ID+`","name":"`+st.Name+`"}}}`)
+			_, _ = io.WriteString(w, `{"data":{"pipe":{"id":"`+st.ID+`","name":"`+st.Name+`","startFormPhaseId":"sfp_1"}}}`)
 		default:
 			_, _ = io.WriteString(w, `{"data":{}}`)
 		}
@@ -118,6 +118,11 @@ func TestUnit_PipeResource_CRUD(t *testing.T) {
 						"pipefy_pipe.test",
 						tfjsonpath.New("name"),
 						knownvalue.StringExact("My Pipe"),
+					),
+					statecheck.ExpectKnownValue(
+						"pipefy_pipe.test",
+						tfjsonpath.New("start_form_phase_id"),
+						knownvalue.StringExact("sfp_1"),
 					),
 				},
 			},
