@@ -24,11 +24,11 @@ func NewPipeResource() resource.Resource { return &PipeResource{} }
 type PipeResource struct{ api *client.ApiClient }
 
 type PipeModel struct {
-	Id                types.String `tfsdk:"id"`
-	Name              types.String `tfsdk:"name"`
-	OrganizationId    types.String `tfsdk:"organization_id"`
-	Public            types.Bool   `tfsdk:"public"`
-	StartFormPhaseId  types.String `tfsdk:"start_form_phase_id"`
+	Id               types.String `tfsdk:"id"`
+	Name             types.String `tfsdk:"name"`
+	OrganizationId   types.String `tfsdk:"organization_id"`
+	Public           types.Bool   `tfsdk:"public"`
+	StartFormPhaseId types.String `tfsdk:"start_form_phase_id"`
 }
 
 func (r *PipeResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
