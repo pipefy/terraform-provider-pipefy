@@ -24,10 +24,11 @@ func NewPipeResource() resource.Resource { return &PipeResource{} }
 type PipeResource struct{ api *client.ApiClient }
 
 type PipeModel struct {
-	Id             types.String `tfsdk:"id"`
-	Name           types.String `tfsdk:"name"`
-	OrganizationId types.String `tfsdk:"organization_id"`
-	Public         types.Bool   `tfsdk:"public"`
+	Id                types.String `tfsdk:"id"`
+	Name              types.String `tfsdk:"name"`
+	OrganizationId    types.String `tfsdk:"organization_id"`
+	Public            types.Bool   `tfsdk:"public"`
+	StartFormPhaseId  types.String `tfsdk:"start_form_phase_id"`
 }
 
 func (r *PipeResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -48,6 +49,13 @@ func (r *PipeResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 			"name":            schema.StringAttribute{Required: true, Description: "Name of the pipe"},
 			"organization_id": schema.StringAttribute{Required: true, Description: "The ID of the organization that the pipe belongs to", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 			"public":          schema.BoolAttribute{Optional: true, Description: "Whether the pipe is public or not"},
+			"start_form_phase_id": schema.StringAttribute{
+				Computed:    true,
+				Description: "The ID of the start form phase",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
 		},
 	}
 }
@@ -94,12 +102,13 @@ func (r *PipeResource) Create(ctx context.Context, req resource.CreateRequest, r
 	// TODO:When creating a pipe it creates 3 phases for it
 	// so we delete them.
 	// We need to find a better way to do this.
-	phasesQuery := "query($id:ID!){ pipe(id:$id){ id phases { id } } }"
+	phasesQuery := "query($id:ID!){ pipe(id:$id){ id startFormPhaseId phases { id } } }"
 	phasesVars := map[string]any{"id": pipeId}
 	var phasesOut struct {
 		Pipe struct {
-			Id     string `json:"id"`
-			Phases []struct {
+			Id               string `json:"id"`
+			StartFormPhaseId string `json:"startFormPhaseId"`
+			Phases           []struct {
 				Id string `json:"id"`
 			} `json:"phases"`
 		} `json:"pipe"`
@@ -108,6 +117,8 @@ func (r *PipeResource) Create(ctx context.Context, req resource.CreateRequest, r
 		resp.Diagnostics.AddError("query pipe phases failed", err.Error())
 		return
 	}
+
+	data.StartFormPhaseId = types.StringValue(phasesOut.Pipe.StartFormPhaseId)
 
 	for _, phase := range phasesOut.Pipe.Phases {
 		deleteMutation := "mutation($id:ID!){ deletePhase(input:{id:$id}){ clientMutationId success } }"
@@ -141,12 +152,13 @@ func (r *PipeResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
-	query := "query($id:ID!){ pipe(id:$id){ id name } }"
+	query := "query($id:ID!){ pipe(id:$id){ id name startFormPhaseId } }"
 	vars := map[string]any{"id": data.Id.ValueString()}
 	var out struct {
 		Pipe *struct {
-			Id   string `json:"id"`
-			Name string `json:"name"`
+			Id               string `json:"id"`
+			Name             string `json:"name"`
+			StartFormPhaseId string `json:"startFormPhaseId"`
 		} `json:"pipe"`
 	}
 	if err := r.api.DoGraphQL(ctx, query, vars, &out); err != nil {
@@ -157,6 +169,7 @@ func (r *PipeResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		resp.State.RemoveResource(ctx)
 		return
 	}
+	data.StartFormPhaseId = types.StringValue(out.Pipe.StartFormPhaseId)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 

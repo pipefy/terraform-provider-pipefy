@@ -34,6 +34,7 @@ resource "pipefy_pipe" "example" {
 ### Read-Only
 
 - `id` (String) The ID of the pipe
+- `start_form_phase_id` (String) The ID of the start form phase
 
 ## Import
 
