@@ -229,7 +229,6 @@ func TestUnit_FieldResource_Options_CRUD(t *testing.T) {
 	}
 	`
 
-	// Same options, only the label changes — a label-only edit must keep options.
 	configRelabel := base + `
 	resource "pipefy_field" "test" {
 		phase_id = pipefy_phase.ph.id
@@ -278,9 +277,6 @@ func TestUnit_FieldResource_Options_CRUD(t *testing.T) {
 				},
 			},
 			{
-				// Label-only edit: options stay in config unchanged. The update
-				// must apply in place and the options must round-trip intact, not
-				// get clobbered to null.
 				Config: configRelabel,
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
