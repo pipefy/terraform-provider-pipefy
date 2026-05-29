@@ -13,21 +13,36 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/statecheck"
 	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 	"github.com/hashicorp/terraform-plugin-testing/tfversion"
 )
 
 type fieldState struct {
-	ID         string
-	InternalId string
-	Label      string
-	DeletedCt  int
+	ID          string
+	InternalId  string
+	Label       string
+	OptionsJSON string
+	DeletedCt   int
 }
 
-func TestUnit_FieldResource_CRUD(t *testing.T) {
-	st := &fieldState{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func (s *fieldState) captureOptions(vars map[string]any) {
+	if opts, ok := vars["options"]; ok {
+		b, _ := json.Marshal(opts)
+		s.OptionsJSON = string(b)
+	}
+}
+
+func (s *fieldState) optionsJSON() string {
+	if s.OptionsJSON == "" {
+		return "null"
+	}
+	return s.OptionsJSON
+}
+
+func fieldMockHandler(st *fieldState) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer testtoken" {
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = io.WriteString(w, `{"errors":[{"message":"unauthorized"}]}`)
@@ -47,12 +62,14 @@ func TestUnit_FieldResource_CRUD(t *testing.T) {
 			if v, ok := gr.Variables["label"].(string); ok {
 				st.Label = v
 			}
-			_, _ = io.WriteString(w, `{"data":{"createPhaseField":{"phase_field":{"id":"`+st.ID+`","internal_id":"`+st.InternalId+`","label":"`+st.Label+`"}}}}`)
+			st.captureOptions(gr.Variables)
+			_, _ = io.WriteString(w, `{"data":{"createPhaseField":{"phase_field":{"id":"`+st.ID+`","internal_id":"`+st.InternalId+`","label":"`+st.Label+`","options":`+st.optionsJSON()+`}}}}`)
 		case strings.Contains(q, "updatePhaseField"):
 			if v, ok := gr.Variables["label"].(string); ok {
 				st.Label = v
 			}
-			_, _ = io.WriteString(w, `{"data":{"updatePhaseField":{"phase_field":{"id":"`+st.ID+`","internal_id":"`+st.InternalId+`"}}}}`)
+			st.captureOptions(gr.Variables)
+			_, _ = io.WriteString(w, `{"data":{"updatePhaseField":{"phase_field":{"id":"`+st.ID+`","internal_id":"`+st.InternalId+`","options":`+st.optionsJSON()+`}}}}`)
 		case strings.Contains(q, "deletePhaseField"):
 			st.DeletedCt++
 			_, _ = io.WriteString(w, `{"data":{"deletePhaseField":{"success":true}}}`)
@@ -61,11 +78,16 @@ func TestUnit_FieldResource_CRUD(t *testing.T) {
 		case strings.Contains(q, "pipe(") && strings.Contains(q, "uuid"):
 			_, _ = io.WriteString(w, `{"data":{"pipe":{"uuid":"pipe-uuid-1"}}}`)
 		case strings.Contains(q, "phase("):
-			_, _ = io.WriteString(w, `{"data":{"phase":{"fields":[{"id":"`+st.ID+`","internal_id":"`+st.InternalId+`","label":"`+st.Label+`"}]}}}`)
+			_, _ = io.WriteString(w, `{"data":{"phase":{"fields":[{"id":"`+st.ID+`","internal_id":"`+st.InternalId+`","label":"`+st.Label+`","options":`+st.optionsJSON()+`}]}}}`)
 		default:
 			_, _ = io.WriteString(w, `{"data":{}}`)
 		}
-	}))
+	}
+}
+
+func TestUnit_FieldResource_CRUD(t *testing.T) {
+	st := &fieldState{}
+	srv := httptest.NewServer(fieldMockHandler(st))
 	defer srv.Close()
 
 	config := `
@@ -164,5 +186,124 @@ func TestUnit_FieldResource_CRUD(t *testing.T) {
 
 	if st.DeletedCt == 0 {
 		t.Fatalf("expected delete mutation to be called")
+	}
+}
+
+func TestUnit_FieldResource_Options_CRUD(t *testing.T) {
+	st := &fieldState{}
+	srv := httptest.NewServer(fieldMockHandler(st))
+	defer srv.Close()
+
+	base := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_pipe" "p" {
+		name            = "My Pipe"
+		organization_id = "org_1"
+	}
+
+	resource "pipefy_phase" "ph" {
+		pipe_id = pipefy_pipe.p.id
+		name    = "My Phase"
+	}
+	`
+
+	configCreate := base + `
+	resource "pipefy_field" "test" {
+		phase_id = pipefy_phase.ph.id
+		type     = "checklist_vertical"
+		label    = "Approved?"
+		options  = ["Sim", "Não"]
+	}
+	`
+
+	configUpdate := base + `
+	resource "pipefy_field" "test" {
+		phase_id = pipefy_phase.ph.id
+		type     = "checklist_vertical"
+		label    = "Approved?"
+		options  = ["Sim", "Não", "Talvez"]
+	}
+	`
+
+	configRelabel := base + `
+	resource "pipefy_field" "test" {
+		phase_id = pipefy_phase.ph.id
+		type     = "checklist_vertical"
+		label    = "Approved (final)?"
+		options  = ["Sim", "Não", "Talvez"]
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: configCreate,
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(
+						"pipefy_field.test",
+						tfjsonpath.New("options"),
+						knownvalue.ListExact([]knownvalue.Check{
+							knownvalue.StringExact("Sim"),
+							knownvalue.StringExact("Não"),
+						}),
+					),
+				},
+			},
+			{
+				Config: configUpdate,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("pipefy_field.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(
+						"pipefy_field.test",
+						tfjsonpath.New("options"),
+						knownvalue.ListExact([]knownvalue.Check{
+							knownvalue.StringExact("Sim"),
+							knownvalue.StringExact("Não"),
+							knownvalue.StringExact("Talvez"),
+						}),
+					),
+				},
+			},
+			{
+				Config: configRelabel,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("pipefy_field.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(
+						"pipefy_field.test",
+						tfjsonpath.New("label"),
+						knownvalue.StringExact("Approved (final)?"),
+					),
+					statecheck.ExpectKnownValue(
+						"pipefy_field.test",
+						tfjsonpath.New("options"),
+						knownvalue.ListExact([]knownvalue.Check{
+							knownvalue.StringExact("Sim"),
+							knownvalue.StringExact("Não"),
+							knownvalue.StringExact("Talvez"),
+						}),
+					),
+				},
+			},
+		},
+	})
+
+	if st.OptionsJSON != `["Sim","Não","Talvez"]` {
+		t.Fatalf("expected the label-only update to preserve options, got %q", st.OptionsJSON)
 	}
 }

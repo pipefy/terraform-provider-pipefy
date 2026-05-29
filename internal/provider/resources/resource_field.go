@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -32,6 +34,7 @@ type FieldModel struct {
 	Type       types.String `tfsdk:"type"`
 	Label      types.String `tfsdk:"label"`
 	Required   types.Bool   `tfsdk:"required"`
+	Options    types.List   `tfsdk:"options"`
 }
 
 func (r *FieldResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -48,6 +51,13 @@ func (r *FieldResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 			"type":        schema.StringAttribute{Required: true, Description: "The type of the field", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 			"label":       schema.StringAttribute{Required: true, Description: "The displayed name of the field"},
 			"required":    schema.BoolAttribute{Optional: true, Description: "Whether the field is required or not"},
+			"options": schema.ListAttribute{
+				ElementType:   types.StringType,
+				Optional:      true,
+				Computed:      true,
+				Description:   "Choices for option-based field types (checklist_vertical, checklist_horizontal, radio_vertical, radio_horizontal, select, label_select). Order is preserved and user-visible.",
+				PlanModifiers: []planmodifier.List{listplanmodifier.UseStateForUnknown()},
+			},
 		},
 	}
 }
@@ -93,7 +103,7 @@ func (r *FieldResource) Create(ctx context.Context, req resource.CreateRequest, 
 	unlock := locks.LockRepo(repoIDStr)
 	defer unlock()
 
-	mutation := "mutation($phaseId:ID!,$type:ID!,$label:String!,$required:Boolean){ createPhaseField(input:{ phase_id:$phaseId, type:$type, label:$label, required:$required }){ phase_field{ id internal_id label } } }"
+	mutation := "mutation($phaseId:ID!,$type:ID!,$label:String!,$required:Boolean,$options:[String]){ createPhaseField(input:{ phase_id:$phaseId, type:$type, label:$label, required:$required, options:$options }){ phase_field{ id internal_id label options } } }"
 	vars := map[string]any{
 		"phaseId": data.PhaseId.ValueString(),
 		"type":    data.Type.ValueString(),
@@ -102,12 +112,21 @@ func (r *FieldResource) Create(ctx context.Context, req resource.CreateRequest, 
 	if !data.Required.IsNull() {
 		vars["required"] = data.Required.ValueBool()
 	}
+	if !data.Options.IsNull() && !data.Options.IsUnknown() {
+		var opts []string
+		resp.Diagnostics.Append(data.Options.ElementsAs(ctx, &opts, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		vars["options"] = opts
+	}
 	var out struct {
 		CreatePhaseField struct {
 			PhaseField struct {
-				Id         string `json:"id"`
-				InternalId string `json:"internal_id"`
-				Label      string `json:"label"`
+				Id         string   `json:"id"`
+				InternalId string   `json:"internal_id"`
+				Label      string   `json:"label"`
+				Options    []string `json:"options"`
 			} `json:"phase_field"`
 		} `json:"createPhaseField"`
 	}
@@ -117,6 +136,7 @@ func (r *FieldResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 	data.Id = types.StringValue(out.CreatePhaseField.PhaseField.Id)
 	data.InternalId = types.StringValue(out.CreatePhaseField.PhaseField.InternalId)
+	data.Options = optionsToList(ctx, out.CreatePhaseField.PhaseField.Options, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -131,14 +151,15 @@ func (r *FieldResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	}
 
 	// Query the phase to get the field information
-	query := "query($phaseId:ID!){ phase(id:$phaseId){ fields{ id internal_id label } } }"
+	query := "query($phaseId:ID!){ phase(id:$phaseId){ fields{ id internal_id label options } } }"
 	vars := map[string]any{"phaseId": data.PhaseId.ValueString()}
 	var out struct {
 		Phase *struct {
 			Fields []struct {
-				Id         string `json:"id"`
-				InternalId string `json:"internal_id"`
-				Label      string `json:"label"`
+				Id         string   `json:"id"`
+				InternalId string   `json:"internal_id"`
+				Label      string   `json:"label"`
+				Options    []string `json:"options"`
 			} `json:"fields"`
 		} `json:"phase"`
 	}
@@ -153,13 +174,14 @@ func (r *FieldResource) Read(ctx context.Context, req resource.ReadRequest, resp
 
 	// Find the field with matching ID
 	var foundField *struct {
-		Id         string `json:"id"`
-		InternalId string `json:"internal_id"`
-		Label      string `json:"label"`
+		Id         string   `json:"id"`
+		InternalId string   `json:"internal_id"`
+		Label      string   `json:"label"`
+		Options    []string `json:"options"`
 	}
-	for _, field := range out.Phase.Fields {
-		if field.Id == data.Id.ValueString() {
-			foundField = &field
+	for i := range out.Phase.Fields {
+		if out.Phase.Fields[i].Id == data.Id.ValueString() {
+			foundField = &out.Phase.Fields[i]
 			break
 		}
 	}
@@ -170,6 +192,7 @@ func (r *FieldResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	}
 
 	data.InternalId = types.StringValue(foundField.InternalId)
+	data.Options = optionsToList(ctx, foundField.Options, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -179,7 +202,7 @@ func (r *FieldResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation($id:ID!,$label:String!,$required:Boolean){ updatePhaseField(input:{ id:$id, label:$label, required:$required }){ phase_field{ id internal_id } } }"
+	mutation := "mutation($id:ID!,$label:String!,$required:Boolean,$options:[String]){ updatePhaseField(input:{ id:$id, label:$label, required:$required, options:$options }){ phase_field{ id internal_id options } } }"
 	vars := map[string]any{"id": data.Id.ValueString()}
 	if !data.Label.IsNull() {
 		vars["label"] = data.Label.ValueString()
@@ -187,11 +210,21 @@ func (r *FieldResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	if !data.Required.IsNull() {
 		vars["required"] = data.Required.ValueBool()
 	}
+
+	if !data.Options.IsNull() && !data.Options.IsUnknown() {
+		var opts []string
+		resp.Diagnostics.Append(data.Options.ElementsAs(ctx, &opts, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		vars["options"] = opts
+	}
 	var out struct {
 		UpdatePhaseField struct {
 			PhaseField struct {
-				Id         string `json:"id"`
-				InternalId string `json:"internal_id"`
+				Id         string   `json:"id"`
+				InternalId string   `json:"internal_id"`
+				Options    []string `json:"options"`
 			} `json:"phase_field"`
 		} `json:"updatePhaseField"`
 	}
@@ -200,6 +233,7 @@ func (r *FieldResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 	data.InternalId = types.StringValue(out.UpdatePhaseField.PhaseField.InternalId)
+	data.Options = optionsToList(ctx, out.UpdatePhaseField.PhaseField.Options, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -264,4 +298,13 @@ func (r *FieldResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 
 func (r *FieldResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+func optionsToList(ctx context.Context, opts []string, diags *diag.Diagnostics) types.List {
+	if len(opts) == 0 {
+		return types.ListNull(types.StringType)
+	}
+	list, d := types.ListValueFrom(ctx, types.StringType, opts)
+	diags.Append(d...)
+	return list
 }

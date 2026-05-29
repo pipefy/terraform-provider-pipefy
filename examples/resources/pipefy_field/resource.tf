@@ -14,3 +14,10 @@ resource "pipefy_field" "example" {
   label    = "Title"
   required = true
 }
+
+resource "pipefy_field" "priority" {
+  phase_id = pipefy_phase.example.id
+  type     = "select"
+  label    = "Priority"
+  options  = ["Low", "Medium", "High"]
+}
