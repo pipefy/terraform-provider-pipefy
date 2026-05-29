@@ -30,8 +30,6 @@ resource "pipefy_field" "example" {
   required = true
 }
 
-# Option-based field types (checklist, radio, select) declare their choices with
-# `options`. Order is preserved and user-visible.
 resource "pipefy_field" "priority" {
   phase_id = pipefy_phase.example.id
   type     = "select"
