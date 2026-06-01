@@ -56,6 +56,7 @@ resource "pipefy_field" "priority" {
 
 - `id` (String) The slug of the field
 - `internal_id` (String) The unique internal ID of the field
+- `uuid` (String) The field's UUID. A stable identifier that does not change when the label changes.
 
 ## Import
 

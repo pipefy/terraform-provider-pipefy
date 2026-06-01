@@ -30,6 +30,7 @@ type FieldResource struct{ api *client.ApiClient }
 type FieldModel struct {
 	Id         types.String `tfsdk:"id"`
 	InternalId types.String `tfsdk:"internal_id"`
+	Uuid       types.String `tfsdk:"uuid"`
 	PhaseId    types.String `tfsdk:"phase_id"`
 	Type       types.String `tfsdk:"type"`
 	Label      types.String `tfsdk:"label"`
@@ -47,6 +48,7 @@ func (r *FieldResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 		Attributes: map[string]schema.Attribute{
 			"id":          schema.StringAttribute{Computed: true, Description: "The slug of the field", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"internal_id": schema.StringAttribute{Computed: true, Description: "The unique internal ID of the field", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"uuid":        schema.StringAttribute{Computed: true, Description: "The field's UUID. A stable identifier that does not change when the label changes.", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"phase_id":    schema.StringAttribute{Required: true, Description: "The ID of the phase that the field belongs to", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 			"type":        schema.StringAttribute{Required: true, Description: "The type of the field", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 			"label":       schema.StringAttribute{Required: true, Description: "The displayed name of the field"},
@@ -103,7 +105,7 @@ func (r *FieldResource) Create(ctx context.Context, req resource.CreateRequest, 
 	unlock := locks.LockRepo(repoIDStr)
 	defer unlock()
 
-	mutation := "mutation($phaseId:ID!,$type:ID!,$label:String!,$required:Boolean,$options:[String]){ createPhaseField(input:{ phase_id:$phaseId, type:$type, label:$label, required:$required, options:$options }){ phase_field{ id internal_id label options } } }"
+	mutation := "mutation($phaseId:ID!,$type:ID!,$label:String!,$required:Boolean,$options:[String]){ createPhaseField(input:{ phase_id:$phaseId, type:$type, label:$label, required:$required, options:$options }){ phase_field{ id internal_id uuid label options } } }"
 	vars := map[string]any{
 		"phaseId": data.PhaseId.ValueString(),
 		"type":    data.Type.ValueString(),
@@ -125,6 +127,7 @@ func (r *FieldResource) Create(ctx context.Context, req resource.CreateRequest, 
 			PhaseField struct {
 				Id         string   `json:"id"`
 				InternalId string   `json:"internal_id"`
+				Uuid       string   `json:"uuid"`
 				Label      string   `json:"label"`
 				Options    []string `json:"options"`
 			} `json:"phase_field"`
@@ -136,6 +139,7 @@ func (r *FieldResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 	data.Id = types.StringValue(out.CreatePhaseField.PhaseField.Id)
 	data.InternalId = types.StringValue(out.CreatePhaseField.PhaseField.InternalId)
+	data.Uuid = types.StringValue(out.CreatePhaseField.PhaseField.Uuid)
 	data.Options = optionsToList(ctx, out.CreatePhaseField.PhaseField.Options, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -151,13 +155,14 @@ func (r *FieldResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	}
 
 	// Query the phase to get the field information
-	query := "query($phaseId:ID!){ phase(id:$phaseId){ fields{ id internal_id label options } } }"
+	query := "query($phaseId:ID!){ phase(id:$phaseId){ fields{ id internal_id uuid label options } } }"
 	vars := map[string]any{"phaseId": data.PhaseId.ValueString()}
 	var out struct {
 		Phase *struct {
 			Fields []struct {
 				Id         string   `json:"id"`
 				InternalId string   `json:"internal_id"`
+				Uuid       string   `json:"uuid"`
 				Label      string   `json:"label"`
 				Options    []string `json:"options"`
 			} `json:"fields"`
@@ -172,15 +177,15 @@ func (r *FieldResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	// Find the field with matching ID
 	var foundField *struct {
 		Id         string   `json:"id"`
 		InternalId string   `json:"internal_id"`
+		Uuid       string   `json:"uuid"`
 		Label      string   `json:"label"`
 		Options    []string `json:"options"`
 	}
 	for i := range out.Phase.Fields {
-		if out.Phase.Fields[i].Id == data.Id.ValueString() {
+		if out.Phase.Fields[i].Uuid == data.Uuid.ValueString() {
 			foundField = &out.Phase.Fields[i]
 			break
 		}
@@ -191,7 +196,9 @@ func (r *FieldResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
+	data.Id = types.StringValue(foundField.Id)
 	data.InternalId = types.StringValue(foundField.InternalId)
+	data.Uuid = types.StringValue(foundField.Uuid)
 	data.Options = optionsToList(ctx, foundField.Options, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -202,8 +209,11 @@ func (r *FieldResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation($id:ID!,$label:String!,$required:Boolean,$options:[String]){ updatePhaseField(input:{ id:$id, label:$label, required:$required, options:$options }){ phase_field{ id internal_id options } } }"
-	vars := map[string]any{"id": data.Id.ValueString()}
+	mutation := "mutation($id:ID!,$uuid:ID!,$label:String!,$required:Boolean,$options:[String]){ updatePhaseField(input:{ id:$id, uuid:$uuid, label:$label, required:$required, options:$options }){ phase_field{ id internal_id options } } }"
+	vars := map[string]any{
+		"id":   data.Id.ValueString(),
+		"uuid": data.Uuid.ValueString(),
+	}
 	if !data.Label.IsNull() {
 		vars["label"] = data.Label.ValueString()
 	}
