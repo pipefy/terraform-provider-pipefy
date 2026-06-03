@@ -145,6 +145,10 @@ Acceptance tests run against the live Pipefy API and create real resources, whic
 
 Issues and pull requests are welcome. Please review the [Code of Conduct](./.github/CODE_OF_CONDUCT.md) and run `make fmt`, `make lint`, and `make test` before submitting.
 
+## Support
+
+This provider is open source and maintained by Pipefy on a best-effort basis. For bugs and feature requests, open a [GitHub issue](https://github.com/pipefy/terraform-provider-pipefy/issues). It is not covered by your Pipefy commercial support agreement or SLA.
+
 ## License
 
 Distributed under the Mozilla Public License 2.0. See [LICENSE](./LICENSE).
