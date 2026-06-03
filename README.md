@@ -1,3 +1,11 @@
+<div align="center">
+  <img
+    src="docs/images/pipefy-developers-banner.png"
+    alt="Pipefy Developers: Where developers orchestrate intelligence"
+    width="100%"
+  />
+</div>
+
 # Terraform Provider for Pipefy
 
 [![Release](https://img.shields.io/github/v/release/pipefy/terraform-provider-pipefy.svg)](https://github.com/pipefy/terraform-provider-pipefy/releases)
