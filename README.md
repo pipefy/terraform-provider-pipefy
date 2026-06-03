@@ -35,11 +35,13 @@ terraform {
   required_providers {
     pipefy = {
       source  = "pipefy/pipefy"
-      version = "~> 0.1"
+      version = "0.0.7-pre"
     }
   }
 }
 ```
+
+The provider is in a pre-1.0 prerelease line. Pin an exact version, since Terraform does not select prerelease versions through range constraints such as `~>`. Check the [releases](https://github.com/pipefy/terraform-provider-pipefy/releases) for the latest.
 
 ### Authentication
 
