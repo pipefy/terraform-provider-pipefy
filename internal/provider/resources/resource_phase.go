@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
+	"github.com/pipefy/terraform-provider-pipefy/internal/provider/locks"
 )
 
 var _ resource.Resource = &PhaseResource{}
@@ -62,6 +63,10 @@ func (r *PhaseResource) Create(ctx context.Context, req resource.CreateRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	// Pipefy rejects concurrent phase creates for the same pipe; serialize per pipe.
+	unlock := locks.LockRepo(data.PipeId.ValueString())
+	defer unlock()
 
 	mutation := "mutation($pipeId:ID!,$name:String!){ createPhase(input:{ pipe_id: $pipeId, name: $name }){ phase{ id name } } }"
 	vars := map[string]any{"pipeId": data.PipeId.ValueString(), "name": data.Name.ValueString()}
