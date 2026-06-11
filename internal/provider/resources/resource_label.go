@@ -13,8 +13,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
+	"github.com/pipefy/terraform-provider-pipefy/internal/provider/validators"
 )
 
 var _ resource.Resource = &LabelResource{}
@@ -42,7 +44,11 @@ func (r *LabelResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 			"id":      schema.StringAttribute{Computed: true, Description: "The ID of the label", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"pipe_id": schema.StringAttribute{Required: true, Description: "The ID of the pipe that the label belongs to", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 			"name":    schema.StringAttribute{Required: true, Description: "Name of the label"},
-			"color":   schema.StringAttribute{Required: true, Description: "Color of the label (hex code, e.g. #FF0000)"},
+			"color": schema.StringAttribute{
+				Required:    true,
+				Description: "Color of the label as a hex code (e.g. #FF0000 or #FA0)",
+				Validators:  []validator.String{validators.HexColor()},
+			},
 		},
 	}
 }

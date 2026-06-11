@@ -36,7 +36,7 @@ resource "pipefy_label" "blocked" {
 
 ### Required
 
-- `color` (String) Color of the label (hex code, e.g. #FF0000)
+- `color` (String) Color of the label as a hex code (e.g. #FF0000 or #FA0)
 - `name` (String) Name of the label
 - `pipe_id` (String) The ID of the pipe that the label belongs to
 
