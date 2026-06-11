@@ -6,10 +6,13 @@ package resources
 import (
 	"context"
 	"fmt"
+	"strconv"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/float64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -25,9 +28,81 @@ func NewPhaseResource() resource.Resource { return &PhaseResource{} }
 type PhaseResource struct{ api *client.ApiClient }
 
 type PhaseModel struct {
-	Id     types.String `tfsdk:"id"`
-	PipeId types.String `tfsdk:"pipe_id"`
-	Name   types.String `tfsdk:"name"`
+	Id                              types.String  `tfsdk:"id"`
+	PipeId                          types.String  `tfsdk:"pipe_id"`
+	Name                            types.String  `tfsdk:"name"`
+	Done                            types.Bool    `tfsdk:"done"`
+	Description                     types.String  `tfsdk:"description"`
+	Index                           types.Float64 `tfsdk:"index"`
+	Color                           types.String  `tfsdk:"color"`
+	LatenessTime                    types.Int64   `tfsdk:"lateness_time"`
+	CanReceiveCardDirectlyFromDraft types.Bool    `tfsdk:"can_receive_card_directly_from_draft"`
+}
+
+const phaseSelection = "id name done description index color lateness_time can_receive_card_directly_from_draft repo_id"
+
+type phasePayload struct {
+	Id                              string   `json:"id"`
+	Name                            string   `json:"name"`
+	Done                            bool     `json:"done"`
+	Description                     *string  `json:"description"`
+	Index                           *float64 `json:"index"`
+	Color                           *string  `json:"color"`
+	LatenessTime                    *int64   `json:"lateness_time"`
+	CanReceiveCardDirectlyFromDraft *bool    `json:"can_receive_card_directly_from_draft"`
+	RepoId                          int64    `json:"repo_id"`
+}
+
+func (m *PhaseModel) setFromApi(p phasePayload) {
+	m.Id = types.StringValue(p.Id)
+	m.Name = types.StringValue(p.Name)
+	if p.RepoId != 0 {
+		m.PipeId = types.StringValue(strconv.FormatInt(p.RepoId, 10))
+	}
+	m.Done = types.BoolValue(p.Done)
+	m.Description = types.StringPointerValue(p.Description)
+	m.Index = types.Float64PointerValue(p.Index)
+	m.Color = types.StringPointerValue(p.Color)
+	m.LatenessTime = types.Int64PointerValue(p.LatenessTime)
+	m.CanReceiveCardDirectlyFromDraft = types.BoolPointerValue(p.CanReceiveCardDirectlyFromDraft)
+}
+
+func (m *PhaseModel) fillUnknowns(p phasePayload) {
+	if m.Done.IsUnknown() {
+		m.Done = types.BoolValue(p.Done)
+	}
+	if m.Description.IsUnknown() {
+		m.Description = types.StringPointerValue(p.Description)
+	}
+	if m.Index.IsUnknown() {
+		m.Index = types.Float64PointerValue(p.Index)
+	}
+	if m.Color.IsUnknown() {
+		m.Color = types.StringPointerValue(p.Color)
+	}
+	if m.LatenessTime.IsUnknown() {
+		m.LatenessTime = types.Int64PointerValue(p.LatenessTime)
+	}
+	if m.CanReceiveCardDirectlyFromDraft.IsUnknown() {
+		m.CanReceiveCardDirectlyFromDraft = types.BoolPointerValue(p.CanReceiveCardDirectlyFromDraft)
+	}
+}
+
+func hasValue(v attr.Value) bool { return !v.IsNull() && !v.IsUnknown() }
+
+func (m *PhaseModel) addSharedPhaseVars(vars map[string]any) {
+	if hasValue(m.Done) {
+		vars["done"] = m.Done.ValueBool()
+	}
+	if hasValue(m.Description) {
+		vars["description"] = m.Description.ValueString()
+	}
+	if hasValue(m.LatenessTime) {
+		vars["latenessTime"] = m.LatenessTime.ValueInt64()
+	}
+	if hasValue(m.CanReceiveCardDirectlyFromDraft) {
+		vars["canReceiveCardDirectlyFromDraft"] = m.CanReceiveCardDirectlyFromDraft.ValueBool()
+	}
 }
 
 func (r *PhaseResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -38,9 +113,20 @@ func (r *PhaseResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Phase resource",
 		Attributes: map[string]schema.Attribute{
-			"id":      schema.StringAttribute{Computed: true, Description: "The ID of the phase", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"pipe_id": schema.StringAttribute{Required: true, Description: "The ID of the pipe that the phase belongs to", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-			"name":    schema.StringAttribute{Required: true, Description: "Name of the phase"},
+			"id":          schema.StringAttribute{Computed: true, Description: "The ID of the phase", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"pipe_id":     schema.StringAttribute{Required: true, Description: "The ID of the pipe that the phase belongs to", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+			"name":        schema.StringAttribute{Required: true, Description: "Name of the phase"},
+			"done":        schema.BoolAttribute{Optional: true, Computed: true, Description: "Whether the phase is a final phase"},
+			"description": schema.StringAttribute{Optional: true, Computed: true, Description: "Description of the phase"},
+			"index": schema.Float64Attribute{
+				Optional:      true,
+				Computed:      true,
+				Description:   "Position of the phase on the board. The API only accepts index at creation, so changing a configured index forces replacement of the phase (cards in the phase are lost). Reordering phases outside Terraform also changes index, so a configured index can trigger replacement after such drift.",
+				PlanModifiers: []planmodifier.Float64{float64planmodifier.RequiresReplaceIfConfigured()},
+			},
+			"color":                                schema.StringAttribute{Optional: true, Computed: true, Description: "Color of the phase. One of: blue, cyan, gray, green, indigo, lime, orange, pink, purple, red, sky, yellow."},
+			"lateness_time":                        schema.Int64Attribute{Optional: true, Computed: true, Description: "SLA of the phase, in seconds"},
+			"can_receive_card_directly_from_draft": schema.BoolAttribute{Optional: true, Computed: true, Description: "Whether cards can be created directly in this phase"},
 		},
 	}
 }
@@ -68,22 +154,48 @@ func (r *PhaseResource) Create(ctx context.Context, req resource.CreateRequest, 
 	unlock := locks.LockRepo(data.PipeId.ValueString())
 	defer unlock()
 
-	mutation := "mutation($pipeId:ID!,$name:String!){ createPhase(input:{ pipe_id: $pipeId, name: $name }){ phase{ id name } } }"
+	mutation := "mutation($pipeId:ID!,$name:String!,$done:Boolean,$description:String,$index:Float,$latenessTime:Int,$canReceiveCardDirectlyFromDraft:Boolean){ createPhase(input:{ pipe_id:$pipeId, name:$name, done:$done, description:$description, index:$index, lateness_time:$latenessTime, can_receive_card_directly_from_draft:$canReceiveCardDirectlyFromDraft }){ phase{ " + phaseSelection + " } } }"
 	vars := map[string]any{"pipeId": data.PipeId.ValueString(), "name": data.Name.ValueString()}
+	data.addSharedPhaseVars(vars)
+	if hasValue(data.Index) {
+		vars["index"] = data.Index.ValueFloat64()
+	}
 	var out struct {
 		CreatePhase struct {
-			Phase struct {
-				Id   string `json:"id"`
-				Name string `json:"name"`
-			} `json:"phase"`
+			Phase phasePayload `json:"phase"`
 		} `json:"createPhase"`
 	}
 	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
 		resp.Diagnostics.AddError("create phase failed", err.Error())
 		return
 	}
-	data.Id = types.StringValue(out.CreatePhase.Phase.Id)
+	phase := out.CreatePhase.Phase
+
+	// createPhase does not accept color; apply it with a follow-up update.
+	// The other attributes are re-sent so the update cannot reset them.
+	var colorErr error
+	if hasValue(data.Color) {
+		updateVars := map[string]any{
+			"id":    phase.Id,
+			"name":  data.Name.ValueString(),
+			"color": data.Color.ValueString(),
+		}
+		data.addSharedPhaseVars(updateVars)
+		if updated, err := r.updatePhase(ctx, updateVars); err != nil {
+			colorErr = err
+		} else {
+			phase = updated
+		}
+	}
+
+	// State is saved even when the color update failed, so terraform
+	// taints the phase instead of leaking it outside of state.
+	data.Id = types.StringValue(phase.Id)
+	data.fillUnknowns(phase)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	if colorErr != nil {
+		resp.Diagnostics.AddError("create phase failed", fmt.Sprintf("phase %s was created but setting its color failed: %s", phase.Id, colorErr.Error()))
+	}
 }
 
 func (r *PhaseResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -96,13 +208,10 @@ func (r *PhaseResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	query := "query($id:ID!){ phase(id:$id){ id name } }"
+	query := "query($id:ID!){ phase(id:$id){ " + phaseSelection + " } }"
 	vars := map[string]any{"id": data.Id.ValueString()}
 	var out struct {
-		Phase *struct {
-			Id   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"phase"`
+		Phase *phasePayload `json:"phase"`
 	}
 	if err := r.api.DoGraphQL(ctx, query, vars, &out); err != nil {
 		resp.Diagnostics.AddError("read phase failed", err.Error())
@@ -112,6 +221,7 @@ func (r *PhaseResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		resp.State.RemoveResource(ctx)
 		return
 	}
+	data.setFromApi(*out.Phase)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -121,23 +231,31 @@ func (r *PhaseResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation($id:ID!,$name:String!){ updatePhase(input:{ id:$id, name:$name }){ phase{ id } } }"
-	vars := map[string]any{"id": data.Id.ValueString()}
-	if !data.Name.IsNull() {
-		vars["name"] = data.Name.ValueString()
+	vars := map[string]any{"id": data.Id.ValueString(), "name": data.Name.ValueString()}
+	data.addSharedPhaseVars(vars)
+	if hasValue(data.Color) {
+		vars["color"] = data.Color.ValueString()
 	}
-	var out struct {
-		UpdatePhase struct {
-			Phase struct {
-				Id string `json:"id"`
-			} `json:"phase"`
-		} `json:"updatePhase"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
+	phase, err := r.updatePhase(ctx, vars)
+	if err != nil {
 		resp.Diagnostics.AddError("update phase failed", err.Error())
 		return
 	}
+	data.fillUnknowns(phase)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+func (r *PhaseResource) updatePhase(ctx context.Context, vars map[string]any) (phasePayload, error) {
+	mutation := "mutation($id:ID!,$name:String!,$done:Boolean,$description:String,$color:Colors,$latenessTime:Int,$canReceiveCardDirectlyFromDraft:Boolean){ updatePhase(input:{ id:$id, name:$name, done:$done, description:$description, color:$color, lateness_time:$latenessTime, can_receive_card_directly_from_draft:$canReceiveCardDirectlyFromDraft }){ phase{ " + phaseSelection + " } } }"
+	var out struct {
+		UpdatePhase struct {
+			Phase phasePayload `json:"phase"`
+		} `json:"updatePhase"`
+	}
+	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
+		return phasePayload{}, err
+	}
+	return out.UpdatePhase.Phase, nil
 }
 
 func (r *PhaseResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
