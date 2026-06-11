@@ -19,8 +19,18 @@ resource "pipefy_pipe" "example" {
 }
 
 resource "pipefy_phase" "example" {
-  pipe_id = pipefy_pipe.example.id
-  name    = "Backlog"
+  pipe_id     = pipefy_pipe.example.id
+  name        = "Backlog"
+  description = "Work waiting to be triaged"
+  index       = 1
+}
+
+resource "pipefy_phase" "done" {
+  pipe_id                              = pipefy_pipe.example.id
+  name                                 = "Done"
+  done                                 = true
+  lateness_time                        = 86400
+  can_receive_card_directly_from_draft = false
 }
 ```
 
@@ -31,6 +41,14 @@ resource "pipefy_phase" "example" {
 
 - `name` (String) Name of the phase
 - `pipe_id` (String) The ID of the pipe that the phase belongs to
+
+### Optional
+
+- `can_receive_card_directly_from_draft` (Boolean) Whether cards can be created directly in this phase
+- `description` (String) Description of the phase
+- `done` (Boolean) Whether the phase is a final phase
+- `index` (Number) Position of the phase on the board. The API only accepts index at creation, so changing a configured index forces replacement of the phase (cards in the phase are lost). Reordering phases outside Terraform also changes index, so a configured index can trigger replacement after such drift.
+- `lateness_time` (Number) SLA of the phase, in seconds
 
 ### Read-Only
 
