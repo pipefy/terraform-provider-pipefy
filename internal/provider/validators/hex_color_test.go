@@ -4,7 +4,6 @@
 package validators
 
 import (
-	"context"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -42,7 +41,7 @@ func TestHexColor(t *testing.T) {
 				ConfigValue: tc.value,
 			}
 			resp := &validator.StringResponse{}
-			v.ValidateString(context.Background(), req, resp)
+			v.ValidateString(t.Context(), req, resp)
 			gotErr := resp.Diagnostics.HasError()
 			if gotErr != tc.wantErr {
 				t.Fatalf("want err=%v, got err=%v (diagnostics: %v)", tc.wantErr, gotErr, resp.Diagnostics)
