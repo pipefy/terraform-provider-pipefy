@@ -149,6 +149,7 @@ func (p *ScaffoldingProvider) Resources(ctx context.Context) []func() resource.R
 		resources.NewPhaseResource,
 		resources.NewFieldResource,
 		resources.NewAutomationResource,
+		resources.NewLabelResource,
 	}
 }
 
