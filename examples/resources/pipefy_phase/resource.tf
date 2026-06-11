@@ -8,7 +8,6 @@ resource "pipefy_phase" "example" {
   name        = "Backlog"
   description = "Work waiting to be triaged"
   index       = 1
-  color       = "blue"
 }
 
 resource "pipefy_phase" "done" {

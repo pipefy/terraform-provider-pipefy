@@ -34,12 +34,11 @@ type PhaseModel struct {
 	Done                            types.Bool    `tfsdk:"done"`
 	Description                     types.String  `tfsdk:"description"`
 	Index                           types.Float64 `tfsdk:"index"`
-	Color                           types.String  `tfsdk:"color"`
 	LatenessTime                    types.Int64   `tfsdk:"lateness_time"`
 	CanReceiveCardDirectlyFromDraft types.Bool    `tfsdk:"can_receive_card_directly_from_draft"`
 }
 
-const phaseSelection = "id name done description index color lateness_time can_receive_card_directly_from_draft repo_id"
+const phaseSelection = "id name done description index lateness_time can_receive_card_directly_from_draft repo_id"
 
 type phasePayload struct {
 	Id                              string   `json:"id"`
@@ -47,7 +46,6 @@ type phasePayload struct {
 	Done                            bool     `json:"done"`
 	Description                     *string  `json:"description"`
 	Index                           *float64 `json:"index"`
-	Color                           *string  `json:"color"`
 	LatenessTime                    *int64   `json:"lateness_time"`
 	CanReceiveCardDirectlyFromDraft *bool    `json:"can_receive_card_directly_from_draft"`
 	RepoId                          int64    `json:"repo_id"`
@@ -62,7 +60,6 @@ func (m *PhaseModel) setFromApi(p phasePayload) {
 	m.Done = types.BoolValue(p.Done)
 	m.Description = types.StringPointerValue(p.Description)
 	m.Index = types.Float64PointerValue(p.Index)
-	m.Color = types.StringPointerValue(p.Color)
 	m.LatenessTime = types.Int64PointerValue(p.LatenessTime)
 	m.CanReceiveCardDirectlyFromDraft = types.BoolPointerValue(p.CanReceiveCardDirectlyFromDraft)
 }
@@ -76,9 +73,6 @@ func (m *PhaseModel) fillUnknowns(p phasePayload) {
 	}
 	if m.Index.IsUnknown() {
 		m.Index = types.Float64PointerValue(p.Index)
-	}
-	if m.Color.IsUnknown() {
-		m.Color = types.StringPointerValue(p.Color)
 	}
 	if m.LatenessTime.IsUnknown() {
 		m.LatenessTime = types.Int64PointerValue(p.LatenessTime)
@@ -124,7 +118,8 @@ func (r *PhaseResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				Description:   "Position of the phase on the board. The API only accepts index at creation, so changing a configured index forces replacement of the phase (cards in the phase are lost). Reordering phases outside Terraform also changes index, so a configured index can trigger replacement after such drift.",
 				PlanModifiers: []planmodifier.Float64{float64planmodifier.RequiresReplaceIfConfigured()},
 			},
-			"color":                                schema.StringAttribute{Optional: true, Computed: true, Description: "Color of the phase. One of: blue, cyan, gray, green, indigo, lime, orange, pink, purple, red, sky, yellow."},
+			// color is intentionally not managed: the Pipefy API rejects
+			// changing a phase color, so exposing it would only error.
 			"lateness_time":                        schema.Int64Attribute{Optional: true, Computed: true, Description: "SLA of the phase, in seconds"},
 			"can_receive_card_directly_from_draft": schema.BoolAttribute{Optional: true, Computed: true, Description: "Whether cards can be created directly in this phase"},
 		},
@@ -171,31 +166,9 @@ func (r *PhaseResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 	phase := out.CreatePhase.Phase
 
-	// createPhase does not accept color; apply it with a follow-up update.
-	// The other attributes are re-sent so the update cannot reset them.
-	var colorErr error
-	if hasValue(data.Color) {
-		updateVars := map[string]any{
-			"id":    phase.Id,
-			"name":  data.Name.ValueString(),
-			"color": data.Color.ValueString(),
-		}
-		data.addSharedPhaseVars(updateVars)
-		if updated, err := r.updatePhase(ctx, updateVars); err != nil {
-			colorErr = err
-		} else {
-			phase = updated
-		}
-	}
-
-	// State is saved even when the color update failed, so terraform
-	// taints the phase instead of leaking it outside of state.
 	data.Id = types.StringValue(phase.Id)
 	data.fillUnknowns(phase)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
-	if colorErr != nil {
-		resp.Diagnostics.AddError("create phase failed", fmt.Sprintf("phase %s was created but setting its color failed: %s", phase.Id, colorErr.Error()))
-	}
 }
 
 func (r *PhaseResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -231,31 +204,20 @@ func (r *PhaseResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	mutation := "mutation($id:ID!,$name:String!,$done:Boolean,$description:String,$latenessTime:Int,$canReceiveCardDirectlyFromDraft:Boolean){ updatePhase(input:{ id:$id, name:$name, done:$done, description:$description, lateness_time:$latenessTime, can_receive_card_directly_from_draft:$canReceiveCardDirectlyFromDraft }){ phase{ " + phaseSelection + " } } }"
 	vars := map[string]any{"id": data.Id.ValueString(), "name": data.Name.ValueString()}
 	data.addSharedPhaseVars(vars)
-	if hasValue(data.Color) {
-		vars["color"] = data.Color.ValueString()
-	}
-	phase, err := r.updatePhase(ctx, vars)
-	if err != nil {
-		resp.Diagnostics.AddError("update phase failed", err.Error())
-		return
-	}
-	data.fillUnknowns(phase)
-	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
-}
-
-func (r *PhaseResource) updatePhase(ctx context.Context, vars map[string]any) (phasePayload, error) {
-	mutation := "mutation($id:ID!,$name:String!,$done:Boolean,$description:String,$color:Colors,$latenessTime:Int,$canReceiveCardDirectlyFromDraft:Boolean){ updatePhase(input:{ id:$id, name:$name, done:$done, description:$description, color:$color, lateness_time:$latenessTime, can_receive_card_directly_from_draft:$canReceiveCardDirectlyFromDraft }){ phase{ " + phaseSelection + " } } }"
 	var out struct {
 		UpdatePhase struct {
 			Phase phasePayload `json:"phase"`
 		} `json:"updatePhase"`
 	}
 	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
-		return phasePayload{}, err
+		resp.Diagnostics.AddError("update phase failed", err.Error())
+		return
 	}
-	return out.UpdatePhase.Phase, nil
+	data.fillUnknowns(out.UpdatePhase.Phase)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
 func (r *PhaseResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

@@ -23,7 +23,6 @@ resource "pipefy_phase" "example" {
   name        = "Backlog"
   description = "Work waiting to be triaged"
   index       = 1
-  color       = "blue"
 }
 
 resource "pipefy_phase" "done" {
@@ -46,7 +45,6 @@ resource "pipefy_phase" "done" {
 ### Optional
 
 - `can_receive_card_directly_from_draft` (Boolean) Whether cards can be created directly in this phase
-- `color` (String) Color of the phase. One of: blue, cyan, gray, green, indigo, lime, orange, pink, purple, red, sky, yellow.
 - `description` (String) Description of the phase
 - `done` (Boolean) Whether the phase is a final phase
 - `index` (Number) Position of the phase on the board. The API only accepts index at creation, so changing a configured index forces replacement of the phase (cards in the phase are lost). Reordering phases outside Terraform also changes index, so a configured index can trigger replacement after such drift.

@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -26,13 +25,10 @@ type phaseState struct {
 	Done            bool
 	Description     *string
 	Index           *float64
-	Color           *string
 	LatenessTime    *int64
 	CanReceiveDraft *bool
 	Deleted         bool
-	FailUpdate      bool
 	DeletedCt       int
-	CreateSawColor  bool
 	UpdateSawIndex  bool
 }
 
@@ -43,7 +39,6 @@ func (st *phaseState) toJSON() string {
 		"done":                                 st.Done,
 		"description":                          st.Description,
 		"index":                                st.Index,
-		"color":                                st.Color,
 		"lateness_time":                        st.LatenessTime,
 		"can_receive_card_directly_from_draft": st.CanReceiveDraft,
 		"repo_id":                              301,
@@ -86,11 +81,7 @@ func newPhaseServer(st *phaseState) *httptest.Server {
 		switch q := gr.Query; {
 		case strings.Contains(q, "createPhase"):
 			st.ID = "phase_123"
-			st.Color = nil
 			st.Deleted = false
-			if _, ok := gr.Variables["color"]; ok {
-				st.CreateSawColor = true
-			}
 			if v, ok := gr.Variables["index"].(float64); ok {
 				st.Index = &v
 			} else {
@@ -101,15 +92,8 @@ func newPhaseServer(st *phaseState) *httptest.Server {
 			merge()
 			_, _ = io.WriteString(w, `{"data":{"createPhase":{"phase":`+st.toJSON()+`}}}`)
 		case strings.Contains(q, "updatePhase"):
-			if st.FailUpdate {
-				_, _ = io.WriteString(w, `{"errors":[{"message":"color update failed"}]}`)
-				return
-			}
 			if _, ok := gr.Variables["index"]; ok {
 				st.UpdateSawIndex = true
-			}
-			if v, ok := gr.Variables["color"].(string); ok {
-				st.Color = &v
 			}
 			merge()
 			_, _ = io.WriteString(w, `{"data":{"updatePhase":{"phase":`+st.toJSON()+`}}}`)
@@ -163,7 +147,6 @@ func TestUnit_PhaseResource_CRUD(t *testing.T) {
 			done                                 = true
 			description                          = "First description"
 			index                                = 1
-			color                                = "blue"
 			lateness_time                        = 3600
 			can_receive_card_directly_from_draft = true
 	`
@@ -172,7 +155,6 @@ func TestUnit_PhaseResource_CRUD(t *testing.T) {
 			done                                 = false
 			description                          = "Second description"
 			index                                = 1
-			color                                = "red"
 			lateness_time                        = 7200
 			can_receive_card_directly_from_draft = false
 	`
@@ -202,7 +184,6 @@ func TestUnit_PhaseResource_CRUD(t *testing.T) {
 					phaseValue("name", knownvalue.StringExact("My Phase")),
 					phaseValue("done", knownvalue.Bool(false)),
 					phaseValue("description", knownvalue.Null()),
-					phaseValue("color", knownvalue.Null()),
 					phaseValue("index", knownvalue.Float64Exact(5)),
 				},
 			},
@@ -214,15 +195,13 @@ func TestUnit_PhaseResource_CRUD(t *testing.T) {
 				},
 			},
 			{
-				// index is create-only, so setting it forces replacement; color
-				// must reach the API through the follow-up update after create.
+				// index is create-only, so setting it forces replacement.
 				Config:           config(fullAttrsInitial),
 				ConfigPlanChecks: expectAction(plancheck.ResourceActionReplace),
 				ConfigStateChecks: []statecheck.StateCheck{
 					phaseValue("done", knownvalue.Bool(true)),
 					phaseValue("description", knownvalue.StringExact("First description")),
 					phaseValue("index", knownvalue.Float64Exact(1)),
-					phaseValue("color", knownvalue.StringExact("blue")),
 					phaseValue("lateness_time", knownvalue.Int64Exact(3600)),
 					phaseValue("can_receive_card_directly_from_draft", knownvalue.Bool(true)),
 				},
@@ -233,7 +212,6 @@ func TestUnit_PhaseResource_CRUD(t *testing.T) {
 				ConfigStateChecks: []statecheck.StateCheck{
 					phaseValue("done", knownvalue.Bool(false)),
 					phaseValue("description", knownvalue.StringExact("Second description")),
-					phaseValue("color", knownvalue.StringExact("red")),
 					phaseValue("lateness_time", knownvalue.Int64Exact(7200)),
 					phaseValue("can_receive_card_directly_from_draft", knownvalue.Bool(false)),
 				},
@@ -264,9 +242,6 @@ func TestUnit_PhaseResource_CRUD(t *testing.T) {
 		},
 	})
 
-	if st.CreateSawColor {
-		t.Errorf("createPhase must not receive a color variable; the API only accepts it on updatePhase")
-	}
 	if st.UpdateSawIndex {
 		t.Errorf("updatePhase must not receive an index variable; the API only accepts it on createPhase")
 	}
@@ -275,48 +250,5 @@ func TestUnit_PhaseResource_CRUD(t *testing.T) {
 	}
 	if st.DeletedCt < 2 {
 		t.Fatalf("expected deletes from the index replacement and the final destroy, got %d", st.DeletedCt)
-	}
-}
-
-// A failed follow-up color update must keep the created phase in state so
-// terraform taints and replaces it instead of leaking it.
-func TestUnit_PhaseResource_CreateColorFailureKeepsPhaseInState(t *testing.T) {
-	st := &phaseState{FailUpdate: true}
-	srv := newPhaseServer(st)
-	defer srv.Close()
-
-	config := `
-	provider "pipefy" {
-		endpoint = "` + srv.URL + `"
-		token    = "testtoken"
-	}
-
-	resource "pipefy_pipe" "p" {
-		name            = "My Pipe"
-		organization_id = "org_1"
-	}
-
-	resource "pipefy_phase" "test" {
-		pipe_id = pipefy_pipe.p.id
-		name    = "My Phase"
-		color   = "blue"
-	}
-	`
-
-	resource.UnitTest(t, resource.TestCase{
-		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
-			tfversion.SkipBelow(tfversion.Version1_8_0),
-		},
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config:      config,
-				ExpectError: regexp.MustCompile(`setting its color failed`),
-			},
-		},
-	})
-
-	if st.DeletedCt != 1 {
-		t.Fatalf("expected the half-created phase to be destroyed during cleanup, got %d deletes", st.DeletedCt)
 	}
 }
