@@ -79,8 +79,6 @@ main.go                    # Provider entrypoint
 
 - One of the two auth modes is required; the provider errors at configure time if neither is set.
 - Single-tenant deployments must set both `endpoint` and `token_url` to the tenant domain.
-- The provider struct is still named `ScaffoldingProvider` internally (leftover from the HashiCorp template); the user-facing type name is `pipefy`.
-- `examples/` still contains template directories named `scaffolding_example`; they are not part of the provider and can be ignored.
 
 ## Never
 
