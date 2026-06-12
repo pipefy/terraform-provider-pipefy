@@ -13,7 +13,7 @@ import (
 // WebhookFilters returns a validator.String that ensures the value is a JSON
 // object where each value is an array of numeric IDs.
 //
-// Example valid value: {"on_phase_id":[123,456]}
+// Example valid value: {"on_phase_id":[123,456]}.
 func WebhookFilters() validator.String { return webhookFiltersValidator{} }
 
 type webhookFiltersValidator struct{}
