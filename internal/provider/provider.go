@@ -150,6 +150,7 @@ func (p *ScaffoldingProvider) Resources(ctx context.Context) []func() resource.R
 		resources.NewFieldResource,
 		resources.NewAutomationResource,
 		resources.NewLabelResource,
+		resources.NewWebhookResource,
 	}
 }
 
