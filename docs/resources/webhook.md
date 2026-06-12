@@ -18,15 +18,25 @@ resource "pipefy_pipe" "example" {
   organization_id = "<ORG_ID>"
 }
 
+resource "pipefy_phase" "backlog" {
+  pipe_id = pipefy_pipe.example.id
+  name    = "Backlog"
+  index   = 1
+}
+
 resource "pipefy_webhook" "example" {
   pipe_id = pipefy_pipe.example.id
   name    = "My Webhook"
   url     = "https://example.com/webhook"
-  actions = ["card.create", "card.move", "card.done"]
+  actions = ["card.move"]
 
   headers = {
     "Authorization" = "Bearer secret-token"
   }
+
+  # Only fire when a card moves out of the Backlog phase.
+  # filters require exactly one action.
+  filters = "{\"from_phase_id\":[${pipefy_phase.backlog.id}]}"
 }
 ```
 
@@ -38,11 +48,11 @@ resource "pipefy_webhook" "example" {
 - `actions` (Set of String) Set of event names that trigger this webhook. Valid values: card.create, card.done, card.expired, card.late, card.move, card.overdue, card.deleted, card.field_update
 - `name` (String) Name of the webhook
 - `pipe_id` (String) The ID of the pipe this webhook belongs to
-- `url` (String) The HTTPS URL that Pipefy will POST events to
+- `url` (String) The HTTP or HTTPS URL that Pipefy will POST events to
 
 ### Optional
 
-- `filters` (String) JSON-encoded filter conditions for this webhook. Treated as write-only: not refreshed from the API to avoid JSON formatting diffs.
+- `filters` (String) JSON-encoded filter conditions for this webhook. Must be an object where each value is an array of numeric IDs, e.g. {"on_phase_id":[123]}. Only one action may be set when filters are used. Treated as write-only: not refreshed from the API to avoid JSON formatting diffs.
 - `headers` (Map of String, Sensitive) HTTP headers sent with each webhook delivery (e.g. Authorization). Treated as write-only: not refreshed from the API to avoid perpetual diffs on sensitive values.
 
 ### Read-Only
