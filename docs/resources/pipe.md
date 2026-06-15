@@ -16,6 +16,23 @@ Pipe resource
 resource "pipefy_pipe" "example" {
   name            = "Example Pipe"
   organization_id = "<ORG_ID>"
+
+  icon   = "rocket"
+  color  = "purple"
+  public = false
+
+  only_admin_can_remove_cards   = true
+  only_assignees_can_edit_cards = false
+
+  preferences = {
+    inbox_email_enabled = false
+    main_tab_views      = ["PreviousPhases", "Comments"]
+  }
+
+  sla = {
+    time = 7
+    unit = "days"
+  }
 }
 ```
 
@@ -29,12 +46,35 @@ resource "pipefy_pipe" "example" {
 
 ### Optional
 
-- `public` (Boolean) Whether the pipe is public or not
+- `color` (String) Pipe color. One of: blue, cyan, gray, green, indigo, lime, pink, purple, orange, red, sky, yellow.
+- `icon` (String) Named pipe icon (for example rocket, calendar). Defaults to pipefy.
+- `only_admin_can_remove_cards` (Boolean) Whether only admins can delete cards
+- `only_assignees_can_edit_cards` (Boolean) Whether only card assignees can edit a card
+- `preferences` (Attributes) Pipe preferences. Omit the block to leave them unmanaged; removing it stops managing them but does not reset them on the server. (see [below for nested schema](#nestedatt--preferences))
+- `public` (Boolean) Whether the pipe is public
+- `sla` (Attributes) Card SLA. Omit the block to leave it unmanaged; removing it stops managing it but does not reset it on the server. (see [below for nested schema](#nestedatt--sla))
 
 ### Read-Only
 
 - `id` (String) The ID of the pipe
 - `start_form_phase_id` (String) The ID of the start form phase
+
+<a id="nestedatt--preferences"></a>
+### Nested Schema for `preferences`
+
+Optional:
+
+- `inbox_email_enabled` (Boolean) Whether the email inbox is enabled
+- `main_tab_views` (List of String) Card views to show. Must be non-empty and include PreviousPhases. Allowed: EmailTemplate, InboxEmail, Checklist, Attachments, Comments, PreviousPhases, Relations.
+
+
+<a id="nestedatt--sla"></a>
+### Nested Schema for `sla`
+
+Required:
+
+- `time` (Number) Count of units (minutes 1-59, hours 1-23, days >= 1)
+- `unit` (String) SLA unit: minutes, hours, days.
 
 ## Import
 
