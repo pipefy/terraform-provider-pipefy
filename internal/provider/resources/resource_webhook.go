@@ -57,7 +57,7 @@ func (r *WebhookResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			"actions": schema.SetAttribute{
 				Required:    true,
 				ElementType: types.StringType,
-				Description: "Set of event names that trigger this webhook. Valid values: card.create, card.done, card.expired, card.late, card.move, card.overdue, card.deleted, card.field_update",
+				Description: "Set of event names that trigger this webhook. Valid values: " + strings.Join(validators.ValidWebhookActionsSlice, ", "),
 				Validators:  []validator.Set{validators.WebhookActions()},
 			},
 			"headers": schema.MapAttribute{

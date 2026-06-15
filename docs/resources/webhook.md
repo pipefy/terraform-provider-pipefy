@@ -45,7 +45,7 @@ resource "pipefy_webhook" "example" {
 
 ### Required
 
-- `actions` (Set of String) Set of event names that trigger this webhook. Valid values: card.create, card.done, card.expired, card.late, card.move, card.overdue, card.deleted, card.field_update
+- `actions` (Set of String) Set of event names that trigger this webhook. Valid values: card.create, card.move, card.late, card.expired, card.overdue, card.done, card.delete, card.comment_create, card.email_received, card.field_update, user.removal_from_org, user.removal_from_pipe, user.removal_from_table, user.invitation_acceptance, user.invitation_sent, user.role_set, audit_log.export_finished
 - `name` (String) Name of the webhook
 - `pipe_id` (String) The ID of the pipe this webhook belongs to
 - `url` (String) The HTTP or HTTPS URL that Pipefy will POST events to

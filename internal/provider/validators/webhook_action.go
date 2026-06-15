@@ -10,30 +10,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 )
 
-var validWebhookActionsSet = map[string]bool{
-	// card actions
-	"card.create":         true,
-	"card.move":           true,
-	"card.late":           true,
-	"card.expired":        true,
-	"card.overdue":        true,
-	"card.done":           true,
-	"card.delete":         true,
-	"card.comment_create": true,
-	"card.email_received": true,
-	"card.field_update":   true,
-	// user actions
-	"user.removal_from_org":      true,
-	"user.removal_from_pipe":     true,
-	"user.removal_from_table":    true,
-	"user.invitation_acceptance": true,
-	"user.invitation_sent":       true,
-	"user.role_set":              true,
-	// audit log actions
-	"audit_log.export_finished": true,
-}
-
-var validWebhookActionsSlice = []string{
+// ValidWebhookActionsSlice is the authoritative list of accepted action names.
+var ValidWebhookActionsSlice = []string{
 	"card.create", "card.move", "card.late", "card.expired", "card.overdue",
 	"card.done", "card.delete", "card.comment_create", "card.email_received", "card.field_update",
 	"user.removal_from_org", "user.removal_from_pipe", "user.removal_from_table",
@@ -41,14 +19,20 @@ var validWebhookActionsSlice = []string{
 	"audit_log.export_finished",
 }
 
-// WebhookActions returns a validator.Set that ensures every element is a
-// known Pipefy webhook event name (sourced from Webhooks::Actions.all).
+var validWebhookActionsSet = func() map[string]bool {
+	m := make(map[string]bool, len(ValidWebhookActionsSlice))
+	for _, a := range ValidWebhookActionsSlice {
+		m[a] = true
+	}
+	return m
+}()
+
 func WebhookActions() validator.Set { return webhookActionsValidator{} }
 
 type webhookActionsValidator struct{}
 
 func (v webhookActionsValidator) Description(_ context.Context) string {
-	return "each action must be one of: " + strings.Join(validWebhookActionsSlice, ", ")
+	return "each action must be one of: " + strings.Join(ValidWebhookActionsSlice, ", ")
 }
 
 func (v webhookActionsValidator) MarkdownDescription(ctx context.Context) string {
@@ -69,7 +53,7 @@ func (v webhookActionsValidator) ValidateSet(ctx context.Context, req validator.
 			resp.Diagnostics.AddAttributeError(
 				req.Path,
 				"Invalid webhook action",
-				`"`+a+`" is not a valid webhook action. Valid actions: `+strings.Join(validWebhookActionsSlice, ", "),
+				`"`+a+`" is not a valid webhook action. Valid actions: `+strings.Join(ValidWebhookActionsSlice, ", "),
 			)
 		}
 	}
