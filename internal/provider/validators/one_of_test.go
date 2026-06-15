@@ -4,7 +4,6 @@
 package validators_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -24,7 +23,7 @@ func TestOneOf(t *testing.T) {
 		{types.StringUnknown(), false},
 	} {
 		resp := &validator.StringResponse{}
-		v.ValidateString(context.Background(), validator.StringRequest{ConfigValue: tc.val}, resp)
+		v.ValidateString(t.Context(), validator.StringRequest{ConfigValue: tc.val}, resp)
 		if resp.Diagnostics.HasError() != tc.wantErr {
 			t.Errorf("value %v: hasErr=%v want %v", tc.val, resp.Diagnostics.HasError(), tc.wantErr)
 		}

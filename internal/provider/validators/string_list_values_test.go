@@ -4,7 +4,6 @@
 package validators_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -32,7 +31,7 @@ func TestStringListValues(t *testing.T) {
 		{mk("PreviousPhases", "Nope"), true},
 	} {
 		resp := &validator.ListResponse{}
-		v.ValidateList(context.Background(), validator.ListRequest{ConfigValue: tc.list}, resp)
+		v.ValidateList(t.Context(), validator.ListRequest{ConfigValue: tc.list}, resp)
 		if resp.Diagnostics.HasError() != tc.wantErr {
 			t.Errorf("hasErr=%v want %v", resp.Diagnostics.HasError(), tc.wantErr)
 		}

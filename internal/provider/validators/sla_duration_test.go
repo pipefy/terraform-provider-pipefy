@@ -4,7 +4,6 @@
 package validators_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -39,7 +38,7 @@ func TestSLADuration(t *testing.T) {
 		{0, "days", true},
 	} {
 		resp := &validator.ObjectResponse{}
-		v.ValidateObject(context.Background(), validator.ObjectRequest{ConfigValue: slaObject(t, tc.time, tc.unit)}, resp)
+		v.ValidateObject(t.Context(), validator.ObjectRequest{ConfigValue: slaObject(t, tc.time, tc.unit)}, resp)
 		if resp.Diagnostics.HasError() != tc.wantErr {
 			t.Errorf("(%d,%s): hasErr=%v want %v", tc.time, tc.unit, resp.Diagnostics.HasError(), tc.wantErr)
 		}
