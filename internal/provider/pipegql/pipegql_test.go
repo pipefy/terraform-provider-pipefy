@@ -1,12 +1,12 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package pipeapi_test
+package pipegql_test
 
 import (
 	"testing"
 
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/pipeapi"
+	"github.com/pipefy/terraform-provider-pipefy/internal/provider/pipegql"
 )
 
 func TestUnitNameToSeconds(t *testing.T) {
@@ -21,7 +21,7 @@ func TestUnitNameToSeconds(t *testing.T) {
 		"bad":     {"weeks", 0, false},
 	}
 	for n, c := range cases {
-		got, ok := pipeapi.UnitNameToSeconds(c.name)
+		got, ok := pipegql.UnitNameToSeconds(c.name)
 		if got != c.want || ok != c.ok {
 			t.Errorf("%s: got (%d,%v), want (%d,%v)", n, got, ok, c.want, c.ok)
 		}
@@ -39,7 +39,7 @@ func TestUnitSecondsToName(t *testing.T) {
 		120:   {"", false},
 	}
 	for secs, c := range cases {
-		got, ok := pipeapi.UnitSecondsToName(secs)
+		got, ok := pipegql.UnitSecondsToName(secs)
 		if got != c.want || ok != c.ok {
 			t.Errorf("%d: got (%q,%v), want (%q,%v)", secs, got, ok, c.want, c.ok)
 		}

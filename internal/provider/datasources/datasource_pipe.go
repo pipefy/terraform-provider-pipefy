@@ -11,7 +11,7 @@ import (
 	dsschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/pipeapi"
+	"github.com/pipefy/terraform-provider-pipefy/internal/provider/pipegql"
 )
 
 var _ datasource.DataSource = &PipeDataSource{}
@@ -102,10 +102,10 @@ func (d *PipeDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 		return
 	}
 
-	query := "query($id:ID!){ pipe(id:$id){ " + pipeapi.Selection + " organization { id } } }"
+	query := "query($id:ID!){ pipe(id:$id){ " + pipegql.Selection + " organization { id } } }"
 	var out struct {
 		Pipe *struct {
-			pipeapi.Payload
+			pipegql.Payload
 			Organization *struct {
 				Id string `json:"id"`
 			} `json:"organization"`
@@ -139,7 +139,7 @@ func (d *PipeDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 		}
 	}
 	if p.ExpirationUnit != nil && p.ExpirationTimeByUnit != nil {
-		if name, ok := pipeapi.UnitSecondsToName(*p.ExpirationUnit); ok {
+		if name, ok := pipegql.UnitSecondsToName(*p.ExpirationUnit); ok {
 			data.SLA = &pipeDSSLAModel{Time: types.Int64Value(*p.ExpirationTimeByUnit), Unit: types.StringValue(name)}
 		}
 	}

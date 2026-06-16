@@ -1,9 +1,9 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-// Package pipeapi holds the GraphQL field selection and the pure mapping shared
+// Package pipegql holds the GraphQL field selection and the pure mapping shared
 // by the pipefy_pipe resource and data source, so their reads stay in step.
-package pipeapi
+package pipegql
 
 const Selection = "id name public icon color " +
 	"only_admin_can_remove_cards only_assignees_can_edit_cards " +

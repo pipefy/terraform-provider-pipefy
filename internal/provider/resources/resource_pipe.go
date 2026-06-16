@@ -17,7 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/pipeapi"
+	"github.com/pipefy/terraform-provider-pipefy/internal/provider/pipegql"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/validators"
 )
 
@@ -61,7 +61,7 @@ const updatePipeMutation = "mutation($id:ID!,$name:String,$public:Boolean,$icon:
 	"updatePipe(input:{ id:$id, name:$name, public:$public, icon:$icon, color:$color, " +
 	"only_admin_can_remove_cards:$onlyAdminCanRemoveCards, only_assignees_can_edit_cards:$onlyAssigneesCanEditCards, " +
 	"expiration_time_by_unit:$expirationTimeByUnit, expiration_unit:$expirationUnit, preferences:$preferences }){ pipe{ " +
-	pipeapi.Selection + " } } }"
+	pipegql.Selection + " } } }"
 
 func (r *PipeResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_pipe"
@@ -110,8 +110,8 @@ func (r *PipeResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 					"time": schema.Int64Attribute{Required: true, Description: "Count of units (minutes 1-59, hours 1-23, days >= 1)"},
 					"unit": schema.StringAttribute{
 						Required:    true,
-						Description: "SLA unit: " + strings.Join(pipeapi.UnitNames, ", ") + ".",
-						Validators:  []validator.String{validators.OneOf(pipeapi.UnitNames...)},
+						Description: "SLA unit: " + strings.Join(pipegql.UnitNames, ", ") + ".",
+						Validators:  []validator.String{validators.OneOf(pipegql.UnitNames...)},
 					},
 				},
 			},
@@ -136,7 +136,7 @@ func (r *PipeResource) Configure(ctx context.Context, req resource.ConfigureRequ
 	r.api = api
 }
 
-func (m *PipeModel) setFromApi(p pipeapi.Payload) {
+func (m *PipeModel) setFromApi(p pipegql.Payload) {
 	m.Id = types.StringValue(p.Id)
 	m.Name = types.StringValue(p.Name)
 	m.Public = types.BoolPointerValue(p.Public)
@@ -149,7 +149,7 @@ func (m *PipeModel) setFromApi(p pipeapi.Payload) {
 	}
 }
 
-func (m *PipeModel) fillUnknowns(p pipeapi.Payload) {
+func (m *PipeModel) fillUnknowns(p pipegql.Payload) {
 	if m.Public.IsUnknown() {
 		m.Public = types.BoolPointerValue(p.Public)
 	}
@@ -170,14 +170,14 @@ func (m *PipeModel) fillUnknowns(p pipeapi.Payload) {
 	}
 }
 
-func (m *PipeModel) refreshPreferences(ctx context.Context, p *pipeapi.Preferences) diag.Diagnostics {
+func (m *PipeModel) refreshPreferences(ctx context.Context, p *pipegql.Preferences) diag.Diagnostics {
 	if m.Preferences == nil || p == nil {
 		return nil
 	}
 	return m.Preferences.fill(ctx, p, false)
 }
 
-func (m *PipeModel) fillPreferencesUnknowns(ctx context.Context, p *pipeapi.Preferences) diag.Diagnostics {
+func (m *PipeModel) fillPreferencesUnknowns(ctx context.Context, p *pipegql.Preferences) diag.Diagnostics {
 	if m.Preferences == nil || p == nil {
 		return nil
 	}
@@ -187,7 +187,7 @@ func (m *PipeModel) fillPreferencesUnknowns(ctx context.Context, p *pipeapi.Pref
 // fill copies API preference values into the model. onlyUnknown=true keeps
 // configured values (Create and Update); false overwrites so Read catches
 // out-of-band drift.
-func (pm *pipePreferencesModel) fill(ctx context.Context, p *pipeapi.Preferences, onlyUnknown bool) diag.Diagnostics {
+func (pm *pipePreferencesModel) fill(ctx context.Context, p *pipegql.Preferences, onlyUnknown bool) diag.Diagnostics {
 	var diags diag.Diagnostics
 	if !onlyUnknown || pm.InboxEmailEnabled.IsUnknown() {
 		pm.InboxEmailEnabled = types.BoolPointerValue(p.InboxEmailEnabled)
@@ -200,11 +200,11 @@ func (pm *pipePreferencesModel) fill(ctx context.Context, p *pipeapi.Preferences
 	return diags
 }
 
-func (m *PipeModel) refreshSLA(p pipeapi.Payload) {
+func (m *PipeModel) refreshSLA(p pipegql.Payload) {
 	if m.SLA == nil || p.ExpirationUnit == nil || p.ExpirationTimeByUnit == nil {
 		return
 	}
-	name, ok := pipeapi.UnitSecondsToName(*p.ExpirationUnit)
+	name, ok := pipegql.UnitSecondsToName(*p.ExpirationUnit)
 	if !ok {
 		return
 	}
@@ -234,7 +234,7 @@ func (m *PipeModel) addSettingsVars(ctx context.Context, vars map[string]any) di
 	// constrains the pair so the API stores it without normalizing to a coarser
 	// unit, so the configured values round-trip. Read re-derives it to catch drift.
 	if m.SLA != nil {
-		if secs, ok := pipeapi.UnitNameToSeconds(m.SLA.Unit.ValueString()); ok {
+		if secs, ok := pipegql.UnitNameToSeconds(m.SLA.Unit.ValueString()); ok {
 			vars["expirationTimeByUnit"] = m.SLA.Time.ValueInt64()
 			vars["expirationUnit"] = secs
 		}
@@ -280,10 +280,10 @@ func (r *PipeResource) Create(ctx context.Context, req resource.CreateRequest, r
 
 	// createPipe seeds the pipe with three default phases. Fetch them (with the
 	// start form phase and current settings) so they can be removed.
-	phasesQuery := "query($id:ID!){ pipe(id:$id){ " + pipeapi.Selection + " phases { id } } }"
+	phasesQuery := "query($id:ID!){ pipe(id:$id){ " + pipegql.Selection + " phases { id } } }"
 	var phasesOut struct {
 		Pipe *struct {
-			pipeapi.Payload
+			pipegql.Payload
 			Phases []struct {
 				Id string `json:"id"`
 			} `json:"phases"`
@@ -326,7 +326,7 @@ func (r *PipeResource) Create(ctx context.Context, req resource.CreateRequest, r
 		settings["id"] = pipeId
 		var updated struct {
 			UpdatePipe struct {
-				Pipe pipeapi.Payload `json:"pipe"`
+				Pipe pipegql.Payload `json:"pipe"`
 			} `json:"updatePipe"`
 		}
 		if err := r.api.DoGraphQL(ctx, updatePipeMutation, settings, &updated); err != nil {
@@ -351,10 +351,10 @@ func (r *PipeResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
-	query := "query($id:ID!){ pipe(id:$id){ " + pipeapi.Selection + " organization { id } } }"
+	query := "query($id:ID!){ pipe(id:$id){ " + pipegql.Selection + " organization { id } } }"
 	var out struct {
 		Pipe *struct {
-			pipeapi.Payload
+			pipegql.Payload
 			Organization *struct {
 				Id string `json:"id"`
 			} `json:"organization"`
@@ -390,7 +390,7 @@ func (r *PipeResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	}
 	var out struct {
 		UpdatePipe struct {
-			Pipe pipeapi.Payload `json:"pipe"`
+			Pipe pipegql.Payload `json:"pipe"`
 		} `json:"updatePipe"`
 	}
 	if err := r.api.DoGraphQL(ctx, updatePipeMutation, vars, &out); err != nil {
