@@ -257,8 +257,6 @@ func TestUnit_PipeResource_CRUD(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				// Minimal create: only name and organization. The computed
-				// attributes resolve from the server defaults.
 				Config: config(``),
 				ConfigStateChecks: []statecheck.StateCheck{
 					val(tfjsonpath.New("id"), knownvalue.StringExact("pipe_123")),
@@ -272,7 +270,6 @@ func TestUnit_PipeResource_CRUD(t *testing.T) {
 				},
 			},
 			{
-				// Set every attribute. The change is applied in place via updatePipe.
 				Config:           config(fullAttrs),
 				ConfigPlanChecks: expectAction(plancheck.ResourceActionUpdate),
 				ConfigStateChecks: []statecheck.StateCheck{
@@ -291,7 +288,6 @@ func TestUnit_PipeResource_CRUD(t *testing.T) {
 				},
 			},
 			{
-				// In-place update of color, a preference, and the SLA (days -> hours).
 				Config:           config(updatedAttrs),
 				ConfigPlanChecks: expectAction(plancheck.ResourceActionUpdate),
 				ConfigStateChecks: []statecheck.StateCheck{
@@ -301,7 +297,6 @@ func TestUnit_PipeResource_CRUD(t *testing.T) {
 				},
 			},
 			{
-				// Out-of-band color drift must be written back on the next apply.
 				PreConfig:        func() { st.Color = "orange" },
 				Config:           config(updatedAttrs),
 				ConfigPlanChecks: expectAction(plancheck.ResourceActionUpdate),
@@ -310,8 +305,6 @@ func TestUnit_PipeResource_CRUD(t *testing.T) {
 				},
 			},
 			{
-				// A pipe deleted outside terraform is recreated; the recreate
-				// applies the configured settings through updatePipe.
 				PreConfig:        func() { st.Deleted = true },
 				Config:           config(updatedAttrs),
 				ConfigPlanChecks: expectAction(plancheck.ResourceActionCreate),
@@ -321,9 +314,6 @@ func TestUnit_PipeResource_CRUD(t *testing.T) {
 				},
 			},
 			{
-				// Import recovers the top-level scalars. The optional preferences
-				// and sla blocks are managed only when declared, so they are not
-				// reconstructed by import.
 				ResourceName:            "pipefy_pipe.test",
 				ImportState:             true,
 				ImportStateVerify:       true,

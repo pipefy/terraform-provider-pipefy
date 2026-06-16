@@ -12,9 +12,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 )
 
-// OneOf returns a validator.String that accepts only the listed values. Null
-// and unknown values pass through so optional / computed attributes are not
-// rejected.
 func OneOf(allowed ...string) validator.String { return oneOfValidator{allowed: allowed} }
 
 type oneOfValidator struct{ allowed []string }

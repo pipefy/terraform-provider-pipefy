@@ -11,9 +11,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// SLADuration enforces that the time count fits inside its unit so the SLA
-// round-trips. A read normalizes the duration to its coarsest unit, so 60
-// minutes or 24 hours would come back as a different pair and diff forever.
 func SLADuration() validator.Object { return slaDurationValidator{} }
 
 type slaDurationValidator struct{}
@@ -44,9 +41,9 @@ func (v slaDurationValidator) ValidateObject(_ context.Context, req validator.Ob
 	case "hours":
 		maxTime = 23
 	case "days":
-		maxTime = 0 // no upper bound
+		maxTime = 0
 	default:
-		return // an unknown unit is reported by the unit's OneOf validator
+		return
 	}
 	if t < 1 || (maxTime > 0 && t > maxTime) {
 		resp.Diagnostics.AddAttributeError(

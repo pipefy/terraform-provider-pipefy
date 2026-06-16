@@ -11,9 +11,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// ListContains returns a validator.List that requires the list to include the
-// given string value. A list that must contain a value is also non-empty. Null
-// and unknown lists pass through.
 func ListContains(required string) validator.List { return listContainsValidator{required: required} }
 
 type listContainsValidator struct{ required string }

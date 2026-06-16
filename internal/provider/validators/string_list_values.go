@@ -13,8 +13,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// StringListValues returns a validator.List that requires every element to be
-// one of the listed values. Null and unknown lists or elements pass through.
 func StringListValues(allowed ...string) validator.List {
 	return stringListValuesValidator{allowed: allowed}
 }
