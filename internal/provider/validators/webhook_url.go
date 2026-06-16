@@ -25,9 +25,6 @@ func (v webhookURLValidator) MarkdownDescription(ctx context.Context) string {
 }
 
 func (v webhookURLValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
-	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
-		return
-	}
 	raw := req.ConfigValue.ValueString()
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {

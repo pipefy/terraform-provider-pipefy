@@ -23,6 +23,7 @@ import (
 
 var _ resource.Resource = &WebhookResource{}
 var _ resource.ResourceWithImportState = &WebhookResource{}
+var _ resource.ResourceWithConfigValidators = &WebhookResource{}
 
 func NewWebhookResource() resource.Resource { return &WebhookResource{} }
 
@@ -36,6 +37,38 @@ type WebhookModel struct {
 	Actions types.Set    `tfsdk:"actions"`
 	Headers types.Map    `tfsdk:"headers"`
 	Filters types.String `tfsdk:"filters"`
+}
+
+func (r *WebhookResource) ConfigValidators(_ context.Context) []resource.ConfigValidator {
+	return []resource.ConfigValidator{webhookFiltersActionsValidator{}}
+}
+
+type webhookFiltersActionsValidator struct{}
+
+func (v webhookFiltersActionsValidator) Description(_ context.Context) string {
+	return "when filters is set, exactly one action must be specified"
+}
+
+func (v webhookFiltersActionsValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v webhookFiltersActionsValidator) ValidateResource(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var data WebhookModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if data.Filters.IsNull() || data.Filters.IsUnknown() {
+		return
+	}
+	if len(data.Actions.Elements()) != 1 {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("actions"),
+			"Invalid webhook configuration",
+			fmt.Sprintf("exactly one action must be specified when filters is set, got %d", len(data.Actions.Elements())),
+		)
+	}
 }
 
 func (r *WebhookResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {

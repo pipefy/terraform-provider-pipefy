@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -210,6 +211,15 @@ func TestUnit_WebhookResource_CRUD(t *testing.T) {
 					),
 				},
 			},
+			// Import step: verify pipe_id/webhook_id import round-trips name, url, actions.
+			// headers and filters are write-only and not returned by the API, so they are ignored.
+			{
+				ResourceName:            "pipefy_webhook.test",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateId:           "pipe_1/wh_123",
+				ImportStateVerifyIgnore: []string{"headers", "filters"},
+			},
 			{
 				Config: configDestroy,
 			},
@@ -219,6 +229,107 @@ func TestUnit_WebhookResource_CRUD(t *testing.T) {
 	if st.DeletedCt == 0 {
 		t.Fatalf("expected deleteWebhook mutation to be called")
 	}
+}
+
+func TestUnit_WebhookResource_EmptyActions(t *testing.T) {
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+				provider "pipefy" { token = "t" }
+				resource "pipefy_webhook" "test" {
+					pipe_id = "p1"
+					name    = "w"
+					url     = "https://example.com"
+					actions = []
+				}`,
+				ExpectError: regexp.MustCompile(`at least one action`),
+			},
+		},
+	})
+}
+
+func TestUnit_WebhookResource_FiltersRequiresSingleAction(t *testing.T) {
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+				provider "pipefy" { token = "t" }
+				resource "pipefy_webhook" "test" {
+					pipe_id = "p1"
+					name    = "w"
+					url     = "https://example.com"
+					actions = ["card.create", "card.move"]
+					filters = "{\"on_phase_id\":[1]}"
+				}`,
+				ExpectError: regexp.MustCompile(`exactly one action`),
+			},
+		},
+	})
+}
+
+func TestUnit_WebhookResource_WithHeadersAndFilters(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var gr gqlReq
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gr)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(gr.Query, "createWebhook"):
+			_, _ = io.WriteString(w, `{"data":{"createWebhook":{"webhook":{"id":"wh_1","name":"w","url":"https://example.com","actions":["card.move"]}}}}`)
+		case strings.Contains(gr.Query, "deleteWebhook"):
+			_, _ = io.WriteString(w, `{"data":{"deleteWebhook":{"success":true}}}`)
+		case strings.Contains(gr.Query, "webhooks"):
+			_, _ = io.WriteString(w, `{"data":{"pipe":{"webhooks":[{"id":"wh_1","name":"w","url":"https://example.com","actions":["card.move"]}]}}}`)
+		default:
+			_, _ = io.WriteString(w, `{"data":{}}`)
+		}
+	}))
+	defer srv.Close()
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+				provider "pipefy" {
+					endpoint = "` + srv.URL + `"
+					token    = "testtoken"
+				}
+				resource "pipefy_webhook" "test" {
+					pipe_id = "pipe_1"
+					name    = "w"
+					url     = "https://example.com"
+					actions = ["card.move"]
+					headers = { "X-Token" = "secret" }
+					filters = "{\"on_phase_id\":[99]}"
+				}`,
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(
+						"pipefy_webhook.test",
+						tfjsonpath.New("filters"),
+						knownvalue.StringExact(`{"on_phase_id":[99]}`),
+					),
+					statecheck.ExpectKnownValue(
+						"pipefy_webhook.test",
+						tfjsonpath.New("headers").AtMapKey("X-Token"),
+						knownvalue.StringExact("secret"),
+					),
+				},
+			},
+		},
+	})
 }
 
 func toStringSlice(in []any) []string {

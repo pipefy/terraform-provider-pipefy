@@ -40,12 +40,17 @@ func (v webhookActionsValidator) MarkdownDescription(ctx context.Context) string
 }
 
 func (v webhookActionsValidator) ValidateSet(ctx context.Context, req validator.SetRequest, resp *validator.SetResponse) {
-	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
-		return
-	}
 	var actions []string
 	resp.Diagnostics.Append(req.ConfigValue.ElementsAs(ctx, &actions, false)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if len(actions) == 0 {
+		resp.Diagnostics.AddAttributeError(
+			req.Path,
+			"Invalid webhook actions",
+			"at least one action must be specified",
+		)
 		return
 	}
 	for _, a := range actions {
