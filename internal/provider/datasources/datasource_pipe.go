@@ -138,10 +138,8 @@ func (d *PipeDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 			MainTabViews:      views,
 		}
 	}
-	if p.ExpirationUnit != nil && p.ExpirationTimeByUnit != nil {
-		if name, ok := pipegql.UnitSecondsToName(*p.ExpirationUnit); ok {
-			data.SLA = &pipeDSSLAModel{Time: types.Int64Value(*p.ExpirationTimeByUnit), Unit: types.StringValue(name)}
-		}
+	if count, unit, ok := p.SLA(); ok {
+		data.SLA = &pipeDSSLAModel{Time: types.Int64Value(count), Unit: types.StringValue(unit)}
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)

@@ -60,3 +60,14 @@ func UnitSecondsToName(seconds int64) (string, bool) {
 	}
 	return "", false
 }
+
+func (p Payload) SLA() (count int64, unit string, ok bool) {
+	if p.ExpirationUnit == nil || p.ExpirationTimeByUnit == nil {
+		return 0, "", false
+	}
+	name, ok := UnitSecondsToName(*p.ExpirationUnit)
+	if !ok {
+		return 0, "", false
+	}
+	return *p.ExpirationTimeByUnit, name, true
+}

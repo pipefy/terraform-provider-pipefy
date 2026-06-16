@@ -100,9 +100,6 @@ func TestUnit_PipeDataSource_Read(t *testing.T) {
 			},
 		},
 	})
-
-	// The bug being fixed: the query must select public and organization (and the
-	// new fields), not just id and name.
 	for _, field := range []string{"public", "organization", "icon", "color", "expiration_unit", "preferences"} {
 		if !strings.Contains(lastQuery, field) {
 			t.Errorf("data source query must select %q; query was: %s", field, lastQuery)

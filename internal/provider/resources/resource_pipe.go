@@ -52,7 +52,7 @@ type PipeModel struct {
 	StartFormPhaseId          types.String          `tfsdk:"start_form_phase_id"`
 }
 
-var colorNames = []string{"blue", "cyan", "gray", "green", "indigo", "lime", "pink", "purple", "orange", "red", "sky", "yellow"}
+var colorNames = []string{"blue", "cyan", "gray", "green", "indigo", "lime", "orange", "pink", "purple", "red", "sky", "yellow"}
 var mainTabViewValues = []string{"EmailTemplate", "InboxEmail", "Checklist", "Attachments", "Comments", "PreviousPhases", "Relations"}
 
 const updatePipeMutation = "mutation($id:ID!,$name:String,$public:Boolean,$icon:String,$color:Colors," +
@@ -136,57 +136,41 @@ func (r *PipeResource) Configure(ctx context.Context, req resource.ConfigureRequ
 	r.api = api
 }
 
-func (m *PipeModel) setFromApi(p pipegql.Payload) {
-	m.Id = types.StringValue(p.Id)
-	m.Name = types.StringValue(p.Name)
-	m.Public = types.BoolPointerValue(p.Public)
-	m.Icon = types.StringPointerValue(p.Icon)
-	m.Color = types.StringPointerValue(p.Color)
-	m.OnlyAdminCanRemoveCards = types.BoolPointerValue(p.OnlyAdminCanRemoveCards)
-	m.OnlyAssigneesCanEditCards = types.BoolPointerValue(p.OnlyAssigneesCanEditCards)
-	if p.StartFormPhaseId != "" {
-		m.StartFormPhaseId = types.StringValue(p.StartFormPhaseId)
+func (m *PipeModel) apply(ctx context.Context, p pipegql.Payload, onlyUnknown bool) diag.Diagnostics {
+	if !onlyUnknown || m.Id.IsUnknown() {
+		m.Id = types.StringValue(p.Id)
 	}
-}
-
-func (m *PipeModel) fillUnknowns(p pipegql.Payload) {
-	if m.Public.IsUnknown() {
+	if !onlyUnknown || m.Name.IsUnknown() {
+		m.Name = types.StringValue(p.Name)
+	}
+	if !onlyUnknown || m.Public.IsUnknown() {
 		m.Public = types.BoolPointerValue(p.Public)
 	}
-	if m.Icon.IsUnknown() {
+	if !onlyUnknown || m.Icon.IsUnknown() {
 		m.Icon = types.StringPointerValue(p.Icon)
 	}
-	if m.Color.IsUnknown() {
+	if !onlyUnknown || m.Color.IsUnknown() {
 		m.Color = types.StringPointerValue(p.Color)
 	}
-	if m.OnlyAdminCanRemoveCards.IsUnknown() {
+	if !onlyUnknown || m.OnlyAdminCanRemoveCards.IsUnknown() {
 		m.OnlyAdminCanRemoveCards = types.BoolPointerValue(p.OnlyAdminCanRemoveCards)
 	}
-	if m.OnlyAssigneesCanEditCards.IsUnknown() {
+	if !onlyUnknown || m.OnlyAssigneesCanEditCards.IsUnknown() {
 		m.OnlyAssigneesCanEditCards = types.BoolPointerValue(p.OnlyAssigneesCanEditCards)
 	}
-	if m.StartFormPhaseId.IsUnknown() {
+	if onlyUnknown {
+		if m.StartFormPhaseId.IsUnknown() {
+			m.StartFormPhaseId = types.StringValue(p.StartFormPhaseId)
+		}
+	} else if p.StartFormPhaseId != "" {
 		m.StartFormPhaseId = types.StringValue(p.StartFormPhaseId)
 	}
-}
-
-func (m *PipeModel) refreshPreferences(ctx context.Context, p *pipegql.Preferences) diag.Diagnostics {
-	if m.Preferences == nil || p == nil {
-		return nil
+	if m.Preferences != nil && p.Preferences != nil {
+		return m.Preferences.fill(ctx, p.Preferences, onlyUnknown)
 	}
-	return m.Preferences.fill(ctx, p, false)
+	return nil
 }
 
-func (m *PipeModel) fillPreferencesUnknowns(ctx context.Context, p *pipegql.Preferences) diag.Diagnostics {
-	if m.Preferences == nil || p == nil {
-		return nil
-	}
-	return m.Preferences.fill(ctx, p, true)
-}
-
-// fill copies API preference values into the model. onlyUnknown=true keeps
-// configured values (Create and Update); false overwrites so Read catches
-// out-of-band drift.
 func (pm *pipePreferencesModel) fill(ctx context.Context, p *pipegql.Preferences, onlyUnknown bool) diag.Diagnostics {
 	var diags diag.Diagnostics
 	if !onlyUnknown || pm.InboxEmailEnabled.IsUnknown() {
@@ -201,18 +185,15 @@ func (pm *pipePreferencesModel) fill(ctx context.Context, p *pipegql.Preferences
 }
 
 func (m *PipeModel) refreshSLA(p pipegql.Payload) {
-	if m.SLA == nil || p.ExpirationUnit == nil || p.ExpirationTimeByUnit == nil {
+	if m.SLA == nil {
 		return
 	}
-	name, ok := pipegql.UnitSecondsToName(*p.ExpirationUnit)
-	if !ok {
-		return
+	if count, unit, ok := p.SLA(); ok {
+		m.SLA.Time = types.Int64Value(count)
+		m.SLA.Unit = types.StringValue(unit)
 	}
-	m.SLA.Time = types.Int64Value(*p.ExpirationTimeByUnit)
-	m.SLA.Unit = types.StringValue(name)
 }
 
-// addSettingsVars adds every configured pipe setting except id and name.
 func (m *PipeModel) addSettingsVars(ctx context.Context, vars map[string]any) diag.Diagnostics {
 	var diags diag.Diagnostics
 	if hasValue(m.Public) {
@@ -256,6 +237,24 @@ func (m *PipeModel) addSettingsVars(ctx context.Context, vars map[string]any) di
 	return diags
 }
 
+func (r *PipeResource) deletePhases(ctx context.Context, ids []string) error {
+	const mutation = "mutation($id:ID!){ deletePhase(input:{id:$id}){ clientMutationId success } }"
+	for _, id := range ids {
+		var del struct {
+			DeletePhase struct {
+				Success bool `json:"success"`
+			} `json:"deletePhase"`
+		}
+		if err := r.api.DoGraphQL(ctx, mutation, map[string]any{"id": id}, &del); err != nil {
+			return fmt.Errorf("phase %s: %w", id, err)
+		}
+		if !del.DeletePhase.Success {
+			return fmt.Errorf("phase %s: success=false", id)
+		}
+	}
+	return nil
+}
+
 func (r *PipeResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data PipeModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -278,8 +277,8 @@ func (r *PipeResource) Create(ctx context.Context, req resource.CreateRequest, r
 	pipeId := created.CreatePipe.Pipe.Id
 	data.Id = types.StringValue(pipeId)
 
-	// createPipe seeds the pipe with three default phases. Fetch them (with the
-	// start form phase and current settings) so they can be removed.
+	// createPipe seeds the pipe with three default phases. Fetch them alongside the
+	// current settings so they can be removed and the payload reused below.
 	phasesQuery := "query($id:ID!){ pipe(id:$id){ " + pipegql.Selection + " phases { id } } }"
 	var phasesOut struct {
 		Pipe *struct {
@@ -299,20 +298,13 @@ func (r *PipeResource) Create(ctx context.Context, req resource.CreateRequest, r
 	}
 	payload := phasesOut.Pipe.Payload
 
-	for _, phase := range phasesOut.Pipe.Phases {
-		var del struct {
-			DeletePhase struct {
-				Success bool `json:"success"`
-			} `json:"deletePhase"`
-		}
-		if err := r.api.DoGraphQL(ctx, "mutation($id:ID!){ deletePhase(input:{id:$id}){ clientMutationId success } }", map[string]any{"id": phase.Id}, &del); err != nil {
-			resp.Diagnostics.AddError("delete phase failed", fmt.Sprintf("failed to delete phase %s: %s", phase.Id, err.Error()))
-			return
-		}
-		if !del.DeletePhase.Success {
-			resp.Diagnostics.AddError("delete phase failed", fmt.Sprintf("phase %s: success=false", phase.Id))
-			return
-		}
+	ids := make([]string, len(phasesOut.Pipe.Phases))
+	for i, phase := range phasesOut.Pipe.Phases {
+		ids[i] = phase.Id
+	}
+	if err := r.deletePhases(ctx, ids); err != nil {
+		resp.Diagnostics.AddError("delete phase failed", err.Error())
+		return
 	}
 
 	// createPipe accepts only name and organization. Apply every other setting
@@ -336,8 +328,7 @@ func (r *PipeResource) Create(ctx context.Context, req resource.CreateRequest, r
 		payload = updated.UpdatePipe.Pipe
 	}
 
-	data.fillUnknowns(payload)
-	resp.Diagnostics.Append(data.fillPreferencesUnknowns(ctx, payload.Preferences)...)
+	resp.Diagnostics.Append(data.apply(ctx, payload, true)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -368,11 +359,10 @@ func (r *PipeResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		resp.State.RemoveResource(ctx)
 		return
 	}
-	data.setFromApi(out.Pipe.Payload)
+	resp.Diagnostics.Append(data.apply(ctx, out.Pipe.Payload, false)...)
 	if out.Pipe.Organization != nil {
 		data.OrganizationId = types.StringValue(out.Pipe.Organization.Id)
 	}
-	resp.Diagnostics.Append(data.refreshPreferences(ctx, out.Pipe.Preferences)...)
 	data.refreshSLA(out.Pipe.Payload)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -397,8 +387,7 @@ func (r *PipeResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		resp.Diagnostics.AddError("update pipe failed", err.Error())
 		return
 	}
-	data.fillUnknowns(out.UpdatePipe.Pipe)
-	resp.Diagnostics.Append(data.fillPreferencesUnknowns(ctx, out.UpdatePipe.Pipe.Preferences)...)
+	resp.Diagnostics.Append(data.apply(ctx, out.UpdatePipe.Pipe, true)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
