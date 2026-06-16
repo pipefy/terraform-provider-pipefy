@@ -46,7 +46,7 @@ resource "pipefy_pipe" "example" {
 
 ### Optional
 
-- `color` (String) Pipe color. One of: blue, cyan, gray, green, indigo, lime, pink, purple, orange, red, sky, yellow.
+- `color` (String) Pipe color. One of: blue, cyan, gray, green, indigo, lime, orange, pink, purple, red, sky, yellow.
 - `icon` (String) Named pipe icon (for example rocket, calendar). Defaults to pipefy.
 - `only_admin_can_remove_cards` (Boolean) Whether only admins can delete cards
 - `only_assignees_can_edit_cards` (Boolean) Whether only card assignees can edit a card
