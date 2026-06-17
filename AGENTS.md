@@ -90,9 +90,12 @@ main.go                    # Provider entrypoint
 To ensure the provider remains maintainable as the SaaS platform evolves, adhere to the following guidelines regarding resource attributes and validation:
 
 ### 1. Attribute Validation Strategy
-- **Prefer Flexible Schemas:** For attributes that represent lists of values defined by the SaaS backend (e.g. event types, resource categories), do not hard-code validation enums in the provider schema.
-- **Use Free-Text Strings:** Define such attributes as simple `types.StringType` (or `schema.TypeString`). This avoids breaking changes when the SaaS adds or removes supported options.
-- **Dynamic Discovery:** When users need to verify valid options, encourage the use of Data Sources that fetch the current list of available options directly from the API.
+- **Decision Framework:**
+  - **Use Enums:** Only when the attribute values are canonical and highly stable. This provides superior DX (IDE autocomplete, instant feedback) while accepting the occasional need for provider updates.
+  - **Use Strings (Free-Text):** When values are volatile or frequently updated by the SaaS API. This avoids breaking changes in the provider.
+  - **Use Regex for Strings:** Even for volatile strings, implement a a high level validation with Regex if the data format is predictable. This prevents malformed data from reaching the API while maintaining flexibility.
+- **Reusable Validators:** Do not reinvent the wheel for standard validations. Create and maintain a library of "generic" validators (e.g., `IsOneOf`, `MatchesRegex`, `IsUUID`) within the provider's internal package. These should be reused across multiple resources to ensure consistent behavior and standardized error messages across the entire provider.
+- **Dynamic Discovery:** When users need to verify valid options for volatile attributes, encourage the use of Data Sources that fetch the current list directly from the API.
 - **Error Handling:** If an input is invalid, rely on the backend API’s response to inform the user. When implementing the provider, ensure that API error messages are surfaced clearly to the user, mapping generic HTTP errors to actionable feedback.
 
 ### 2. Documentation Standards
