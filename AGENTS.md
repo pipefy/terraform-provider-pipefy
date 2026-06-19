@@ -84,3 +84,28 @@ main.go                    # Provider entrypoint
 
 - Commit API tokens, client secrets, or other credentials.
 - Hand-edit generated files under `docs/`; change the schema and run `make generate` instead.
+
+## API Interaction and Resource Validation
+
+To ensure the provider remains maintainable as the SaaS platform evolves, adhere to the following guidelines regarding resource attributes and validation:
+
+### 1. Attribute Validation Strategy
+- **Decision Framework:**
+  - **Use Enums:** Only when the attribute values are canonical and highly stable. This provides superior DX (IDE autocomplete, instant feedback) while accepting the occasional need for provider updates.
+  - **Use Strings (Free-Text):** When values are volatile or frequently updated by the SaaS API. This avoids breaking changes in the provider.
+  - **Use Regex for Strings:** Even for volatile strings, implement a a high level validation with Regex if the data format is predictable. This prevents malformed data from reaching the API while maintaining flexibility.
+- **Reusable Validators:** Do not reinvent the wheel for standard validations. Create and maintain a library of "generic" validators (e.g., `IsOneOf`, `MatchesRegex`, `IsUUID`) within the provider's internal package. These should be reused across multiple resources to ensure consistent behavior and standardized error messages across the entire provider.
+- **Dynamic Discovery:** When users need to verify valid options for volatile attributes, encourage the use of Data Sources that fetch the current list directly from the API.
+- **Error Handling:** If an input is invalid, rely on the backend API’s response to inform the user. When implementing the provider, ensure that API error messages are surfaced clearly to the user, mapping generic HTTP errors to actionable feedback.
+
+### 2. Documentation Standards
+When defining resource attributes that are subject to backend change:
+- **Do not include static lists of values in descriptions**, as these will quickly go stale.
+- **Use "Evergreen" Descriptions:** Point users to the official SaaS API documentation for the source of truth regarding valid values.
+  - Pipefy's official API documentation can be found at: https://developers.pipefy.com/reference
+- **Example format:**
+  > `action`: (String) The event that triggers this webhook. Supported values are defined by the SaaS platform. Please refer to [Link to API Documentation] for the current list of available actions.
+
+### 3. Plan-Time vs. Apply-Time
+- **Plan-Time:** Only perform client-side validation for static, deterministic constraints (e.g., regex patterns for name formats, field length, or logical exclusivity between two local fields).
+- **Apply-Time:** Defer checks for existence, permissions, and dynamic business logic to the Apply phase (API calls). This minimizes the risk of the provider being out-of-sync with the SaaS environment.
