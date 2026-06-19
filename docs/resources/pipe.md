@@ -46,8 +46,8 @@ resource "pipefy_pipe" "example" {
 
 ### Optional
 
-- `color` (String) Pipe color. One of: blue, cyan, gray, green, indigo, lime, orange, pink, purple, red, sky, yellow.
-- `icon` (String) Named pipe icon (for example rocket, calendar). Defaults to pipefy.
+- `color` (String) Pipe color. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference/pipes) and the GraphiQL explorer (https://app.pipefy.com/graphiql) for in-depth definitions.
+- `icon` (String) Named pipe icon. Defaults to pipefy. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference/pipes) and the GraphiQL explorer (https://app.pipefy.com/graphiql) for in-depth definitions.
 - `only_admin_can_remove_cards` (Boolean) Whether only admins can delete cards
 - `only_assignees_can_edit_cards` (Boolean) Whether only card assignees can edit a card
 - `preferences` (Attributes) Pipe preferences. Omit the block to leave them unmanaged; removing it stops managing them but does not reset them on the server. (see [below for nested schema](#nestedatt--preferences))
@@ -65,7 +65,7 @@ resource "pipefy_pipe" "example" {
 Optional:
 
 - `inbox_email_enabled` (Boolean) Whether the email inbox is enabled
-- `main_tab_views` (List of String) Card views to show. Must be non-empty and include PreviousPhases. Allowed: EmailTemplate, InboxEmail, Checklist, Attachments, Comments, PreviousPhases, Relations.
+- `main_tab_views` (List of String) Card views to show on a card. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference/pipes) and the GraphiQL explorer (https://app.pipefy.com/graphiql) for in-depth definitions.
 
 
 <a id="nestedatt--sla"></a>

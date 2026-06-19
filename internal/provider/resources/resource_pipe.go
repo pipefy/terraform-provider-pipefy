@@ -52,9 +52,6 @@ type PipeModel struct {
 	StartFormPhaseId          types.String          `tfsdk:"start_form_phase_id"`
 }
 
-var colorNames = []string{"blue", "cyan", "gray", "green", "indigo", "lime", "orange", "pink", "purple", "red", "sky", "yellow"}
-var mainTabViewValues = []string{"EmailTemplate", "InboxEmail", "Checklist", "Attachments", "Comments", "PreviousPhases", "Relations"}
-
 const updatePipeMutation = "mutation($id:ID!,$name:String,$public:Boolean,$icon:String,$color:Colors," +
 	"$onlyAdminCanRemoveCards:Boolean,$onlyAssigneesCanEditCards:Boolean," +
 	"$expirationTimeByUnit:Int,$expirationUnit:Int,$preferences:RepoPreferenceInput){ " +
@@ -79,12 +76,11 @@ func (r *PipeResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 			"name":            schema.StringAttribute{Required: true, Description: "Name of the pipe"},
 			"organization_id": schema.StringAttribute{Required: true, Description: "The ID of the organization that the pipe belongs to", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 			"public":          schema.BoolAttribute{Optional: true, Computed: true, Description: "Whether the pipe is public"},
-			"icon":            schema.StringAttribute{Optional: true, Computed: true, Description: "Named pipe icon (for example rocket, calendar). Defaults to pipefy."},
+			"icon":            schema.StringAttribute{Optional: true, Computed: true, Description: "Named pipe icon. Defaults to pipefy. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference/pipes) and the GraphiQL explorer (https://app.pipefy.com/graphiql) for in-depth definitions."},
 			"color": schema.StringAttribute{
 				Optional:    true,
 				Computed:    true,
-				Description: "Pipe color. One of: " + strings.Join(colorNames, ", ") + ".",
-				Validators:  []validator.String{validators.OneOf(colorNames...)},
+				Description: "Pipe color. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference/pipes) and the GraphiQL explorer (https://app.pipefy.com/graphiql) for in-depth definitions.",
 			},
 			"only_admin_can_remove_cards":   schema.BoolAttribute{Optional: true, Computed: true, Description: "Whether only admins can delete cards"},
 			"only_assignees_can_edit_cards": schema.BoolAttribute{Optional: true, Computed: true, Description: "Whether only card assignees can edit a card"},
@@ -97,8 +93,7 @@ func (r *PipeResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 						ElementType: types.StringType,
 						Optional:    true,
 						Computed:    true,
-						Description: "Card views to show. Must be non-empty and include PreviousPhases. Allowed: " + strings.Join(mainTabViewValues, ", ") + ".",
-						Validators:  []validator.List{validators.StringListValues(mainTabViewValues...), validators.ListContains("PreviousPhases")},
+						Description: "Card views to show on a card. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference/pipes) and the GraphiQL explorer (https://app.pipefy.com/graphiql) for in-depth definitions.",
 					},
 				},
 			},

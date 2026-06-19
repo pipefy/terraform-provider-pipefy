@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -333,43 +332,5 @@ func TestUnit_PipeResource_CRUD(t *testing.T) {
 	}
 	if st.PhaseDelCt < 2 {
 		t.Errorf("expected the two auto-created phases to be deleted, got %d", st.PhaseDelCt)
-	}
-}
-
-func TestUnit_PipeResource_MainTabViewsRequiresPreviousPhases(t *testing.T) {
-	st := &pipeState{}
-	srv := newPipeServer(st)
-	defer srv.Close()
-
-	config := `
-	provider "pipefy" {
-		endpoint = "` + srv.URL + `"
-		token    = "testtoken"
-	}
-
-	resource "pipefy_pipe" "test" {
-		name            = "My Pipe"
-		organization_id = "org_1"
-		preferences = {
-			main_tab_views = ["Comments"]
-		}
-	}
-	`
-
-	resource.UnitTest(t, resource.TestCase{
-		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
-			tfversion.SkipBelow(tfversion.Version1_8_0),
-		},
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config:      config,
-				ExpectError: regexp.MustCompile(`PreviousPhases`),
-			},
-		},
-	})
-
-	if st.CreatePipeCt != 0 {
-		t.Errorf("invalid config must be rejected at plan; createPipe should not run, got %d", st.CreatePipeCt)
 	}
 }
