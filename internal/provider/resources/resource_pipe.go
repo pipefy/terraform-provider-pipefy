@@ -183,10 +183,13 @@ func (m *PipeModel) refreshSLA(p pipegql.Payload) {
 	if m.SLA == nil {
 		return
 	}
-	if count, unit, ok := p.SLA(); ok {
-		m.SLA.Time = types.Int64Value(count)
-		m.SLA.Unit = types.StringValue(unit)
+	count, unit, ok := p.SLA()
+	if !ok {
+		m.SLA = nil
+		return
 	}
+	m.SLA.Time = types.Int64Value(count)
+	m.SLA.Unit = types.StringValue(unit)
 }
 
 func (m *PipeModel) addSettingsVars(ctx context.Context, vars map[string]any) diag.Diagnostics {

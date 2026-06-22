@@ -52,4 +52,4 @@ Read-Only:
 Read-Only:
 
 - `time` (Number) Count of units
-- `unit` (String) SLA unit: minutes, hours, or days
+- `unit` (String) SLA unit: minutes, hours, days.

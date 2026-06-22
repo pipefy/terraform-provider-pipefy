@@ -6,6 +6,7 @@ package datasources
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	dsschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -72,7 +73,7 @@ func (d *PipeDataSource) Schema(ctx context.Context, req datasource.SchemaReques
 				Description: "Card SLA",
 				Attributes: map[string]dsschema.Attribute{
 					"time": dsschema.Int64Attribute{Computed: true, Description: "Count of units"},
-					"unit": dsschema.StringAttribute{Computed: true, Description: "SLA unit: minutes, hours, or days"},
+					"unit": dsschema.StringAttribute{Computed: true, Description: "SLA unit: " + strings.Join(pipegql.UnitNames, ", ") + "."},
 				},
 			},
 		},

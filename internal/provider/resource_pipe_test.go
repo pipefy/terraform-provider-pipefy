@@ -313,6 +313,15 @@ func TestUnit_PipeResource_CRUD(t *testing.T) {
 				},
 			},
 			{
+				PreConfig:        func() { st.ExpTimeByUnit = nil; st.ExpUnit = nil },
+				Config:           config(updatedAttrs),
+				ConfigPlanChecks: expectAction(plancheck.ResourceActionUpdate),
+				ConfigStateChecks: []statecheck.StateCheck{
+					val(tfjsonpath.New("sla").AtMapKey("time"), knownvalue.Int64Exact(5)),
+					val(tfjsonpath.New("sla").AtMapKey("unit"), knownvalue.StringExact("hours")),
+				},
+			},
+			{
 				ResourceName:            "pipefy_pipe.test",
 				ImportState:             true,
 				ImportStateVerify:       true,
