@@ -28,6 +28,30 @@ func TestUnitNameToSeconds(t *testing.T) {
 	}
 }
 
+func TestValidDuration(t *testing.T) {
+	cases := []struct {
+		unit  string
+		count int64
+		want  bool
+	}{
+		{"minutes", 1, true},
+		{"minutes", 59, true},
+		{"minutes", 60, false},
+		{"minutes", 0, false},
+		{"hours", 23, true},
+		{"hours", 24, false},
+		{"days", 1, true},
+		{"days", 365, true},
+		{"days", 0, false},
+		{"weeks", 5, false},
+	}
+	for _, c := range cases {
+		if got := pipegql.ValidDuration(c.unit, c.count); got != c.want {
+			t.Errorf("ValidDuration(%q,%d)=%v, want %v", c.unit, c.count, got, c.want)
+		}
+	}
+}
+
 func TestUnitSecondsToName(t *testing.T) {
 	cases := map[int64]struct {
 		want string

@@ -9,6 +9,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/pipefy/terraform-provider-pipefy/internal/provider/pipegql"
 )
 
 func SLADuration() validator.Object { return slaDurationValidator{} }
@@ -33,23 +34,15 @@ func (v slaDurationValidator) ValidateObject(_ context.Context, req validator.Ob
 	if timeVal.IsNull() || timeVal.IsUnknown() || unitVal.IsNull() || unitVal.IsUnknown() {
 		return
 	}
-	t := timeVal.ValueInt64()
-	var maxTime int64
-	switch unitVal.ValueString() {
-	case "minutes":
-		maxTime = 59
-	case "hours":
-		maxTime = 23
-	case "days":
-		maxTime = 0
-	default:
+	unit := unitVal.ValueString()
+	if _, known := pipegql.UnitNameToSeconds(unit); !known {
 		return
 	}
-	if t < 1 || (maxTime > 0 && t > maxTime) {
+	if t := timeVal.ValueInt64(); !pipegql.ValidDuration(unit, t) {
 		resp.Diagnostics.AddAttributeError(
 			req.Path,
 			"Invalid SLA duration",
-			fmt.Sprintf("time=%d is out of range for unit %q (minutes 1-59, hours 1-23, days >= 1)", t, unitVal.ValueString()),
+			fmt.Sprintf("time=%d is out of range for unit %q (minutes 1-59, hours 1-23, days >= 1)", t, unit),
 		)
 	}
 }

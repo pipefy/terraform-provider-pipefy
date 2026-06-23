@@ -61,6 +61,21 @@ func UnitSecondsToName(seconds int64) (string, bool) {
 	return "", false
 }
 
+func ValidDuration(unit string, count int64) bool {
+	if count < 1 {
+		return false
+	}
+	switch unit {
+	case UnitMinutes:
+		return count <= 59
+	case UnitHours:
+		return count <= 23
+	case UnitDays:
+		return true
+	}
+	return false
+}
+
 func (p Payload) SLA() (count int64, unit string, ok bool) {
 	if p.ExpirationUnit == nil || p.ExpirationTimeByUnit == nil {
 		return 0, "", false

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -42,6 +43,7 @@ type pipeState struct {
 	CreatePipeCt      int
 	UpdatePipeCt      int
 	CreateSawSettings bool
+	FailUpdate        bool
 }
 
 func (st *pipeState) resetDefaults(name string) {
@@ -166,6 +168,10 @@ func newPipeServer(st *pipeState) *httptest.Server {
 			write(map[string]any{"createPipe": map[string]any{"pipe": map[string]any{"id": st.ID, "name": st.Name}}})
 		case strings.Contains(q, "updatePipe"):
 			st.UpdatePipeCt++
+			if st.FailUpdate {
+				_, _ = io.WriteString(w, `{"errors":[{"message":"boom"}]}`)
+				return
+			}
 			st.mergeSettings(gr.Variables)
 			write(map[string]any{"updatePipe": map[string]any{"pipe": st.toMap()}})
 		case strings.Contains(q, "deletePipe"):
@@ -342,4 +348,46 @@ func TestUnit_PipeResource_CRUD(t *testing.T) {
 	if st.PhaseDelCt < 2 {
 		t.Errorf("expected the two auto-created phases to be deleted, got %d", st.PhaseDelCt)
 	}
+}
+
+func TestUnit_PipeResource_PartialCreateTracksPipe(t *testing.T) {
+	st := &pipeState{}
+	srv := newPipeServer(st)
+	defer srv.Close()
+
+	config := `
+		provider "pipefy" {
+			endpoint = "` + srv.URL + `"
+			token    = "testtoken"
+		}
+
+		resource "pipefy_pipe" "test" {
+			name            = "My Pipe"
+			organization_id = "org_1"
+			color           = "purple"
+		}
+		`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				PreConfig:   func() { st.FailUpdate = true },
+				Config:      config,
+				ExpectError: regexp.MustCompile("update pipe failed"),
+			},
+			{
+				PreConfig: func() { st.FailUpdate = false },
+				Config:    config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("pipefy_pipe.test", plancheck.ResourceActionDestroyBeforeCreate),
+					},
+				},
+			},
+		},
+	})
 }

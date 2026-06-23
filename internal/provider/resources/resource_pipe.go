@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -106,7 +107,7 @@ func (r *PipeResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 					"unit": schema.StringAttribute{
 						Required:    true,
 						Description: "SLA unit: " + strings.Join(pipegql.UnitNames, ", ") + ".",
-						Validators:  []validator.String{validators.OneOf(pipegql.UnitNames...)},
+						Validators:  []validator.String{stringvalidator.OneOf(pipegql.UnitNames...)},
 					},
 				},
 			},
@@ -274,6 +275,12 @@ func (r *PipeResource) Create(ctx context.Context, req resource.CreateRequest, r
 	}
 	pipeId := created.CreatePipe.Pipe.Id
 	data.Id = types.StringValue(pipeId)
+
+	seed := PipeModel{Id: data.Id, Name: data.Name, OrganizationId: data.OrganizationId}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &seed)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	// createPipe seeds the pipe with three default phases. Fetch them alongside the
 	// current settings so they can be removed and the payload reused below.

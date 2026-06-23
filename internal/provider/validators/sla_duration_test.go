@@ -36,6 +36,7 @@ func TestSLADuration(t *testing.T) {
 		{24, "hours", true},
 		{365, "days", false},
 		{0, "days", true},
+		{5, "weeks", false},
 	} {
 		resp := &validator.ObjectResponse{}
 		v.ValidateObject(t.Context(), validator.ObjectRequest{ConfigValue: slaObject(t, tc.time, tc.unit)}, resp)
