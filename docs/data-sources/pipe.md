@@ -27,6 +27,29 @@ data "pipefy_pipe" "example" {
 
 ### Read-Only
 
+- `color` (String) Pipe color
+- `icon` (String) Named pipe icon
 - `name` (String) Name of the pipe
+- `only_admin_can_remove_cards` (Boolean) Whether only admins can delete cards
+- `only_assignees_can_edit_cards` (Boolean) Whether only card assignees can edit a card
 - `organization_id` (String) The ID of the organization that the pipe belongs to
-- `public` (Boolean) Whether the pipe is public or not
+- `preferences` (Attributes) Pipe preferences (see [below for nested schema](#nestedatt--preferences))
+- `public` (Boolean) Whether the pipe is public
+- `sla` (Attributes) Card SLA (see [below for nested schema](#nestedatt--sla))
+
+<a id="nestedatt--preferences"></a>
+### Nested Schema for `preferences`
+
+Read-Only:
+
+- `inbox_email_enabled` (Boolean) Whether the email inbox is enabled
+- `main_tab_views` (List of String) Card views to show
+
+
+<a id="nestedatt--sla"></a>
+### Nested Schema for `sla`
+
+Read-Only:
+
+- `time` (Number) Count of units
+- `unit` (String) SLA unit: minutes, hours, days.

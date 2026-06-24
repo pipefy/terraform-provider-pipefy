@@ -4,6 +4,7 @@ go 1.24.0
 
 require (
 	github.com/hashicorp/terraform-plugin-framework v1.18.0
+	github.com/hashicorp/terraform-plugin-framework-validators v0.19.0
 	github.com/hashicorp/terraform-plugin-go v0.30.0
 	github.com/hashicorp/terraform-plugin-testing v1.14.1
 	golang.org/x/oauth2 v0.35.0
