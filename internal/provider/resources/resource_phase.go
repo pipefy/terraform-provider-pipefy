@@ -226,7 +226,7 @@ func (r *PhaseResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation DeletePhase_tf($id:ID!){ deletePhase(input:{ id:$id }){ success } }"
+	mutation := "mutation DeletePhase_tf($id:ID!){ deletePhase(input:{id:$id}){ success } }"
 	vars := map[string]any{"id": data.Id.ValueString()}
 	var out struct {
 		DeletePhase struct {

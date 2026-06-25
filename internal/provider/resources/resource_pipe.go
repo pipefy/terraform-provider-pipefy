@@ -237,7 +237,7 @@ func (m *PipeModel) addSettingsVars(ctx context.Context, vars map[string]any) di
 }
 
 func (r *PipeResource) deletePhases(ctx context.Context, ids []string) error {
-	const mutation = "mutation DeletePhase_tf($id:ID!){ deletePhase(input:{id:$id}){ clientMutationId success } }"
+	const mutation = "mutation DeletePhase_tf($id:ID!){ deletePhase(input:{id:$id}){ success } }"
 	for _, id := range ids {
 		var del struct {
 			DeletePhase struct {
