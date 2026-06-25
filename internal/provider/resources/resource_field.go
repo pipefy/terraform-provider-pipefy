@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
+	"github.com/pipefy/terraform-provider-pipefy/internal/provider/fieldgql"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/locks"
 )
 
@@ -105,7 +106,7 @@ func (r *FieldResource) Create(ctx context.Context, req resource.CreateRequest, 
 	unlock := locks.LockRepo(repoIDStr)
 	defer unlock()
 
-	mutation := "mutation($phaseId:ID!,$type:ID!,$label:String!,$required:Boolean,$options:[String]){ createPhaseField(input:{ phase_id:$phaseId, type:$type, label:$label, required:$required, options:$options }){ phase_field{ id internal_id uuid label options } } }"
+	mutation := "mutation($phaseId:ID!,$type:ID!,$label:String!,$required:Boolean,$options:[String]){ createPhaseField(input:{ phase_id:$phaseId, type:$type, label:$label, required:$required, options:$options }){ phase_field{ " + fieldgql.Selection + " } } }"
 	vars := map[string]any{
 		"phaseId": data.PhaseId.ValueString(),
 		"type":    data.Type.ValueString(),
@@ -124,13 +125,7 @@ func (r *FieldResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 	var out struct {
 		CreatePhaseField struct {
-			PhaseField struct {
-				Id         string   `json:"id"`
-				InternalId string   `json:"internal_id"`
-				Uuid       string   `json:"uuid"`
-				Label      string   `json:"label"`
-				Options    []string `json:"options"`
-			} `json:"phase_field"`
+			PhaseField fieldgql.Field `json:"phase_field"`
 		} `json:"createPhaseField"`
 	}
 	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
@@ -155,17 +150,11 @@ func (r *FieldResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	}
 
 	// Query the phase to get the field information
-	query := "query($phaseId:ID!){ phase(id:$phaseId){ fields{ id internal_id uuid label options } } }"
+	query := "query($phaseId:ID!){ phase(id:$phaseId){ fields{ " + fieldgql.Selection + " } } }"
 	vars := map[string]any{"phaseId": data.PhaseId.ValueString()}
 	var out struct {
 		Phase *struct {
-			Fields []struct {
-				Id         string   `json:"id"`
-				InternalId string   `json:"internal_id"`
-				Uuid       string   `json:"uuid"`
-				Label      string   `json:"label"`
-				Options    []string `json:"options"`
-			} `json:"fields"`
+			Fields []fieldgql.Field `json:"fields"`
 		} `json:"phase"`
 	}
 	if err := r.api.DoGraphQL(ctx, query, vars, &out); err != nil {
@@ -177,29 +166,16 @@ func (r *FieldResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	var foundField *struct {
-		Id         string   `json:"id"`
-		InternalId string   `json:"internal_id"`
-		Uuid       string   `json:"uuid"`
-		Label      string   `json:"label"`
-		Options    []string `json:"options"`
-	}
-	for i := range out.Phase.Fields {
-		if out.Phase.Fields[i].Uuid == data.Uuid.ValueString() {
-			foundField = &out.Phase.Fields[i]
-			break
-		}
-	}
-
-	if foundField == nil {
+	found, ok := fieldgql.FindByUUID(out.Phase.Fields, data.Uuid.ValueString())
+	if !ok {
 		resp.State.RemoveResource(ctx)
 		return
 	}
 
-	data.Id = types.StringValue(foundField.Id)
-	data.InternalId = types.StringValue(foundField.InternalId)
-	data.Uuid = types.StringValue(foundField.Uuid)
-	data.Options = optionsToList(ctx, foundField.Options, &resp.Diagnostics)
+	data.Id = types.StringValue(found.Id)
+	data.InternalId = types.StringValue(found.InternalId)
+	data.Uuid = types.StringValue(found.Uuid)
+	data.Options = optionsToList(ctx, found.Options, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -231,11 +207,7 @@ func (r *FieldResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	}
 	var out struct {
 		UpdatePhaseField struct {
-			PhaseField struct {
-				Id         string   `json:"id"`
-				InternalId string   `json:"internal_id"`
-				Options    []string `json:"options"`
-			} `json:"phase_field"`
+			PhaseField fieldgql.Field `json:"phase_field"`
 		} `json:"updatePhaseField"`
 	}
 	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
