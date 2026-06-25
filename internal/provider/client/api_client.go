@@ -16,6 +16,7 @@ type ApiClient struct {
 	HTTP     *http.Client
 	Endpoint string
 	Token    string
+	Version  string
 }
 
 type graphQLRequest struct {
@@ -49,12 +50,12 @@ func (c *ApiClient) DoGraphQL(ctx context.Context, query string, variables map[s
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "terraform-provider-pipefy/"+c.Version)
 
 	// Only set Authorization header if we have a static token
 	// For OAuth2 client credentials, the http.Client handles this automatically
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
-		fmt.Printf("DEBUG: Using static token for authorization\n")
 	}
 
 	resp, err := c.HTTP.Do(req)

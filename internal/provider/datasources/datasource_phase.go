@@ -63,7 +63,7 @@ func (d *PhaseDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 		return
 	}
 
-	query := "query($id:ID!){ phase(id:$id){ id name } }"
+	query := "query GetPhaseName_tf($id:ID!){ phase(id:$id){ id name } }"
 	vars := map[string]any{"id": data.Id.ValueString()}
 	var out struct {
 		Phase *struct {

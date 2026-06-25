@@ -137,7 +137,7 @@ func (p *PipefyProvider) Configure(ctx context.Context, req provider.ConfigureRe
 		return
 	}
 
-	api := &client.ApiClient{HTTP: httpClient, Endpoint: endpoint, Token: apiToken}
+	api := &client.ApiClient{HTTP: httpClient, Endpoint: endpoint, Token: apiToken, Version: p.version}
 
 	resp.DataSourceData = api
 	resp.ResourceData = api

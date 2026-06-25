@@ -149,7 +149,7 @@ func (r *PhaseResource) Create(ctx context.Context, req resource.CreateRequest, 
 	unlock := locks.LockRepo(data.PipeId.ValueString())
 	defer unlock()
 
-	mutation := "mutation($pipeId:ID!,$name:String!,$done:Boolean,$description:String,$index:Float,$latenessTime:Int,$canReceiveCardDirectlyFromDraft:Boolean){ createPhase(input:{ pipe_id:$pipeId, name:$name, done:$done, description:$description, index:$index, lateness_time:$latenessTime, can_receive_card_directly_from_draft:$canReceiveCardDirectlyFromDraft }){ phase{ " + phaseSelection + " } } }"
+	mutation := "mutation CreatePhase_tf($pipeId:ID!,$name:String!,$done:Boolean,$description:String,$index:Float,$latenessTime:Int,$canReceiveCardDirectlyFromDraft:Boolean){ createPhase(input:{ pipe_id:$pipeId, name:$name, done:$done, description:$description, index:$index, lateness_time:$latenessTime, can_receive_card_directly_from_draft:$canReceiveCardDirectlyFromDraft }){ phase{ " + phaseSelection + " } } }"
 	vars := map[string]any{"pipeId": data.PipeId.ValueString(), "name": data.Name.ValueString()}
 	data.addSharedPhaseVars(vars)
 	if hasValue(data.Index) {
@@ -181,7 +181,7 @@ func (r *PhaseResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	query := "query($id:ID!){ phase(id:$id){ " + phaseSelection + " } }"
+	query := "query GetPhase_tf($id:ID!){ phase(id:$id){ " + phaseSelection + " } }"
 	vars := map[string]any{"id": data.Id.ValueString()}
 	var out struct {
 		Phase *phasePayload `json:"phase"`
@@ -204,7 +204,7 @@ func (r *PhaseResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation($id:ID!,$name:String!,$done:Boolean,$description:String,$latenessTime:Int,$canReceiveCardDirectlyFromDraft:Boolean){ updatePhase(input:{ id:$id, name:$name, done:$done, description:$description, lateness_time:$latenessTime, can_receive_card_directly_from_draft:$canReceiveCardDirectlyFromDraft }){ phase{ " + phaseSelection + " } } }"
+	mutation := "mutation UpdatePhase_tf($id:ID!,$name:String!,$done:Boolean,$description:String,$latenessTime:Int,$canReceiveCardDirectlyFromDraft:Boolean){ updatePhase(input:{ id:$id, name:$name, done:$done, description:$description, lateness_time:$latenessTime, can_receive_card_directly_from_draft:$canReceiveCardDirectlyFromDraft }){ phase{ " + phaseSelection + " } } }"
 	vars := map[string]any{"id": data.Id.ValueString(), "name": data.Name.ValueString()}
 	data.addSharedPhaseVars(vars)
 	var out struct {
@@ -226,7 +226,7 @@ func (r *PhaseResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation($id:ID!){ deletePhase(input:{ id:$id }){ success } }"
+	mutation := "mutation DeletePhase_tf($id:ID!){ deletePhase(input:{id:$id}){ success } }"
 	vars := map[string]any{"id": data.Id.ValueString()}
 	var out struct {
 		DeletePhase struct {

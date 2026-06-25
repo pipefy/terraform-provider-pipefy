@@ -89,6 +89,25 @@ func TestApiClient_DoGraphQL_OutNil_Succeeds(t *testing.T) {
 	}
 }
 
+func TestApiClient_DoGraphQL_UserAgentHeader(t *testing.T) {
+	var gotUA string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"ok":true}}`))
+	}))
+	defer ts.Close()
+
+	c := &ApiClient{HTTP: ts.Client(), Endpoint: ts.URL, Version: "1.2.3"}
+	if err := c.DoGraphQL(t.Context(), "query {}", nil, nil); err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if want := "terraform-provider-pipefy/1.2.3"; gotUA != want {
+		t.Fatalf("User-Agent = %q, want %q", gotUA, want)
+	}
+}
+
 func TestApiClient_DoGraphQL_MissingData(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

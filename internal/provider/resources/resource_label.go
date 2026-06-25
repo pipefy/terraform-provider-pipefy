@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
+	"github.com/pipefy/terraform-provider-pipefy/internal/provider/labelgql"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/validators"
 )
 
@@ -72,7 +73,7 @@ func (r *LabelResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	mutation := "mutation($pipeId:ID!,$name:String!,$color:String!){ createLabel(input:{ pipe_id:$pipeId, name:$name, color:$color }){ label{ id name color } } }"
+	mutation := "mutation CreateLabel_tf($pipeId:ID!,$name:String!,$color:String!){ createLabel(input:{ pipe_id:$pipeId, name:$name, color:$color }){ label{ " + labelgql.Selection + " } } }"
 	vars := map[string]any{
 		"pipeId": data.PipeId.ValueString(),
 		"name":   data.Name.ValueString(),
@@ -80,11 +81,7 @@ func (r *LabelResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 	var out struct {
 		CreateLabel struct {
-			Label struct {
-				Id    string `json:"id"`
-				Name  string `json:"name"`
-				Color string `json:"color"`
-			} `json:"label"`
+			Label labelgql.Label `json:"label"`
 		} `json:"createLabel"`
 	}
 	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
@@ -107,15 +104,11 @@ func (r *LabelResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	query := "query($pipeId:ID!){ pipe(id:$pipeId){ labels{ id name color } } }"
+	query := "query GetPipeLabels_tf($pipeId:ID!){ pipe(id:$pipeId){ labels{ " + labelgql.Selection + " } } }"
 	vars := map[string]any{"pipeId": data.PipeId.ValueString()}
 	var out struct {
 		Pipe *struct {
-			Labels []struct {
-				Id    string `json:"id"`
-				Name  string `json:"name"`
-				Color string `json:"color"`
-			} `json:"labels"`
+			Labels []labelgql.Label `json:"labels"`
 		} `json:"pipe"`
 	}
 	if err := r.api.DoGraphQL(ctx, query, vars, &out); err != nil {
@@ -127,16 +120,14 @@ func (r *LabelResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	id := data.Id.ValueString()
-	for _, l := range out.Pipe.Labels {
-		if l.Id == id {
-			data.Name = types.StringValue(l.Name)
-			data.Color = types.StringValue(l.Color)
-			resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
-			return
-		}
+	l, ok := labelgql.FindByID(out.Pipe.Labels, data.Id.ValueString())
+	if !ok {
+		resp.State.RemoveResource(ctx)
+		return
 	}
-	resp.State.RemoveResource(ctx)
+	data.Name = types.StringValue(l.Name)
+	data.Color = types.StringValue(l.Color)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
 func (r *LabelResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -146,7 +137,7 @@ func (r *LabelResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 
-	mutation := "mutation($id:ID!,$name:String!,$color:String!){ updateLabel(input:{ id:$id, name:$name, color:$color }){ label{ id name color } } }"
+	mutation := "mutation UpdateLabel_tf($id:ID!,$name:String!,$color:String!){ updateLabel(input:{ id:$id, name:$name, color:$color }){ label{ " + labelgql.Selection + " } } }"
 	vars := map[string]any{
 		"id":    data.Id.ValueString(),
 		"name":  data.Name.ValueString(),
@@ -154,11 +145,7 @@ func (r *LabelResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	}
 	var out struct {
 		UpdateLabel struct {
-			Label struct {
-				Id    string `json:"id"`
-				Name  string `json:"name"`
-				Color string `json:"color"`
-			} `json:"label"`
+			Label labelgql.Label `json:"label"`
 		} `json:"updateLabel"`
 	}
 	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
@@ -176,7 +163,7 @@ func (r *LabelResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation($id:ID!){ deleteLabel(input:{ id:$id }){ success } }"
+	mutation := "mutation DeleteLabel_tf($id:ID!){ deleteLabel(input:{ id:$id }){ success } }"
 	vars := map[string]any{"id": data.Id.ValueString()}
 	var out struct {
 		DeleteLabel struct {
