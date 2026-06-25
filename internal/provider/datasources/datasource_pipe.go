@@ -103,7 +103,7 @@ func (d *PipeDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 		return
 	}
 
-	query := "query($id:ID!){ pipe(id:$id){ " + pipegql.Selection + " organization { id } } }"
+	query := "query GetPipe_tf($id:ID!){ pipe(id:$id){ " + pipegql.Selection + " organization { id } } }"
 	var out struct {
 		Pipe *struct {
 			pipegql.Payload

@@ -84,7 +84,7 @@ func (r *AutomationResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
-	mutation := "mutation($input:CreateAutomationInput!){ createAutomation(input:$input){ automation{ id name action_id event_id active } error_details{ object_name object_key messages } } }"
+	mutation := "mutation CreateAutomation_tf($input:CreateAutomationInput!){ createAutomation(input:$input){ automation{ id name action_id event_id active } error_details{ object_name object_key messages } } }"
 	input := map[string]any{
 		"name":           data.Name.ValueString(),
 		"action_id":      data.ActionId.ValueString(),
@@ -157,7 +157,7 @@ func (r *AutomationResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 
-	query := "query($id:ID!){ automation(id:$id){ id name action_id event_id active event_repo{ id } action_repo_v2{ ... on Pipe{ id } ... on Table{ id } } } }"
+	query := "query GetAutomation_tf($id:ID!){ automation(id:$id){ id name action_id event_id active event_repo{ id } action_repo_v2{ ... on Pipe{ id } ... on Table{ id } } } }"
 	vars := map[string]any{"id": data.Id.ValueString()}
 	var out struct {
 		Automation *struct {
@@ -192,7 +192,7 @@ func (r *AutomationResource) Update(ctx context.Context, req resource.UpdateRequ
 		return
 	}
 
-	mutation := "mutation($input:UpdateAutomationInput!){ updateAutomation(input:$input){ automation{ id } error_details{ object_name object_key messages } } }"
+	mutation := "mutation UpdateAutomation_tf($input:UpdateAutomationInput!){ updateAutomation(input:$input){ automation{ id } error_details{ object_name object_key messages } } }"
 	input := map[string]any{
 		"id": data.Id.ValueString(),
 	}
@@ -265,7 +265,7 @@ func (r *AutomationResource) Delete(ctx context.Context, req resource.DeleteRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation($id:ID!){ deleteAutomation(input:{id:$id}){ success } }"
+	mutation := "mutation DeleteAutomation_tf($id:ID!){ deleteAutomation(input:{id:$id}){ success } }"
 	vars := map[string]any{"id": data.Id.ValueString()}
 	var out struct {
 		DeleteAutomation struct {

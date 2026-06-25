@@ -73,7 +73,7 @@ func (r *LabelResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	mutation := "mutation($pipeId:ID!,$name:String!,$color:String!){ createLabel(input:{ pipe_id:$pipeId, name:$name, color:$color }){ label{ " + labelgql.Selection + " } } }"
+	mutation := "mutation CreateLabel_tf($pipeId:ID!,$name:String!,$color:String!){ createLabel(input:{ pipe_id:$pipeId, name:$name, color:$color }){ label{ " + labelgql.Selection + " } } }"
 	vars := map[string]any{
 		"pipeId": data.PipeId.ValueString(),
 		"name":   data.Name.ValueString(),
@@ -104,7 +104,7 @@ func (r *LabelResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	query := "query($pipeId:ID!){ pipe(id:$pipeId){ labels{ " + labelgql.Selection + " } } }"
+	query := "query GetPipeLabels_tf($pipeId:ID!){ pipe(id:$pipeId){ labels{ " + labelgql.Selection + " } } }"
 	vars := map[string]any{"pipeId": data.PipeId.ValueString()}
 	var out struct {
 		Pipe *struct {
@@ -137,7 +137,7 @@ func (r *LabelResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 
-	mutation := "mutation($id:ID!,$name:String!,$color:String!){ updateLabel(input:{ id:$id, name:$name, color:$color }){ label{ " + labelgql.Selection + " } } }"
+	mutation := "mutation UpdateLabel_tf($id:ID!,$name:String!,$color:String!){ updateLabel(input:{ id:$id, name:$name, color:$color }){ label{ " + labelgql.Selection + " } } }"
 	vars := map[string]any{
 		"id":    data.Id.ValueString(),
 		"name":  data.Name.ValueString(),
@@ -163,7 +163,7 @@ func (r *LabelResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation($id:ID!){ deleteLabel(input:{ id:$id }){ success } }"
+	mutation := "mutation DeleteLabel_tf($id:ID!){ deleteLabel(input:{ id:$id }){ success } }"
 	vars := map[string]any{"id": data.Id.ValueString()}
 	var out struct {
 		DeleteLabel struct {

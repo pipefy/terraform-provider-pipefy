@@ -86,7 +86,7 @@ func (r *FieldResource) Create(ctx context.Context, req resource.CreateRequest, 
 
 	// Resolve repo_id from the phase to lock per repo
 	// pipefy api does not allow multiple field creations at the same time for the same repo
-	phaseQuery := "query($id:ID!){ phase(id:$id){ repo_id } }"
+	phaseQuery := "query GetPhaseRepoId_tf($id:ID!){ phase(id:$id){ repo_id } }"
 	phaseVars := map[string]any{"id": data.PhaseId.ValueString()}
 	var phaseOut struct {
 		Phase *struct {
@@ -106,7 +106,7 @@ func (r *FieldResource) Create(ctx context.Context, req resource.CreateRequest, 
 	unlock := locks.LockRepo(repoIDStr)
 	defer unlock()
 
-	mutation := "mutation($phaseId:ID!,$type:ID!,$label:String!,$required:Boolean,$options:[String]){ createPhaseField(input:{ phase_id:$phaseId, type:$type, label:$label, required:$required, options:$options }){ phase_field{ " + fieldgql.Selection + " } } }"
+	mutation := "mutation CreatePhaseField_tf($phaseId:ID!,$type:ID!,$label:String!,$required:Boolean,$options:[String]){ createPhaseField(input:{ phase_id:$phaseId, type:$type, label:$label, required:$required, options:$options }){ phase_field{ " + fieldgql.Selection + " } } }"
 	vars := map[string]any{
 		"phaseId": data.PhaseId.ValueString(),
 		"type":    data.Type.ValueString(),
@@ -150,7 +150,7 @@ func (r *FieldResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	}
 
 	// Query the phase to get the field information
-	query := "query($phaseId:ID!){ phase(id:$phaseId){ fields{ " + fieldgql.Selection + " } } }"
+	query := "query GetPhaseFields_tf($phaseId:ID!){ phase(id:$phaseId){ fields{ " + fieldgql.Selection + " } } }"
 	vars := map[string]any{"phaseId": data.PhaseId.ValueString()}
 	var out struct {
 		Phase *struct {
@@ -185,7 +185,7 @@ func (r *FieldResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation($id:ID!,$uuid:ID!,$label:String!,$required:Boolean,$options:[String]){ updatePhaseField(input:{ id:$id, uuid:$uuid, label:$label, required:$required, options:$options }){ phase_field{ id internal_id options } } }"
+	mutation := "mutation UpdatePhaseField_tf($id:ID!,$uuid:ID!,$label:String!,$required:Boolean,$options:[String]){ updatePhaseField(input:{ id:$id, uuid:$uuid, label:$label, required:$required, options:$options }){ phase_field{ id internal_id options } } }"
 	vars := map[string]any{
 		"id":   data.Id.ValueString(),
 		"uuid": data.Uuid.ValueString(),
@@ -227,7 +227,7 @@ func (r *FieldResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	}
 
 	// Fetch repo_id from the phase
-	phaseQuery := "query($id:ID!){ phase(id:$id){ repo_id } }"
+	phaseQuery := "query GetPhaseRepoId_tf($id:ID!){ phase(id:$id){ repo_id } }"
 	phaseVars := map[string]any{"id": data.PhaseId.ValueString()}
 	var phaseOut struct {
 		Phase *struct {
@@ -249,7 +249,7 @@ func (r *FieldResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	}
 
 	// Fetch pipe uuid with repo_id
-	pipeQuery := "query($id:ID!){ pipe(id:$id){ uuid } }"
+	pipeQuery := "query GetPipeUuid_tf($id:ID!){ pipe(id:$id){ uuid } }"
 	pipeVars := map[string]any{"id": repoIDStr}
 	var pipeOut struct {
 		Pipe *struct {
@@ -265,7 +265,7 @@ func (r *FieldResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		return
 	}
 
-	mutation := "mutation($id:ID!,$pipeUuid:ID!){ deletePhaseField(input:{ id:$id, pipeUuid:$pipeUuid }){ success } }"
+	mutation := "mutation DeletePhaseField_tf($id:ID!,$pipeUuid:ID!){ deletePhaseField(input:{ id:$id, pipeUuid:$pipeUuid }){ success } }"
 	vars := map[string]any{"id": data.Id.ValueString(), "pipeUuid": pipeOut.Pipe.Uuid}
 	var out struct {
 		DeletePhaseField struct {
