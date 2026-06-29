@@ -57,6 +57,7 @@ main.go                    # Provider entrypoint
 ## Conventions
 
 - Terraform attribute names are snake_case; resource type names are prefixed `pipefy_`.
+- Name every GraphQL operation with a descriptive PascalCase name and a `_tf` suffix: `Get*` for queries, `Create*` / `Update*` / `Delete*` for mutations, naming the entity and the action (`query GetPipe_tf($id:ID!){ ... }`, `mutation CreateLabel_tf(...)`). The `_tf` marker identifies the request as provider traffic in server-side traces and logs. Each request carries one operation, so the name in the document is enough; no separate `operationName` field is needed.
 - Register every resource and data source in `provider.go` via the `Resources()` and `DataSources()` constructor lists.
 - Each resource has a matching example at `examples/resources/<type>/resource.tf` and an `import.sh`; data sources have `examples/data-sources/<type>/data-source.tf`. These examples are embedded into the generated docs.
 - Auth lives entirely in `provider.go`'s `Configure`. The provider accepts a static `token` (env `PIPEFY_TOKEN`) or a service account `client_id` + `client_secret` (env `PIPEFY_CLIENT_ID` / `PIPEFY_CLIENT_SECRET`); exactly one mode must be configured.

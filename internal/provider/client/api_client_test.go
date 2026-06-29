@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -86,6 +88,108 @@ func TestApiClient_DoGraphQL_OutNil_Succeeds(t *testing.T) {
 	c := &ApiClient{HTTP: ts.Client(), Endpoint: ts.URL}
 	if err := c.DoGraphQL(t.Context(), "query {}", nil, nil); err != nil {
 		t.Fatalf("expected nil error, got: %v", err)
+	}
+}
+
+func TestApiClient_DoGraphQL_UserAgentHeader(t *testing.T) {
+	var gotUA string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"ok":true}}`))
+	}))
+	defer ts.Close()
+
+	c := &ApiClient{HTTP: ts.Client(), Endpoint: ts.URL, Version: "1.2.3"}
+	if err := c.DoGraphQL(t.Context(), "query {}", nil, nil); err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if want := "terraform-provider-pipefy/1.2.3"; gotUA != want {
+		t.Fatalf("User-Agent = %q, want %q", gotUA, want)
+	}
+}
+
+func TestApiClient_DoGraphQL_TraceparentHeader(t *testing.T) {
+	var got string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("traceparent")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"ok":true}}`))
+	}))
+	defer ts.Close()
+
+	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
+	c := &ApiClient{HTTP: ts.Client(), Endpoint: ts.URL, TraceID: traceID}
+	if err := c.DoGraphQL(t.Context(), "query {}", nil, nil); err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	re := regexp.MustCompile("^00-" + regexp.QuoteMeta(traceID) + "-[0-9a-f]{16}-01$")
+	if !re.MatchString(got) {
+		t.Fatalf("traceparent = %q, want match %s", got, re)
+	}
+}
+
+func TestApiClient_DoGraphQL_TraceparentTraceConstantSpanVaries(t *testing.T) {
+	var got []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("traceparent"))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"ok":true}}`))
+	}))
+	defer ts.Close()
+
+	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
+	c := &ApiClient{HTTP: ts.Client(), Endpoint: ts.URL, TraceID: traceID}
+	for range 2 {
+		if err := c.DoGraphQL(t.Context(), "query {}", nil, nil); err != nil {
+			t.Fatalf("expected nil error, got: %v", err)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 requests, got %d", len(got))
+	}
+	parts0, parts1 := strings.Split(got[0], "-"), strings.Split(got[1], "-")
+	if len(parts0) != 4 || len(parts1) != 4 {
+		t.Fatalf("malformed traceparent(s): %q, %q", got[0], got[1])
+	}
+	if parts0[1] != traceID || parts1[1] != traceID {
+		t.Fatalf("trace-id not constant across requests: %q vs %q", got[0], got[1])
+	}
+	if parts0[2] == parts1[2] {
+		t.Fatalf("span-id should differ across requests, both %q", parts0[2])
+	}
+}
+
+func TestApiClient_DoGraphQL_NoTraceparentWhenUnset(t *testing.T) {
+	var present bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, present = r.Header["Traceparent"]
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"ok":true}}`))
+	}))
+	defer ts.Close()
+
+	c := &ApiClient{HTTP: ts.Client(), Endpoint: ts.URL}
+	if err := c.DoGraphQL(t.Context(), "query {}", nil, nil); err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if present {
+		t.Fatalf("traceparent header should be absent when TraceID is unset")
+	}
+}
+
+func TestNewTraceID(t *testing.T) {
+	re := regexp.MustCompile("^[0-9a-f]{32}$")
+	a, b := NewTraceID(), NewTraceID()
+	if !re.MatchString(a) {
+		t.Fatalf("NewTraceID() = %q, want 32 lowercase hex chars", a)
+	}
+	if a == b {
+		t.Fatalf("NewTraceID() returned identical values %q", a)
 	}
 }
 

@@ -53,7 +53,7 @@ type PipeModel struct {
 	StartFormPhaseId          types.String          `tfsdk:"start_form_phase_id"`
 }
 
-const updatePipeMutation = "mutation($id:ID!,$name:String,$public:Boolean,$icon:String,$color:Colors," +
+const updatePipeMutation = "mutation UpdatePipe_tf($id:ID!,$name:String,$public:Boolean,$icon:String,$color:Colors," +
 	"$onlyAdminCanRemoveCards:Boolean,$onlyAssigneesCanEditCards:Boolean," +
 	"$expirationTimeByUnit:Int,$expirationUnit:Int,$preferences:RepoPreferenceInput){ " +
 	"updatePipe(input:{ id:$id, name:$name, public:$public, icon:$icon, color:$color, " +
@@ -237,7 +237,7 @@ func (m *PipeModel) addSettingsVars(ctx context.Context, vars map[string]any) di
 }
 
 func (r *PipeResource) deletePhases(ctx context.Context, ids []string) error {
-	const mutation = "mutation($id:ID!){ deletePhase(input:{id:$id}){ clientMutationId success } }"
+	const mutation = "mutation DeletePhase_tf($id:ID!){ deletePhase(input:{id:$id}){ success } }"
 	for _, id := range ids {
 		var del struct {
 			DeletePhase struct {
@@ -261,7 +261,7 @@ func (r *PipeResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
-	mutation := "mutation($name:String!,$orgId:ID!){ createPipe(input:{name:$name, organization_id:$orgId}){ pipe{ id name } } }"
+	mutation := "mutation CreatePipe_tf($name:String!,$orgId:ID!){ createPipe(input:{name:$name, organization_id:$orgId}){ pipe{ id name } } }"
 	var created struct {
 		CreatePipe struct {
 			Pipe struct {
@@ -284,7 +284,7 @@ func (r *PipeResource) Create(ctx context.Context, req resource.CreateRequest, r
 
 	// createPipe seeds the pipe with three default phases. Fetch them alongside the
 	// current settings so they can be removed and the payload reused below.
-	phasesQuery := "query($id:ID!){ pipe(id:$id){ " + pipegql.Selection + " phases { id } } }"
+	phasesQuery := "query GetPipePhases_tf($id:ID!){ pipe(id:$id){ " + pipegql.Selection + " phases { id } } }"
 	var phasesOut struct {
 		Pipe *struct {
 			pipegql.Payload
@@ -347,7 +347,7 @@ func (r *PipeResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
-	query := "query($id:ID!){ pipe(id:$id){ " + pipegql.Selection + " organization { id } } }"
+	query := "query GetPipe_tf($id:ID!){ pipe(id:$id){ " + pipegql.Selection + " organization { id } } }"
 	var out struct {
 		Pipe *struct {
 			pipegql.Payload
@@ -402,7 +402,7 @@ func (r *PipeResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation($id:ID!){ deletePipe(input:{id:$id}){ success } }"
+	mutation := "mutation DeletePipe_tf($id:ID!){ deletePipe(input:{id:$id}){ success } }"
 	var out struct {
 		DeletePipe struct {
 			Success bool `json:"success"`
