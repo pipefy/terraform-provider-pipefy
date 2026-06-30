@@ -63,6 +63,19 @@ func formatAutomationErrorDetails(details []automationErrorDetail) string {
 	return strings.Join(lines, "\n")
 }
 
+func automationError(automationPresent bool, details []automationErrorDetail, err error) string {
+	if automationPresent {
+		return ""
+	}
+	if detail := formatAutomationErrorDetails(details); detail != "" {
+		return detail
+	}
+	if err != nil {
+		return err.Error()
+	}
+	return "the API returned no automation and no error_details"
+}
+
 func (r *AutomationResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_automation"
 }
@@ -162,16 +175,8 @@ func (r *AutomationResource) Create(ctx context.Context, req resource.CreateRequ
 		} `json:"createAutomation"`
 	}
 	err := r.api.DoGraphQL(ctx, mutation, vars, &out)
-	if len(out.CreateAutomation.ErrorDetails) > 0 {
-		resp.Diagnostics.AddError("create automation failed", formatAutomationErrorDetails(out.CreateAutomation.ErrorDetails))
-		return
-	}
-	if err != nil {
-		resp.Diagnostics.AddError("create automation failed", err.Error())
-		return
-	}
-	if out.CreateAutomation.Automation == nil {
-		resp.Diagnostics.AddError("create automation failed", "the API returned no automation and no error_details")
+	if detail := automationError(out.CreateAutomation.Automation != nil, out.CreateAutomation.ErrorDetails, err); detail != "" {
+		resp.Diagnostics.AddError("create automation failed", detail)
 		return
 	}
 	data.Id = types.StringValue(out.CreateAutomation.Automation.Id)
@@ -280,16 +285,8 @@ func (r *AutomationResource) Update(ctx context.Context, req resource.UpdateRequ
 		} `json:"updateAutomation"`
 	}
 	err := r.api.DoGraphQL(ctx, mutation, vars, &out)
-	if len(out.UpdateAutomation.ErrorDetails) > 0 {
-		resp.Diagnostics.AddError("update automation failed", formatAutomationErrorDetails(out.UpdateAutomation.ErrorDetails))
-		return
-	}
-	if err != nil {
-		resp.Diagnostics.AddError("update automation failed", err.Error())
-		return
-	}
-	if out.UpdateAutomation.Automation == nil {
-		resp.Diagnostics.AddError("update automation failed", "the API returned no automation and no error_details")
+	if detail := automationError(out.UpdateAutomation.Automation != nil, out.UpdateAutomation.ErrorDetails, err); detail != "" {
+		resp.Diagnostics.AddError("update automation failed", detail)
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)

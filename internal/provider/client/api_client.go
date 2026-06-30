@@ -127,9 +127,6 @@ func (c *ApiClient) DoGraphQL(ctx context.Context, query string, variables map[s
 	if out != nil && len(gqlResp.Data) > 0 {
 		decodeErr = json.Unmarshal(gqlResp.Data, out)
 	}
-	// Top-level errors take precedence over a data-decode mismatch: a rejected
-	// request can still return a payload whose shape differs from the query
-	// selection, and the GraphQL message is the useful one.
 	if len(gqlResp.Errors) > 0 {
 		messages := make([]string, len(gqlResp.Errors))
 		for i, e := range gqlResp.Errors {
