@@ -45,7 +45,6 @@ func TestUnit_AutomationResource_CRUD(t *testing.T) {
 		q := gr.Query
 		switch {
 		case strings.Contains(q, "createAutomation"):
-			// input is nested under variables["input"]
 			if in, ok := gr.Variables["input"].(map[string]any); ok {
 				if v, ok2 := in["event_params"]; ok2 {
 					st.CreatedEventParams = v
@@ -70,7 +69,6 @@ func TestUnit_AutomationResource_CRUD(t *testing.T) {
 			st.DeletedCt++
 			_, _ = io.WriteString(w, `{"data":{"deleteAutomation":{"success":true}}}`)
 		case strings.Contains(q, "automation("):
-			// Read path
 			_, _ = io.WriteString(w, `{"data":{"automation":{"id":"`+st.ID+`","name":"When Summary changes, generate AI output","action_id":"generate_with_ai","event_id":"field_updated","active":true,"event_repo":{"id":"repo"},"action_repo_v2":{"id":"repo"}}}}`)
 		default:
 			_, _ = io.WriteString(w, `{"data":{}}`)
@@ -175,8 +173,6 @@ func TestUnit_AutomationResource_CreateSurfacesErrorDetails(t *testing.T) {
 		_ = json.Unmarshal(b, &gr)
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(gr.Query, "createAutomation") {
-			// The live API returns error_details inside data alongside a generic
-			// top-level error; the specific error_details messages must win.
 			_, _ = io.WriteString(w, `{"errors":[{"message":"All fields must be filled properly."}],"data":{"createAutomation":{"automation":null,"error_details":[{"object_name":"field_map","object_key":"420173432","messages":["can't be blank"]}]}}}`)
 			return
 		}
@@ -225,8 +221,6 @@ func TestUnit_AutomationResource_CreateSurfacesTopLevelErrors(t *testing.T) {
 		_ = json.Unmarshal(b, &gr)
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(gr.Query, "createAutomation") {
-			// No error_details, only top-level errors: every message surfaces,
-			// not just the first.
 			_, _ = io.WriteString(w, `{"errors":[{"message":"Name can't be blank"},{"message":"Event is invalid"}],"data":{"createAutomation":{"automation":null}}}`)
 			return
 		}
