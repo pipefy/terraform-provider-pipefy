@@ -193,6 +193,61 @@ func TestNewTraceID(t *testing.T) {
 	}
 }
 
+func TestApiClient_DoGraphQL_DataAndErrors(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"hello":"world"},"errors":[{"message":"boom"},{"message":"bang"}]}`))
+	}))
+	defer ts.Close()
+
+	c := &ApiClient{HTTP: ts.Client(), Endpoint: ts.URL}
+	var out echoData
+	err := c.DoGraphQL(t.Context(), "query {}", nil, &out)
+	if err == nil || err.Error() != "graphql error: boom; bang" {
+		t.Fatalf("expected joined graphql error, got: %v", err)
+	}
+	if out.Hello != "world" {
+		t.Fatalf("expected data unmarshaled despite top-level errors, got: %+v", out)
+	}
+}
+
+func TestApiClient_DoGraphQL_DataDecodeMismatchYieldsToErrors(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		// hello is typed string in echoData; a number can't decode into it.
+		_, _ = w.Write([]byte(`{"data":{"hello":42},"errors":[{"message":"boom"}]}`))
+	}))
+	defer ts.Close()
+
+	c := &ApiClient{HTTP: ts.Client(), Endpoint: ts.URL}
+	var out echoData
+	err := c.DoGraphQL(t.Context(), "query {}", nil, &out)
+	if err == nil || err.Error() != "graphql error: boom" {
+		t.Fatalf("expected top-level error to win over decode mismatch, got: %v", err)
+	}
+}
+
+func TestApiClient_DoGraphQL_DataNullWithErrors(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":null,"errors":[{"message":"unauthorized"}]}`))
+	}))
+	defer ts.Close()
+
+	c := &ApiClient{HTTP: ts.Client(), Endpoint: ts.URL}
+	var out echoData
+	err := c.DoGraphQL(t.Context(), "query {}", nil, &out)
+	if err == nil || err.Error() != "graphql error: unauthorized" {
+		t.Fatalf("expected graphql error, got: %v", err)
+	}
+	if out.Hello != "" {
+		t.Fatalf("expected out untouched on data:null, got: %+v", out)
+	}
+}
+
 func TestApiClient_DoGraphQL_MissingData(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 type ApiClient struct {
@@ -58,20 +59,20 @@ type graphQLResponse struct {
 	Errors []graphQLError  `json:"errors"`
 }
 
-func (c *ApiClient) DoGraphQL(ctx context.Context, query string, variables map[string]any, out any) error {
+func (c *ApiClient) execGraphQL(ctx context.Context, query string, variables map[string]any) (*graphQLResponse, error) {
 	if c.HTTP == nil {
-		return fmt.Errorf("api client http is nil")
+		return nil, fmt.Errorf("api client http is nil")
 	}
 	if c.Endpoint == "" {
-		return fmt.Errorf("api endpoint is empty")
+		return nil, fmt.Errorf("api endpoint is empty")
 	}
 	bodyBytes, err := json.Marshal(graphQLRequest{Query: query, Variables: variables})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -88,17 +89,17 @@ func (c *ApiClient) DoGraphQL(ctx context.Context, query string, variables map[s
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Check for non-2xx status codes first
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("graphql http status %d (content-type=%s): %s", resp.StatusCode, resp.Header.Get("Content-Type"), string(respBody))
+		return nil, fmt.Errorf("graphql http status %d (content-type=%s): %s", resp.StatusCode, resp.Header.Get("Content-Type"), string(respBody))
 	}
 
 	var gqlResp graphQLResponse
@@ -107,17 +108,37 @@ func (c *ApiClient) DoGraphQL(ctx context.Context, query string, variables map[s
 		if len(responsePreview) > 200 {
 			responsePreview = responsePreview[:200] + "..."
 		}
-		return fmt.Errorf("failed to parse JSON response (status %d): %s. Response preview: %s", resp.StatusCode, err.Error(), responsePreview)
+		return nil, fmt.Errorf("failed to parse JSON response (status %d): %s. Response preview: %s", resp.StatusCode, err.Error(), responsePreview)
 	}
+	return &gqlResp, nil
+}
 
+// DoGraphQL runs the query and decodes data into out. It unmarshals data
+// whenever the response carries it, even alongside top-level errors, so a
+// caller can read a payload the API returns with the errors (such as a
+// mutation's error_details). out is therefore populated even when this returns
+// an error. The error joins all top-level GraphQL error messages.
+func (c *ApiClient) DoGraphQL(ctx context.Context, query string, variables map[string]any, out any) error {
+	gqlResp, err := c.execGraphQL(ctx, query, variables)
+	if err != nil {
+		return err
+	}
+	var decodeErr error
+	if out != nil && len(gqlResp.Data) > 0 {
+		decodeErr = json.Unmarshal(gqlResp.Data, out)
+	}
 	if len(gqlResp.Errors) > 0 {
-		return fmt.Errorf("graphql error: %s", gqlResp.Errors[0].Message)
+		messages := make([]string, len(gqlResp.Errors))
+		for i, e := range gqlResp.Errors {
+			messages[i] = e.Message
+		}
+		return fmt.Errorf("graphql error: %s", strings.Join(messages, "; "))
 	}
-	if out == nil {
-		return nil
+	if decodeErr != nil {
+		return decodeErr
 	}
-	if len(gqlResp.Data) == 0 {
+	if out != nil && len(gqlResp.Data) == 0 {
 		return fmt.Errorf("graphql response missing data")
 	}
-	return json.Unmarshal(gqlResp.Data, out)
+	return nil
 }

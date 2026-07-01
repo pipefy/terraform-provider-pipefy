@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -35,6 +36,44 @@ type AutomationModel struct {
 	ActionParams types.String `tfsdk:"action_params"`
 	Condition    types.String `tfsdk:"condition"`
 	Active       types.Bool   `tfsdk:"active"`
+}
+
+type automationErrorDetail struct {
+	ObjectName string   `json:"object_name"`
+	ObjectKey  string   `json:"object_key"`
+	Messages   []string `json:"messages"`
+}
+
+func formatAutomationErrorDetails(details []automationErrorDetail) string {
+	lines := make([]string, len(details))
+	for i, d := range details {
+		label := d.ObjectName
+		if d.ObjectKey != "" {
+			label = strings.TrimSpace(label + " (" + d.ObjectKey + ")")
+		}
+		segments := make([]string, 0, 2)
+		if label != "" {
+			segments = append(segments, label)
+		}
+		if msg := strings.Join(d.Messages, "; "); msg != "" {
+			segments = append(segments, msg)
+		}
+		lines[i] = strings.Join(segments, ": ")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func automationError(automationPresent bool, details []automationErrorDetail, err error) string {
+	if automationPresent {
+		return ""
+	}
+	if detail := formatAutomationErrorDetails(details); detail != "" {
+		return detail
+	}
+	if err != nil {
+		return err.Error()
+	}
+	return "the API returned no automation and no error_details"
 }
 
 func (r *AutomationResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -132,15 +171,12 @@ func (r *AutomationResource) Create(ctx context.Context, req resource.CreateRequ
 				EventId  string `json:"event_id"`
 				Active   bool   `json:"active"`
 			} `json:"automation"`
-			ErrorDetails any `json:"error_details"`
+			ErrorDetails []automationErrorDetail `json:"error_details"`
 		} `json:"createAutomation"`
 	}
-	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
-		resp.Diagnostics.AddError("create automation failed", err.Error())
-		return
-	}
-	if out.CreateAutomation.Automation == nil {
-		resp.Diagnostics.AddError("create automation failed", "no automation returned; check error_details in API")
+	err := r.api.DoGraphQL(ctx, mutation, vars, &out)
+	if detail := automationError(out.CreateAutomation.Automation != nil, out.CreateAutomation.ErrorDetails, err); detail != "" {
+		resp.Diagnostics.AddError("create automation failed", detail)
 		return
 	}
 	data.Id = types.StringValue(out.CreateAutomation.Automation.Id)
@@ -245,15 +281,12 @@ func (r *AutomationResource) Update(ctx context.Context, req resource.UpdateRequ
 			Automation *struct {
 				Id string `json:"id"`
 			} `json:"automation"`
-			ErrorDetails any `json:"error_details"`
+			ErrorDetails []automationErrorDetail `json:"error_details"`
 		} `json:"updateAutomation"`
 	}
-	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
-		resp.Diagnostics.AddError("update automation failed", err.Error())
-		return
-	}
-	if out.UpdateAutomation.Automation == nil {
-		resp.Diagnostics.AddError("update automation failed", "no automation returned; check error_details in API")
+	err := r.api.DoGraphQL(ctx, mutation, vars, &out)
+	if detail := automationError(out.UpdateAutomation.Automation != nil, out.UpdateAutomation.ErrorDetails, err); detail != "" {
+		resp.Diagnostics.AddError("update automation failed", detail)
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)

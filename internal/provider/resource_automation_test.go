@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -44,7 +45,6 @@ func TestUnit_AutomationResource_CRUD(t *testing.T) {
 		q := gr.Query
 		switch {
 		case strings.Contains(q, "createAutomation"):
-			// input is nested under variables["input"]
 			if in, ok := gr.Variables["input"].(map[string]any); ok {
 				if v, ok2 := in["event_params"]; ok2 {
 					st.CreatedEventParams = v
@@ -69,7 +69,6 @@ func TestUnit_AutomationResource_CRUD(t *testing.T) {
 			st.DeletedCt++
 			_, _ = io.WriteString(w, `{"data":{"deleteAutomation":{"success":true}}}`)
 		case strings.Contains(q, "automation("):
-			// Read path
 			_, _ = io.WriteString(w, `{"data":{"automation":{"id":"`+st.ID+`","name":"When Summary changes, generate AI output","action_id":"generate_with_ai","event_id":"field_updated","active":true,"event_repo":{"id":"repo"},"action_repo_v2":{"id":"repo"}}}}`)
 		default:
 			_, _ = io.WriteString(w, `{"data":{}}`)
@@ -164,4 +163,450 @@ func TestUnit_AutomationResource_CRUD(t *testing.T) {
 	if st.DeletedCt == 0 {
 		t.Fatalf("expected delete mutation to be called")
 	}
+}
+
+func TestUnit_AutomationResource_CreateSurfacesErrorDetails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var gr gqlReq
+		defer r.Body.Close()
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gr)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(gr.Query, "createAutomation") {
+			_, _ = io.WriteString(w, `{"errors":[{"message":"All fields must be filled properly."}],"data":{"createAutomation":{"automation":null,"error_details":[{"object_name":"field_map","object_key":"420173432","messages":["can't be blank"]}]}}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"data":{}}`)
+	}))
+	defer srv.Close()
+
+	config := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "Invalid automation"
+		event_id       = "field_updated"
+		action_id      = "update_card_field"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+
+		action_params = jsonencode({
+			field_map = [{ fieldId = "420173432", inputMode = "fixed_value", value = "" }]
+		})
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      config,
+				ExpectError: regexp.MustCompile(`field_map.*can't be blank`),
+			},
+		},
+	})
+}
+
+func TestUnit_AutomationResource_CreateSurfacesTopLevelErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var gr gqlReq
+		defer r.Body.Close()
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gr)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(gr.Query, "createAutomation") {
+			_, _ = io.WriteString(w, `{"errors":[{"message":"Name can't be blank"},{"message":"Event is invalid"}],"data":{"createAutomation":{"automation":null}}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"data":{}}`)
+	}))
+	defer srv.Close()
+
+	config := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "Invalid automation"
+		event_id       = "field_updated"
+		action_id      = "update_card_field"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      config,
+				ExpectError: regexp.MustCompile(`Name can't be blank; Event is invalid`),
+			},
+		},
+	})
+}
+
+func TestUnit_AutomationResource_CreateJoinsErrorDetailMessages(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var gr gqlReq
+		defer r.Body.Close()
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gr)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(gr.Query, "createAutomation") {
+			_, _ = io.WriteString(w, `{"errors":[{"message":"All fields must be filled properly."}],"data":{"createAutomation":{"automation":null,"error_details":[{"object_name":"field_map","object_key":"420173432","messages":["can't be blank","is invalid"]}]}}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"data":{}}`)
+	}))
+	defer srv.Close()
+
+	config := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "Invalid automation"
+		event_id       = "field_updated"
+		action_id      = "update_card_field"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      config,
+				ExpectError: regexp.MustCompile(`field_map \(420173432\): can't be blank; is invalid`),
+			},
+		},
+	})
+}
+
+func TestUnit_AutomationResource_CreateFallsBackToTopLevelErrorWhenDetailsBlank(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var gr gqlReq
+		defer r.Body.Close()
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gr)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(gr.Query, "createAutomation") {
+			_, _ = io.WriteString(w, `{"errors":[{"message":"All fields must be filled properly."}],"data":{"createAutomation":{"automation":null,"error_details":[{"object_name":"","object_key":"","messages":[]}]}}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"data":{}}`)
+	}))
+	defer srv.Close()
+
+	config := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "Invalid automation"
+		event_id       = "field_updated"
+		action_id      = "update_card_field"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      config,
+				ExpectError: regexp.MustCompile(`All fields must be filled properly`),
+			},
+		},
+	})
+}
+
+func TestUnit_AutomationResource_CreateReportsGenericErrorWhenNoAutomationOrDetails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var gr gqlReq
+		defer r.Body.Close()
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gr)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(gr.Query, "createAutomation") {
+			_, _ = io.WriteString(w, `{"data":{"createAutomation":{"automation":null}}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"data":{}}`)
+	}))
+	defer srv.Close()
+
+	config := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "Invalid automation"
+		event_id       = "field_updated"
+		action_id      = "update_card_field"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      config,
+				ExpectError: regexp.MustCompile(`the API returned no automation and no error_details`),
+			},
+		},
+	})
+}
+
+func TestUnit_AutomationResource_CreatePersistsStateWhenAutomationReturnedWithErrorDetails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var gr gqlReq
+		defer r.Body.Close()
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gr)
+		w.Header().Set("Content-Type", "application/json")
+
+		switch q := gr.Query; {
+		case strings.Contains(q, "createAutomation"):
+			_, _ = io.WriteString(w, `{"data":{"createAutomation":{"automation":{"id":"auto_1","name":"Auto","action_id":"generate_with_ai","event_id":"field_updated","active":true},"error_details":[{"object_name":"field_map","object_key":"420173432","messages":["can't be blank"]}]}}}`)
+		case strings.Contains(q, "automation("):
+			_, _ = io.WriteString(w, `{"data":{"automation":{"id":"auto_1","name":"Auto","action_id":"generate_with_ai","event_id":"field_updated","active":true,"event_repo":{"id":"repo"},"action_repo_v2":{"id":"repo"}}}}`)
+		case strings.Contains(q, "deleteAutomation"):
+			_, _ = io.WriteString(w, `{"data":{"deleteAutomation":{"success":true}}}`)
+		default:
+			_, _ = io.WriteString(w, `{"data":{}}`)
+		}
+	}))
+	defer srv.Close()
+
+	config := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "Auto"
+		event_id       = "field_updated"
+		action_id      = "generate_with_ai"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+		active         = true
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(
+						"pipefy_automation.test",
+						tfjsonpath.New("id"),
+						knownvalue.StringExact("auto_1"),
+					),
+				},
+			},
+		},
+	})
+}
+
+func TestUnit_AutomationResource_CreateRejectsInvalidActionParamsJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":{}}`)
+	}))
+	defer srv.Close()
+
+	config := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "Auto"
+		event_id       = "field_updated"
+		action_id      = "generate_with_ai"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+		action_params  = "{not valid json"
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      config,
+				ExpectError: regexp.MustCompile(`invalid action_params JSON`),
+			},
+		},
+	})
+}
+
+func TestUnit_AutomationResource_UpdateSurfacesTopLevelErrors(t *testing.T) {
+	failUpdate := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var gr gqlReq
+		defer r.Body.Close()
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gr)
+		w.Header().Set("Content-Type", "application/json")
+
+		switch q := gr.Query; {
+		case strings.Contains(q, "createAutomation"):
+			_, _ = io.WriteString(w, `{"data":{"createAutomation":{"automation":{"id":"auto_1","name":"Auto","action_id":"generate_with_ai","event_id":"field_updated","active":true}}}}`)
+		case strings.Contains(q, "updateAutomation"):
+			if failUpdate {
+				_, _ = io.WriteString(w, `{"errors":[{"message":"Name can't be blank"},{"message":"Event is invalid"}],"data":{"updateAutomation":{"automation":null}}}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"data":{"updateAutomation":{"automation":{"id":"auto_1"}}}}`)
+		case strings.Contains(q, "deleteAutomation"):
+			_, _ = io.WriteString(w, `{"data":{"deleteAutomation":{"success":true}}}`)
+		case strings.Contains(q, "automation("):
+			_, _ = io.WriteString(w, `{"data":{"automation":{"id":"auto_1","name":"Auto","action_id":"generate_with_ai","event_id":"field_updated","active":true,"event_repo":{"id":"repo"},"action_repo_v2":{"id":"repo"}}}}`)
+		default:
+			_, _ = io.WriteString(w, `{"data":{}}`)
+		}
+	}))
+	defer srv.Close()
+
+	base := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "NAME"
+		event_id       = "field_updated"
+		action_id      = "generate_with_ai"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+		active         = true
+	}
+	`
+	config := strings.ReplaceAll(base, "NAME", "Auto")
+	configUpdate := strings.ReplaceAll(base, "NAME", "Renamed Auto")
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+			},
+			{
+				PreConfig:   func() { failUpdate = true },
+				Config:      configUpdate,
+				ExpectError: regexp.MustCompile(`Name can't be blank; Event is invalid`),
+			},
+		},
+	})
+}
+
+func TestUnit_AutomationResource_UpdateSurfacesErrorDetails(t *testing.T) {
+	failUpdate := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var gr gqlReq
+		defer r.Body.Close()
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gr)
+		w.Header().Set("Content-Type", "application/json")
+
+		switch q := gr.Query; {
+		case strings.Contains(q, "createAutomation"):
+			_, _ = io.WriteString(w, `{"data":{"createAutomation":{"automation":{"id":"auto_1","name":"Auto","action_id":"generate_with_ai","event_id":"field_updated","active":true}}}}`)
+		case strings.Contains(q, "updateAutomation"):
+			if failUpdate {
+				_, _ = io.WriteString(w, `{"errors":[{"message":"All fields must be filled properly."}],"data":{"updateAutomation":{"automation":null,"error_details":[{"object_name":"field_map","object_key":"420173432","messages":["can't be blank"]}]}}}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"data":{"updateAutomation":{"automation":{"id":"auto_1"}}}}`)
+		case strings.Contains(q, "deleteAutomation"):
+			_, _ = io.WriteString(w, `{"data":{"deleteAutomation":{"success":true}}}`)
+		case strings.Contains(q, "automation("):
+			_, _ = io.WriteString(w, `{"data":{"automation":{"id":"auto_1","name":"Auto","action_id":"generate_with_ai","event_id":"field_updated","active":true,"event_repo":{"id":"repo"},"action_repo_v2":{"id":"repo"}}}}`)
+		default:
+			_, _ = io.WriteString(w, `{"data":{}}`)
+		}
+	}))
+	defer srv.Close()
+
+	base := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "NAME"
+		event_id       = "field_updated"
+		action_id      = "generate_with_ai"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+		active         = true
+	}
+	`
+	config := strings.ReplaceAll(base, "NAME", "Auto")
+	configUpdate := strings.ReplaceAll(base, "NAME", "Renamed Auto")
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+			},
+			{
+				PreConfig:   func() { failUpdate = true },
+				Config:      configUpdate,
+				ExpectError: regexp.MustCompile(`field_map.*can't be blank`),
+			},
+		},
+	})
 }
