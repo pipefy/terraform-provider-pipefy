@@ -52,6 +52,10 @@ signs:
       - "--detach-sign"
       - "${artifact}"
 release:
+  # replace overwrites a release's existing assets on re-run instead of failing
+  # with "already_exists", so a release left partial by a transient upload error
+  # can be recovered by re-running the workflow.
+  mode: replace
   extra_files:
     - glob: 'terraform-registry-manifest.json'
       name_template: '{{ .ProjectName }}_{{ .Version }}_manifest.json'
