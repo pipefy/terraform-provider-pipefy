@@ -63,7 +63,7 @@ resource "pipefy_pipe_relation" "orders_to_fulfillment" {
 - `can_create_new_items` (Boolean) Whether new connected items can be created through the relation.
 - `child_must_exist_to_finish_parent` (Boolean) Whether at least one connected child must exist before the parent can be finished.
 - `child_must_exist_to_move_parent` (Boolean) Whether at least one connected child must exist before the parent can be moved.
-- `own_field_maps` (Attributes Set) Field mappings that auto-fill a child item's start-form fields from the parent item. Omit to leave unmanaged; removing it stops managing the maps but does not reset them on the server. (see [below for nested schema](#nestedatt--own_field_maps))
+- `own_field_maps` (Attributes Set) Field mappings that auto-fill a child item's start-form fields from the parent item. The set is managed in full: the configured mappings are the ones kept, and an empty list (or omitting the block) clears them on the server. (see [below for nested schema](#nestedatt--own_field_maps))
 
 ### Read-Only
 
@@ -85,8 +85,7 @@ Import is supported using the following syntax:
 The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
-# Import an existing pipe relation using the format parent_pipe_id/relation_id.
-# The first component must be the parent pipe id: the relation is read from that
-# pipe's childrenRelations, so a child pipe id will not resolve.
+# The first component must be the parent pipe id: the relation is read from the
+# parent's childrenRelations, so a child pipe id will not resolve.
 terraform import pipefy_pipe_relation.orders_to_fulfillment "<PARENT_PIPE_ID>/<RELATION_ID>"
 ```

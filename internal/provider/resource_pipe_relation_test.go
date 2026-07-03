@@ -173,11 +173,10 @@ func TestUnit_PipeRelationResource_CRUD(t *testing.T) {
 				},
 			},
 			{
-				ResourceName:            "pipefy_pipe_relation.test",
-				ImportState:             true,
-				ImportStateId:           "pipe_parent/rel_1",
-				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"own_field_maps"},
+				ResourceName:      "pipefy_pipe_relation.test",
+				ImportState:       true,
+				ImportStateId:     "pipe_parent/rel_1",
+				ImportStateVerify: true,
 			},
 			{
 				Config: destroy,
@@ -299,7 +298,7 @@ func TestUnit_PipeRelationResource_OwnFieldMapsClearedConverges(t *testing.T) {
 					statecheck.ExpectKnownValue(
 						"pipefy_pipe_relation.test",
 						tfjsonpath.New("own_field_maps"),
-						knownvalue.Null(),
+						knownvalue.SetSizeExact(0),
 					),
 				},
 			},

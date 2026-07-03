@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
@@ -31,6 +33,12 @@ type pipeRelationFieldMapModel struct {
 	InputMode types.String `tfsdk:"input_mode"`
 	Value     types.String `tfsdk:"value"`
 }
+
+var ownFieldMapObjectType = types.ObjectType{AttrTypes: map[string]attr.Type{
+	"field_id":   types.StringType,
+	"input_mode": types.StringType,
+	"value":      types.StringType,
+}}
 
 type PipeRelationModel struct {
 	Id                                  types.String                `tfsdk:"id"`
@@ -99,7 +107,9 @@ func (r *PipeRelationResource) Schema(ctx context.Context, req resource.SchemaRe
 				"Whether auto-fill of child start-form fields from the parent is enabled. Pair with `own_field_maps`.", false),
 			"own_field_maps": schema.SetNestedAttribute{
 				Optional:    true,
-				Description: "Field mappings that auto-fill a child item's start-form fields from the parent item. Omit to leave unmanaged; removing it stops managing the maps but does not reset them on the server.",
+				Computed:    true,
+				Default:     setdefault.StaticValue(types.SetValueMust(ownFieldMapObjectType, []attr.Value{})),
+				Description: "Field mappings that auto-fill a child item's start-form fields from the parent item. The set is managed in full: the configured mappings are the ones kept, and an empty list (or omitting the block) clears them on the server.",
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
 						"field_id": schema.StringAttribute{
@@ -147,24 +157,19 @@ func (m *PipeRelationModel) writeInput() map[string]any {
 		"childMustExistToMoveParent":          m.ChildMustExistToMoveParent.ValueBool(),
 		"autoFillFieldEnabled":                m.AutoFillFieldEnabled.ValueBool(),
 	}
-	if len(m.OwnFieldMaps) > 0 {
-		maps := make([]map[string]any, len(m.OwnFieldMaps))
-		for i, fm := range m.OwnFieldMaps {
-			maps[i] = map[string]any{
-				"fieldId":   fm.FieldId.ValueString(),
-				"inputMode": fm.InputMode.ValueString(),
-				"value":     fm.Value.ValueString(),
-			}
+	maps := make([]map[string]any, len(m.OwnFieldMaps))
+	for i, fm := range m.OwnFieldMaps {
+		maps[i] = map[string]any{
+			"fieldId":   fm.FieldId.ValueString(),
+			"inputMode": fm.InputMode.ValueString(),
+			"value":     fm.Value.ValueString(),
 		}
-		in["ownFieldMaps"] = maps
 	}
+	in["ownFieldMaps"] = maps
 	return in
 }
 
 func fieldMapsToModel(maps []piperelationgql.FieldMap) []pipeRelationFieldMapModel {
-	if len(maps) == 0 {
-		return nil
-	}
 	out := make([]pipeRelationFieldMapModel, len(maps))
 	for i, fm := range maps {
 		out[i] = pipeRelationFieldMapModel{
@@ -200,9 +205,7 @@ func (m *PipeRelationModel) apply(rel piperelationgql.Relation) {
 	if rel.Child != nil && rel.Child.Id != "" {
 		m.ChildId = types.StringValue(rel.Child.Id)
 	}
-	if len(m.OwnFieldMaps) > 0 {
-		m.OwnFieldMaps = fieldMapsToModel(rel.OwnFieldMaps)
-	}
+	m.OwnFieldMaps = fieldMapsToModel(rel.OwnFieldMaps)
 }
 
 func (r *PipeRelationResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
