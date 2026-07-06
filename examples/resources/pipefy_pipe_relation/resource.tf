@@ -8,6 +8,15 @@ resource "pipefy_pipe" "fulfillment" {
   organization_id = "<ORG_ID>"
 }
 
+# The auto-fill target is a field on the child pipe's start form. Reference the
+# field's computed internal_id so the mapping tracks the field itself, rather
+# than a hardcoded literal or the resource's slug id.
+resource "pipefy_field" "priority" {
+  phase_id = pipefy_pipe.fulfillment.start_form_phase_id
+  type     = "short_text"
+  label    = "Priority"
+}
+
 resource "pipefy_pipe_relation" "orders_to_fulfillment" {
   parent_id = pipefy_pipe.orders.id
   child_id  = pipefy_pipe.fulfillment.id
@@ -21,7 +30,7 @@ resource "pipefy_pipe_relation" "orders_to_fulfillment" {
   auto_fill_field_enabled = true
   own_field_maps = [
     {
-      field_id   = "<CHILD_START_FORM_FIELD_INTERNAL_ID>"
+      field_id   = pipefy_field.priority.internal_id
       input_mode = "fixed_value"
       value      = "High"
     }

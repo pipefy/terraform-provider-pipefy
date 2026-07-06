@@ -305,3 +305,81 @@ func TestUnit_PipeRelationResource_OwnFieldMapsClearedConverges(t *testing.T) {
 		},
 	})
 }
+
+// Changing the field reference and value of an existing map entry must produce
+// an update whose new state carries only the new entry. The server replaces
+// ownFieldMaps wholesale on update (verified live), so the old entry does not
+// linger; the mock mirrors that by overwriting the stored set.
+func TestUnit_PipeRelationResource_OwnFieldMapsModified(t *testing.T) {
+	st := &pipeRelationState{}
+	srv := httptest.NewServer(pipeRelationMockHandler(st))
+	defer srv.Close()
+
+	provider := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+	`
+	withFieldA := provider + `
+	resource "pipefy_pipe_relation" "test" {
+		parent_id               = "pipe_parent"
+		child_id                = "pipe_child"
+		name                    = "Maps"
+		auto_fill_field_enabled = true
+
+		own_field_maps = [
+			{ field_id = "111", input_mode = "fixed_value", value = "A" },
+		]
+	}
+	`
+	withFieldB := provider + `
+	resource "pipefy_pipe_relation" "test" {
+		parent_id               = "pipe_parent"
+		child_id                = "pipe_child"
+		name                    = "Maps"
+		auto_fill_field_enabled = true
+
+		own_field_maps = [
+			{ field_id = "222", input_mode = "fixed_value", value = "B" },
+		]
+	}
+	`
+
+	mapEntry := func(id, value string) knownvalue.Check {
+		return knownvalue.ObjectExact(map[string]knownvalue.Check{
+			"field_id":   knownvalue.StringExact(id),
+			"input_mode": knownvalue.StringExact("fixed_value"),
+			"value":      knownvalue.StringExact(value),
+		})
+	}
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: withFieldA,
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(
+						"pipefy_pipe_relation.test",
+						tfjsonpath.New("own_field_maps"),
+						knownvalue.SetExact([]knownvalue.Check{mapEntry("111", "A")}),
+					),
+				},
+			},
+			{
+				Config: withFieldB,
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(
+						"pipefy_pipe_relation.test",
+						tfjsonpath.New("own_field_maps"),
+						knownvalue.SetExact([]knownvalue.Check{mapEntry("222", "B")}),
+					),
+				},
+			},
+		},
+	})
+}
