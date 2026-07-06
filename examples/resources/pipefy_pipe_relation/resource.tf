@@ -8,9 +8,6 @@ resource "pipefy_pipe" "fulfillment" {
   organization_id = "<ORG_ID>"
 }
 
-# The auto-fill target is a field on the child pipe's start form. Reference the
-# field's computed internal_id so the mapping tracks the field itself, rather
-# than a hardcoded literal or the resource's slug id.
 resource "pipefy_field" "priority" {
   phase_id = pipefy_pipe.fulfillment.start_form_phase_id
   type     = "short_text"
