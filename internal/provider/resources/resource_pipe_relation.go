@@ -23,6 +23,7 @@ import (
 
 var _ resource.Resource = &PipeRelationResource{}
 var _ resource.ResourceWithImportState = &PipeRelationResource{}
+var _ resource.ResourceWithValidateConfig = &PipeRelationResource{}
 
 func NewPipeRelationResource() resource.Resource { return &PipeRelationResource{} }
 
@@ -141,6 +142,31 @@ func (r *PipeRelationResource) Configure(ctx context.Context, req resource.Confi
 		return
 	}
 	r.api = api
+}
+
+func (r *PipeRelationResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var autoFill types.Bool
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("auto_fill_field_enabled"), &autoFill)...)
+
+	var maps types.Set
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("own_field_maps"), &maps)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if autoFill.IsUnknown() || maps.IsUnknown() {
+		return
+	}
+
+	mapsPresent := !maps.IsNull() && len(maps.Elements()) > 0
+	autoFillOff := autoFill.IsNull() || !autoFill.ValueBool()
+	if mapsPresent && autoFillOff {
+		resp.Diagnostics.AddAttributeWarning(
+			path.Root("own_field_maps"),
+			"own_field_maps has no effect while auto-fill is disabled",
+			"own_field_maps is set but auto_fill_field_enabled is not true, so the mappings will not auto-fill the child's start-form fields. Set auto_fill_field_enabled = true to apply them.",
+		)
+	}
 }
 
 // writeInput sends every boolean unconditionally: the API types them Boolean!
