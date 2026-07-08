@@ -53,7 +53,7 @@ func (r *WebhookResource) Schema(ctx context.Context, req resource.SchemaRequest
 			"pipe_id": schema.StringAttribute{Required: true, Description: "The ID of the pipe that the webhook belongs to", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 			"url": schema.StringAttribute{
 				Required:    true,
-				Description: "The URL that receives the webhook notifications. The API requires HTTPS.",
+				Description: "The URL that receives the webhook notifications.",
 				Validators:  []validator.String{validators.URL()},
 			},
 			"actions": schema.ListAttribute{

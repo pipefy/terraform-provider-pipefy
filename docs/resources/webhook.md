@@ -49,7 +49,7 @@ resource "pipefy_webhook" "moves_from_phase" {
 - `actions` (List of String) The events that trigger the webhook (e.g. card.create, card.move). The supported values are defined by the Pipefy API; see https://developers.pipefy.com/reference for the current list.
 - `name` (String) Name of the webhook
 - `pipe_id` (String) The ID of the pipe that the webhook belongs to
-- `url` (String) The URL that receives the webhook notifications. The API requires HTTPS.
+- `url` (String) The URL that receives the webhook notifications.
 
 ### Optional
 
@@ -69,4 +69,7 @@ The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/c
 ```shell
 # Import an existing Webhook using the format pipe_id/webhook_id
 terraform import pipefy_webhook.example "<PIPE_ID>/<WEBHOOK_ID>"
+
+# Note: headers and filters are not read back from the API, so after import the
+# first plan shows an in-place update that re-sends the values from your config.
 ```
