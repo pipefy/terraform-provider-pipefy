@@ -3,12 +3,12 @@
 page_title: "pipefy_webhook Resource - pipefy"
 subcategory: ""
 description: |-
-  Webhook resource
+  Sends an HTTP request to a URL when the selected events occur on a pipe.
 ---
 
 # pipefy_webhook (Resource)
 
-Webhook resource
+Sends an HTTP request to a URL when the selected events occur on a pipe.
 
 ## Example Usage
 

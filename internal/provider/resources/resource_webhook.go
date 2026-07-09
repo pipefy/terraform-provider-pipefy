@@ -47,7 +47,7 @@ func (r *WebhookResource) Metadata(ctx context.Context, req resource.MetadataReq
 
 func (r *WebhookResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Webhook resource",
+		MarkdownDescription: "Sends an HTTP request to a URL when the selected events occur on a pipe.",
 		Attributes: map[string]schema.Attribute{
 			"id":      schema.StringAttribute{Computed: true, Description: "The ID of the webhook", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"pipe_id": schema.StringAttribute{Required: true, Description: "The ID of the pipe that the webhook belongs to", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
