@@ -53,8 +53,8 @@ resource "pipefy_webhook" "moves_from_phase" {
 
 ### Optional
 
-- `filters` (String) Filters that restrict when the webhook fires, as a JSON string. Only one action can be configured when filters are used. See https://developers.pipefy.com/reference for the supported keys per action.
-- `headers` (String, Sensitive) Custom HTTP headers sent with the webhook, as a JSON object string (e.g. "{\"Authorization\":\"Bearer ...\"}"). Not read back from the API, so changes to it are only reconciled on the next apply.
+- `filters` (String) Filters that restrict when the webhook fires, as a JSON string. Only one action can be configured when filters are used. Refreshed from the API so drift is detected, and removing it clears the filters. See https://developers.pipefy.com/reference for the supported keys per action.
+- `headers` (String, Sensitive) Custom HTTP headers sent with the webhook, as a JSON object string (e.g. "{\"Authorization\":\"Bearer ...\"}"). Being sensitive, it is not read back from the API: the configured value is authoritative and re-sent on every apply, and removing it clears the headers. Changes made outside Terraform are not detected.
 
 ### Read-Only
 
@@ -70,6 +70,7 @@ The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/c
 # Import an existing Webhook using the format pipe_id/webhook_id
 terraform import pipefy_webhook.example "<PIPE_ID>/<WEBHOOK_ID>"
 
-# Note: headers and filters are not read back from the API, so after import the
-# first plan shows an in-place update that re-sends the values from your config.
+# Note: headers is not read back from the API (it is sensitive), so after import
+# the first plan shows an in-place update that re-sends it from your config.
+# filters is refreshed from the API, so it imports without a follow-up change.
 ```

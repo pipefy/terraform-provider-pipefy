@@ -5,6 +5,7 @@ package resources
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -67,12 +68,12 @@ func (r *WebhookResource) Schema(ctx context.Context, req resource.SchemaRequest
 				Optional:    true,
 				Sensitive:   true,
 				CustomType:  jsontypes.NormalizedType{},
-				Description: "Custom HTTP headers sent with the webhook, as a JSON object string (e.g. \"{\\\"Authorization\\\":\\\"Bearer ...\\\"}\"). Not read back from the API, so changes to it are only reconciled on the next apply.",
+				Description: "Custom HTTP headers sent with the webhook, as a JSON object string (e.g. \"{\\\"Authorization\\\":\\\"Bearer ...\\\"}\"). Being sensitive, it is not read back from the API: the configured value is authoritative and re-sent on every apply, and removing it clears the headers. Changes made outside Terraform are not detected.",
 			},
 			"filters": schema.StringAttribute{
 				Optional:    true,
 				CustomType:  jsontypes.NormalizedType{},
-				Description: "Filters that restrict when the webhook fires, as a JSON string. Only one action can be configured when filters are used. See https://developers.pipefy.com/reference for the supported keys per action.",
+				Description: "Filters that restrict when the webhook fires, as a JSON string. Only one action can be configured when filters are used. Refreshed from the API so drift is detected, and removing it clears the filters. See https://developers.pipefy.com/reference for the supported keys per action.",
 			},
 		},
 	}
@@ -187,9 +188,32 @@ func (r *WebhookResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 	data.Actions = actions
-	// headers and filters are intentionally left as-is: headers are sensitive
-	// and filters are kept as the user's JSON string to avoid diffs.
+	// filters is refreshed so drift is detected; jsontypes.Normalized applies
+	// semantic equality, so formatting or key order does not cause a diff.
+	// headers is left as-is: it is sensitive and not read back from the API.
+	data.Filters = normalizeFilters(w.Filters)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// normalizeFilters maps the API's filters payload to the attribute value. The
+// API returns an empty object (or null) when no filter is set, which maps to a
+// null attribute so it matches an unset config. A non-empty payload keeps the
+// API's raw JSON so large numeric IDs never round-trip through float64;
+// jsontypes.Normalized compares it semantically, so formatting does not diff.
+func normalizeFilters(raw json.RawMessage) jsontypes.Normalized {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return jsontypes.NewNormalizedNull()
+	}
+	// Unmarshal only to detect an empty object; the raw bytes, not this decoded
+	// value, are what get stored.
+	var v any
+	if err := json.Unmarshal([]byte(trimmed), &v); err == nil {
+		if m, ok := v.(map[string]any); ok && len(m) == 0 {
+			return jsontypes.NewNormalizedNull()
+		}
+	}
+	return jsontypes.NewNormalizedValue(trimmed)
 }
 
 func (r *WebhookResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -214,8 +238,8 @@ func (r *WebhookResource) Update(ctx context.Context, req resource.UpdateRequest
 		}
 		input["actions"] = actions
 	}
-	addHeadersInput(input, data.Headers)
-	if !addFiltersInput(input, data.Filters, &resp.Diagnostics) {
+	updateHeadersInput(input, data.Headers)
+	if !updateFiltersInput(input, data.Filters, &resp.Diagnostics) {
 		return
 	}
 
@@ -284,6 +308,36 @@ func addHeadersInput(input map[string]any, value jsontypes.Normalized) {
 // when the value cannot be unmarshaled so the caller can stop.
 func addFiltersInput(input map[string]any, value jsontypes.Normalized, diags *diag.Diagnostics) bool {
 	if value.IsNull() || value.ValueString() == "" {
+		return true
+	}
+	var v any
+	diags.Append(value.Unmarshal(&v)...)
+	if diags.HasError() {
+		return false
+	}
+	input["filters"] = v
+	return true
+}
+
+// updateHeadersInput always sets headers on an update so that removing it from
+// config clears the remote value. The API otherwise resets omitted headers to
+// an empty object, but sending an explicit value (or null) keeps config
+// authoritative. It sends the JSON string when set, or null when unset.
+func updateHeadersInput(input map[string]any, value jsontypes.Normalized) {
+	if value.IsNull() || value.ValueString() == "" {
+		input["headers"] = nil
+		return
+	}
+	input["headers"] = value.ValueString()
+}
+
+// updateFiltersInput always sets filters on an update so that removing it from
+// config clears the remote value. The API keeps omitted filters, so an explicit
+// null is required to clear them. It sends the unmarshaled object when set, or
+// null when unset.
+func updateFiltersInput(input map[string]any, value jsontypes.Normalized, diags *diag.Diagnostics) bool {
+	if value.IsNull() || value.ValueString() == "" {
+		input["filters"] = nil
 		return true
 	}
 	var v any

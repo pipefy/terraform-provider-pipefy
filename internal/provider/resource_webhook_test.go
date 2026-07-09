@@ -21,13 +21,23 @@ import (
 )
 
 type webhookState struct {
-	ID          string
-	Name        string
-	URL         string
-	Actions     []string
-	HeadersType string // Go type of the headers input on the last create/update
-	FiltersType string // Go type of the filters input on the last create/update
-	DeletedCt   int
+	ID      string
+	Name    string
+	URL     string
+	Actions []string
+	Filters string // stored filters as raw JSON; "" means none
+
+	// Serialization of the headers/filters inputs on the last create and update,
+	// so tests can lock the Json-string vs JSON-object contract and the
+	// clear-on-remove behavior.
+	HeadersType       string
+	FiltersType       string
+	UpdateHeadersType string
+	UpdateFiltersType string
+	UpdateHeadersNull bool
+	UpdateFiltersNull bool
+
+	DeletedCt int
 }
 
 func webhookInputStrings(input map[string]any) (name, url string, actions []string) {
@@ -47,19 +57,24 @@ func webhookInputStrings(input map[string]any) (name, url string, actions []stri
 	return name, url, actions
 }
 
-func writeWebhook(w http.ResponseWriter, root string, st *webhookState) {
-	payload, _ := json.Marshal(map[string]any{
+func webhookJSON(st *webhookState) string {
+	filters := st.Filters
+	if filters == "" {
+		filters = "{}"
+	}
+	b, _ := json.Marshal(map[string]any{
 		"id":      st.ID,
 		"name":    st.Name,
 		"url":     st.URL,
 		"actions": st.Actions,
+		"filters": json.RawMessage(filters),
 	})
-	_, _ = io.WriteString(w, `{"data":{"`+root+`":{"webhook":`+string(payload)+`}}}`)
+	return string(b)
 }
 
 // newWebhookServer returns a mock Pipefy GraphQL endpoint that tracks a single
-// webhook's state and records the Go type of the headers/filters inputs so
-// tests can assert how they were serialized.
+// webhook's state, stores its filters, and records how headers/filters were
+// serialized so tests can assert the wire contract.
 func newWebhookServer(st *webhookState) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer testtoken" {
@@ -84,8 +99,12 @@ func newWebhookServer(st *webhookState) *httptest.Server {
 			}
 			if f, ok := input["filters"]; ok {
 				st.FiltersType = fmt.Sprintf("%T", f)
+				if f != nil {
+					fb, _ := json.Marshal(f)
+					st.Filters = string(fb)
+				}
 			}
-			writeWebhook(w, "createWebhook", st)
+			_, _ = io.WriteString(w, `{"data":{"createWebhook":{"webhook":`+webhookJSON(st)+`}}}`)
 		case strings.Contains(q, "updateWebhook"):
 			name, url, actions := webhookInputStrings(input)
 			if name != "" {
@@ -97,7 +116,21 @@ func newWebhookServer(st *webhookState) *httptest.Server {
 			if actions != nil {
 				st.Actions = actions
 			}
-			writeWebhook(w, "updateWebhook", st)
+			if h, ok := input["headers"]; ok {
+				st.UpdateHeadersType = fmt.Sprintf("%T", h)
+				st.UpdateHeadersNull = h == nil
+			}
+			if f, ok := input["filters"]; ok {
+				st.UpdateFiltersType = fmt.Sprintf("%T", f)
+				st.UpdateFiltersNull = f == nil
+				if f == nil {
+					st.Filters = ""
+				} else {
+					fb, _ := json.Marshal(f)
+					st.Filters = string(fb)
+				}
+			}
+			_, _ = io.WriteString(w, `{"data":{"updateWebhook":{"webhook":`+webhookJSON(st)+`}}}`)
 		case strings.Contains(q, "deleteWebhook"):
 			st.DeletedCt++
 			_, _ = io.WriteString(w, `{"data":{"deleteWebhook":{"success":true}}}`)
@@ -106,8 +139,7 @@ func newWebhookServer(st *webhookState) *httptest.Server {
 				_, _ = io.WriteString(w, `{"data":{"pipe":{"webhooks":[]}}}`)
 				return
 			}
-			actions, _ := json.Marshal(st.Actions)
-			_, _ = io.WriteString(w, `{"data":{"pipe":{"webhooks":[{"id":"`+st.ID+`","name":"`+st.Name+`","url":"`+st.URL+`","actions":`+string(actions)+`}]}}}`)
+			_, _ = io.WriteString(w, `{"data":{"pipe":{"webhooks":[`+webhookJSON(st)+`]}}}`)
 		case strings.Contains(q, "createPipe"):
 			_, _ = io.WriteString(w, `{"data":{"createPipe":{"pipe":{"id":"pipe_1","name":"My Pipe"}}}}`)
 		case strings.Contains(q, "updatePipe"):
@@ -160,7 +192,7 @@ func TestUnit_WebhookResource_CRUD(t *testing.T) {
 		name    = "Card events renamed"
 		url     = "https://example.com/hook2"
 		actions = ["card.done"]
-		headers = jsonencode({ Authorization = "Bearer secret" })
+		headers = jsonencode({ Authorization = "Bearer rotated" })
 	}
 	`
 
@@ -211,22 +243,86 @@ func TestUnit_WebhookResource_CRUD(t *testing.T) {
 		t.Fatalf("expected deleteWebhook mutation to be called")
 	}
 	// The API's headers field is the Json scalar and must be sent as a JSON
-	// string, not an object. Sending an object is rejected by the backend.
+	// string, not an object, on both create and update (header rotation).
 	if st.HeadersType != "string" {
-		t.Fatalf("expected headers input to be a string, got %q", st.HeadersType)
+		t.Fatalf("expected create headers input to be a string, got %q", st.HeadersType)
+	}
+	if st.UpdateHeadersType != "string" {
+		t.Fatalf("expected update headers input to be a string, got %q", st.UpdateHeadersType)
 	}
 }
 
-// TestUnit_WebhookResource_Filters covers the filters happy path: a single
-// action plus filters applies, the filters value is preserved in state (it is
-// not refreshed from the API), and filters is sent to the API as a JSON object
-// rather than a string.
+// TestUnit_WebhookResource_Filters covers the filters happy path: filters is
+// sent as a JSON object (not a string) on create and update, is refreshed from
+// the API without a spurious diff, and survives a value change.
 func TestUnit_WebhookResource_Filters(t *testing.T) {
 	st := &webhookState{}
 	srv := newWebhookServer(st)
 	defer srv.Close()
+	provider := webhookProviderBlock(srv.URL)
 
-	config := webhookProviderBlock(srv.URL) + `
+	config := provider + `
+	resource "pipefy_webhook" "test" {
+		pipe_id = pipefy_pipe.p.id
+		name    = "Moves"
+		url     = "https://example.com/hook"
+		actions = ["card.move"]
+		filters = jsonencode({ from_phase_id = [268] })
+	}
+	`
+
+	configChanged := provider + `
+	resource "pipefy_webhook" "test" {
+		pipe_id = pipefy_pipe.p.id
+		name    = "Moves"
+		url     = "https://example.com/hook"
+		actions = ["card.move"]
+		filters = jsonencode({ from_phase_id = [999] })
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("pipefy_webhook.test", tfjsonpath.New("filters"), knownvalue.StringExact(`{"from_phase_id":[268]}`)),
+				},
+			},
+			{
+				// Same config again: refresh must not produce a spurious diff.
+				Config: config,
+			},
+			{
+				Config: configChanged,
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("pipefy_webhook.test", tfjsonpath.New("filters"), knownvalue.StringExact(`{"from_phase_id":[999]}`)),
+				},
+			},
+		},
+	})
+
+	if st.FiltersType != "map[string]interface {}" {
+		t.Fatalf("expected create filters input to be a JSON object, got %q", st.FiltersType)
+	}
+	if st.UpdateFiltersType != "map[string]interface {}" {
+		t.Fatalf("expected update filters input to be a JSON object, got %q", st.UpdateFiltersType)
+	}
+}
+
+// TestUnit_WebhookResource_FiltersDrift proves filters is reconciled: an
+// out-of-band change to the remote filters is detected as a non-empty plan.
+func TestUnit_WebhookResource_FiltersDrift(t *testing.T) {
+	st := &webhookState{}
+	srv := newWebhookServer(st)
+	defer srv.Close()
+	provider := webhookProviderBlock(srv.URL)
+
+	config := provider + `
 	resource "pipefy_webhook" "test" {
 		pipe_id = pipefy_pipe.p.id
 		name    = "Moves"
@@ -244,17 +340,80 @@ func TestUnit_WebhookResource_Filters(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config: config,
+			},
+			{
+				// Simulate a change made outside Terraform, then expect the refresh
+				// to surface it as a pending change.
+				PreConfig: func() {
+					st.Filters = `{"from_phase_id":[999]}`
+				},
+				Config:             config,
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: true,
+			},
+		},
+	})
+}
+
+// TestUnit_WebhookResource_ClearOnRemove proves that removing headers and
+// filters from config clears them on the API: the update payload carries an
+// explicit null for both, and state ends up null.
+func TestUnit_WebhookResource_ClearOnRemove(t *testing.T) {
+	st := &webhookState{}
+	srv := newWebhookServer(st)
+	defer srv.Close()
+	provider := webhookProviderBlock(srv.URL)
+
+	withBoth := provider + `
+	resource "pipefy_webhook" "test" {
+		pipe_id = pipefy_pipe.p.id
+		name    = "Moves"
+		url     = "https://example.com/hook"
+		actions = ["card.move"]
+		headers = jsonencode({ Authorization = "Bearer secret" })
+		filters = jsonencode({ from_phase_id = [268] })
+	}
+	`
+
+	withoutBoth := provider + `
+	resource "pipefy_webhook" "test" {
+		pipe_id = pipefy_pipe.p.id
+		name    = "Moves"
+		url     = "https://example.com/hook"
+		actions = ["card.move"]
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: withBoth,
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue("pipefy_webhook.test", tfjsonpath.New("filters"), knownvalue.StringExact(`{"from_phase_id":[268]}`)),
+				},
+			},
+			{
+				Config: withoutBoth,
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("pipefy_webhook.test", tfjsonpath.New("headers"), knownvalue.Null()),
+					statecheck.ExpectKnownValue("pipefy_webhook.test", tfjsonpath.New("filters"), knownvalue.Null()),
 				},
 			},
 		},
 	})
 
-	// The API's filters field is the JSON scalar and expects an object, so the
-	// provider must send an unmarshaled value, not the raw string.
-	if st.FiltersType != "map[string]interface {}" {
-		t.Fatalf("expected filters input to be a JSON object, got %q", st.FiltersType)
+	if !st.UpdateHeadersNull {
+		t.Fatalf("expected update to send headers: null when removed")
+	}
+	if !st.UpdateFiltersNull {
+		t.Fatalf("expected update to send filters: null when removed")
+	}
+	if st.Filters != "" {
+		t.Fatalf("expected remote filters to be cleared, got %q", st.Filters)
 	}
 }
 
@@ -361,9 +520,10 @@ func TestUnit_WebhookResource_Import(t *testing.T) {
 				ImportState:       true,
 				ImportStateId:     "pipe_1/webhook_123",
 				ImportStateVerify: true,
-				// headers and filters are not read back from the API, so they are
-				// absent from imported state and must be excluded from the diff.
-				ImportStateVerifyIgnore: []string{"headers", "filters"},
+				// headers is not read back from the API, so it is absent from
+				// imported state and excluded from the diff. filters is refreshed,
+				// so it is not ignored.
+				ImportStateVerifyIgnore: []string{"headers"},
 			},
 			{
 				ResourceName:  "pipefy_webhook.test",
