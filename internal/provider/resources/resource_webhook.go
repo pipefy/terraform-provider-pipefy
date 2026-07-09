@@ -26,7 +26,6 @@ import (
 
 var _ resource.Resource = &WebhookResource{}
 var _ resource.ResourceWithImportState = &WebhookResource{}
-var _ resource.ResourceWithValidateConfig = &WebhookResource{}
 
 func NewWebhookResource() resource.Resource { return &WebhookResource{} }
 
@@ -76,25 +75,6 @@ func (r *WebhookResource) Schema(ctx context.Context, req resource.SchemaRequest
 				Description: "Filters that restrict when the webhook fires, as a JSON string. Only one action can be configured when filters are used. Refreshed from the API so drift is detected, and removing it clears the filters. See https://developers.pipefy.com/reference for the supported keys per action.",
 			},
 		},
-	}
-}
-
-func (r *WebhookResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
-	var data WebhookModel
-	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	filtersSet := !data.Filters.IsNull() && !data.Filters.IsUnknown() && data.Filters.ValueString() != ""
-	if !filtersSet || data.Actions.IsNull() || data.Actions.IsUnknown() {
-		return
-	}
-	if len(data.Actions.Elements()) != 1 {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("actions"),
-			"Only one action allowed with filters",
-			"the Pipefy API allows exactly one webhook action when filters are configured; set a single action or remove filters",
-		)
 	}
 }
 

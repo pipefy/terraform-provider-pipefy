@@ -419,8 +419,7 @@ func TestUnit_WebhookResource_ClearOnRemove(t *testing.T) {
 
 // TestUnit_WebhookResource_Validations guarantees every client-side validation
 // is wired to its attribute and rejects bad input at plan time: the URL
-// validator, the JSON validation on headers and filters, and the ValidateConfig
-// rule that filters allow exactly one action.
+// validator and the JSON validation on headers and filters.
 func TestUnit_WebhookResource_Validations(t *testing.T) {
 	provider := `
 	provider "pipefy" {
@@ -460,13 +459,6 @@ func TestUnit_WebhookResource_Validations(t *testing.T) {
 			actions = ["card.move"]
 			filters = "{not valid json"`,
 			wantErr: regexp.MustCompile(`Invalid JSON String Value`),
-		},
-		"filters with multiple actions": {
-			body: `
-			url     = "https://example.com/hook"
-			actions = ["card.create", "card.move"]
-			filters = jsonencode({ on_phase_id = [1] })`,
-			wantErr: regexp.MustCompile(`Only one action allowed with filters`),
 		},
 	}
 
