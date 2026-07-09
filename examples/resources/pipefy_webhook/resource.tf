@@ -18,8 +18,8 @@ resource "pipefy_webhook" "moves_from_phase" {
     Authorization = "Bearer <TOKEN>"
   })
 
-  # Only one action can be configured when filters are used. Phase IDs are
-  # numeric, so the phase's id (a string) is converted with tonumber.
+  # The supported filter keys depend on the action. Phase IDs are numeric, so
+  # the phase's id (a string) is converted with tonumber.
   filters = jsonencode({
     from_phase_id = [tonumber(pipefy_phase.in_progress.id)]
   })

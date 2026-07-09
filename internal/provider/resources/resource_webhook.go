@@ -72,7 +72,7 @@ func (r *WebhookResource) Schema(ctx context.Context, req resource.SchemaRequest
 			"filters": schema.StringAttribute{
 				Optional:    true,
 				CustomType:  jsontypes.NormalizedType{},
-				Description: "Filters that restrict when the webhook fires, as a JSON string. Only one action can be configured when filters are used. Refreshed from the API so drift is detected, and removing it clears the filters. See https://developers.pipefy.com/reference for the supported keys per action.",
+				Description: "Filters that restrict when the webhook fires, as a JSON string. Refreshed from the API so drift is detected, and removing it clears the filters. The supported keys and constraints per action are defined by the API; see https://developers.pipefy.com/reference.",
 			},
 		},
 	}

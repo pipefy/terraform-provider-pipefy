@@ -33,8 +33,8 @@ resource "pipefy_webhook" "moves_from_phase" {
     Authorization = "Bearer <TOKEN>"
   })
 
-  # Only one action can be configured when filters are used. Phase IDs are
-  # numeric, so the phase's id (a string) is converted with tonumber.
+  # The supported filter keys depend on the action. Phase IDs are numeric, so
+  # the phase's id (a string) is converted with tonumber.
   filters = jsonencode({
     from_phase_id = [tonumber(pipefy_phase.in_progress.id)]
   })
@@ -53,7 +53,7 @@ resource "pipefy_webhook" "moves_from_phase" {
 
 ### Optional
 
-- `filters` (String) Filters that restrict when the webhook fires, as a JSON string. Only one action can be configured when filters are used. Refreshed from the API so drift is detected, and removing it clears the filters. See https://developers.pipefy.com/reference for the supported keys per action.
+- `filters` (String) Filters that restrict when the webhook fires, as a JSON string. Refreshed from the API so drift is detected, and removing it clears the filters. The supported keys and constraints per action are defined by the API; see https://developers.pipefy.com/reference.
 - `headers` (String, Sensitive) Custom HTTP headers sent with the webhook, as a JSON object string (e.g. "{\"Authorization\":\"Bearer ...\"}"). Being sensitive, it is not read back from the API: the configured value is authoritative and re-sent on every apply, and removing it clears the headers. Changes made outside Terraform are not detected.
 
 ### Read-Only
