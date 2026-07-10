@@ -12,6 +12,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -37,6 +39,13 @@ type FieldModel struct {
 	Label      types.String `tfsdk:"label"`
 	Required   types.Bool   `tfsdk:"required"`
 	Options    types.List   `tfsdk:"options"`
+
+	Description      types.String `tfsdk:"description"`
+	Help             types.String `tfsdk:"help"`
+	Editable         types.Bool   `tfsdk:"editable"`
+	MinimalView      types.Bool   `tfsdk:"minimal_view"`
+	CustomValidation types.String `tfsdk:"custom_validation"`
+	Index            types.Int64  `tfsdk:"index"`
 }
 
 func (r *FieldResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -51,15 +60,56 @@ func (r *FieldResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 			"internal_id": schema.StringAttribute{Computed: true, Description: "The unique internal ID of the field", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"uuid":        schema.StringAttribute{Computed: true, Description: "The field's UUID. A stable identifier that does not change when the label changes.", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"phase_id":    schema.StringAttribute{Required: true, Description: "The ID of the phase that the field belongs to", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-			"type":        schema.StringAttribute{Required: true, Description: "The type of the field", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+			"type":        schema.StringAttribute{Required: true, Description: "The field type. See https://developers.pipefy.com/reference for the current list of supported types.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 			"label":       schema.StringAttribute{Required: true, Description: "The displayed name of the field"},
-			"required":    schema.BoolAttribute{Optional: true, Description: "Whether the field is required or not"},
+			"required": schema.BoolAttribute{
+				Optional:      true,
+				Computed:      true,
+				Description:   "Whether the field is required or not",
+				PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
+			},
 			"options": schema.ListAttribute{
 				ElementType:   types.StringType,
 				Optional:      true,
 				Computed:      true,
 				Description:   "Choices for option-based field types (checklist_vertical, checklist_horizontal, radio_vertical, radio_horizontal, select, label_select). Order is preserved and user-visible.",
 				PlanModifiers: []planmodifier.List{listplanmodifier.UseStateForUnknown()},
+			},
+			"description": schema.StringAttribute{
+				Optional:      true,
+				Computed:      true,
+				Description:   "Helper description shown under the field",
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"help": schema.StringAttribute{
+				Optional:      true,
+				Computed:      true,
+				Description:   "Help text shown for the field",
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"editable": schema.BoolAttribute{
+				Optional:      true,
+				Computed:      true,
+				Description:   "Whether the field value can be edited after creation",
+				PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
+			},
+			"minimal_view": schema.BoolAttribute{
+				Optional:      true,
+				Computed:      true,
+				Description:   "Whether the field is shown in the card's minimal (summary) view",
+				PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
+			},
+			"custom_validation": schema.StringAttribute{
+				Optional:      true,
+				Computed:      true,
+				Description:   "Custom validation rule applied to the field value",
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"index": schema.Int64Attribute{
+				Optional:      true,
+				Computed:      true,
+				Description:   "Position of the field within the phase form",
+				PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()},
 			},
 		},
 	}
@@ -106,22 +156,15 @@ func (r *FieldResource) Create(ctx context.Context, req resource.CreateRequest, 
 	unlock := locks.LockRepo(repoIDStr)
 	defer unlock()
 
-	mutation := "mutation CreatePhaseField_tf($phaseId:ID!,$type:ID!,$label:String!,$required:Boolean,$options:[String]){ createPhaseField(input:{ phase_id:$phaseId, type:$type, label:$label, required:$required, options:$options }){ phase_field{ " + fieldgql.Selection + " } } }"
+	mutation := "mutation CreatePhaseField_tf($phaseId:ID!,$type:ID!,$label:String!,$required:Boolean,$options:[String],$description:String,$help:String,$editable:Boolean,$minimalView:Boolean,$customValidation:String,$index:Float){ createPhaseField(input:{ phase_id:$phaseId, type:$type, label:$label, required:$required, options:$options, description:$description, help:$help, editable:$editable, minimal_view:$minimalView, custom_validation:$customValidation, index:$index }){ phase_field{ " + fieldgql.Selection + " } } }"
 	vars := map[string]any{
 		"phaseId": data.PhaseId.ValueString(),
 		"type":    data.Type.ValueString(),
 		"label":   data.Label.ValueString(),
 	}
-	if !data.Required.IsNull() {
-		vars["required"] = data.Required.ValueBool()
-	}
-	if !data.Options.IsNull() && !data.Options.IsUnknown() {
-		var opts []string
-		resp.Diagnostics.Append(data.Options.ElementsAs(ctx, &opts, false)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		vars["options"] = opts
+	addFieldWriteVars(ctx, data, vars, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
 	}
 	var out struct {
 		CreatePhaseField struct {
@@ -132,10 +175,10 @@ func (r *FieldResource) Create(ctx context.Context, req resource.CreateRequest, 
 		resp.Diagnostics.AddError("create field failed", err.Error())
 		return
 	}
-	data.Id = types.StringValue(out.CreatePhaseField.PhaseField.Id)
-	data.InternalId = types.StringValue(out.CreatePhaseField.PhaseField.InternalId)
-	data.Uuid = types.StringValue(out.CreatePhaseField.PhaseField.Uuid)
-	data.Options = optionsToList(ctx, out.CreatePhaseField.PhaseField.Options, &resp.Diagnostics)
+	applyFieldToModel(ctx, &data, out.CreatePhaseField.PhaseField, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -172,10 +215,10 @@ func (r *FieldResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	data.Id = types.StringValue(found.Id)
-	data.InternalId = types.StringValue(found.InternalId)
-	data.Uuid = types.StringValue(found.Uuid)
-	data.Options = optionsToList(ctx, found.Options, &resp.Diagnostics)
+	applyFieldToModel(ctx, &data, found, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -185,7 +228,7 @@ func (r *FieldResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation UpdatePhaseField_tf($id:ID!,$uuid:ID!,$label:String!,$required:Boolean,$options:[String]){ updatePhaseField(input:{ id:$id, uuid:$uuid, label:$label, required:$required, options:$options }){ phase_field{ id internal_id options } } }"
+	mutation := "mutation UpdatePhaseField_tf($id:ID!,$uuid:ID!,$label:String!,$required:Boolean,$options:[String],$description:String,$help:String,$editable:Boolean,$minimalView:Boolean,$customValidation:String,$index:Float){ updatePhaseField(input:{ id:$id, uuid:$uuid, label:$label, required:$required, options:$options, description:$description, help:$help, editable:$editable, minimal_view:$minimalView, custom_validation:$customValidation, index:$index }){ phase_field{ " + fieldgql.Selection + " } } }"
 	vars := map[string]any{
 		"id":   data.Id.ValueString(),
 		"uuid": data.Uuid.ValueString(),
@@ -193,17 +236,9 @@ func (r *FieldResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	if !data.Label.IsNull() {
 		vars["label"] = data.Label.ValueString()
 	}
-	if !data.Required.IsNull() {
-		vars["required"] = data.Required.ValueBool()
-	}
-
-	if !data.Options.IsNull() && !data.Options.IsUnknown() {
-		var opts []string
-		resp.Diagnostics.Append(data.Options.ElementsAs(ctx, &opts, false)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		vars["options"] = opts
+	addFieldWriteVars(ctx, data, vars, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
 	}
 	var out struct {
 		UpdatePhaseField struct {
@@ -214,8 +249,10 @@ func (r *FieldResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		resp.Diagnostics.AddError("update field failed", err.Error())
 		return
 	}
-	data.InternalId = types.StringValue(out.UpdatePhaseField.PhaseField.InternalId)
-	data.Options = optionsToList(ctx, out.UpdatePhaseField.PhaseField.Options, &resp.Diagnostics)
+	applyFieldToModel(ctx, &data, out.UpdatePhaseField.PhaseField, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -289,4 +326,73 @@ func optionsToList(ctx context.Context, opts []string, diags *diag.Diagnostics) 
 	list, d := types.ListValueFrom(ctx, types.StringType, opts)
 	diags.Append(d...)
 	return list
+}
+
+func strPtr(p *string) types.String {
+	if p == nil {
+		return types.StringNull()
+	}
+	return types.StringValue(*p)
+}
+
+func boolPtr(p *bool) types.Bool {
+	if p == nil {
+		return types.BoolNull()
+	}
+	return types.BoolValue(*p)
+}
+
+// addFieldWriteVars adds the settable field attributes to a create/update input.
+// Optional+Computed attributes are sent only when they carry a concrete value, so
+// an omitted attribute leaves the server default (create) or existing value
+// (update) intact rather than overwriting it with a zero value.
+func addFieldWriteVars(ctx context.Context, data FieldModel, vars map[string]any, diags *diag.Diagnostics) {
+	if !data.Required.IsNull() && !data.Required.IsUnknown() {
+		vars["required"] = data.Required.ValueBool()
+	}
+	if !data.Options.IsNull() && !data.Options.IsUnknown() {
+		var opts []string
+		diags.Append(data.Options.ElementsAs(ctx, &opts, false)...)
+		vars["options"] = opts
+	}
+	if !data.Description.IsNull() && !data.Description.IsUnknown() {
+		vars["description"] = data.Description.ValueString()
+	}
+	if !data.Help.IsNull() && !data.Help.IsUnknown() {
+		vars["help"] = data.Help.ValueString()
+	}
+	if !data.Editable.IsNull() && !data.Editable.IsUnknown() {
+		vars["editable"] = data.Editable.ValueBool()
+	}
+	if !data.MinimalView.IsNull() && !data.MinimalView.IsUnknown() {
+		vars["minimalView"] = data.MinimalView.ValueBool()
+	}
+	if !data.CustomValidation.IsNull() && !data.CustomValidation.IsUnknown() {
+		vars["customValidation"] = data.CustomValidation.ValueString()
+	}
+	if !data.Index.IsNull() && !data.Index.IsUnknown() {
+		vars["index"] = data.Index.ValueInt64()
+	}
+}
+
+// applyFieldToModel maps a fetched field payload onto the model. Create, Read,
+// and Update all use it so every attribute (and thus drift detection) stays in
+// step. phase_id and type are not part of the payload and are left untouched.
+func applyFieldToModel(ctx context.Context, data *FieldModel, f fieldgql.Field, diags *diag.Diagnostics) {
+	data.Id = types.StringValue(f.Id)
+	data.InternalId = types.StringValue(f.InternalId)
+	data.Uuid = types.StringValue(f.Uuid)
+	data.Label = types.StringValue(f.Label)
+	data.Required = boolPtr(f.Required)
+	data.Description = strPtr(f.Description)
+	data.Help = strPtr(f.Help)
+	data.Editable = boolPtr(f.Editable)
+	data.MinimalView = boolPtr(f.MinimalView)
+	data.CustomValidation = strPtr(f.CustomValidation)
+	if f.Index == nil {
+		data.Index = types.Int64Null()
+	} else {
+		data.Index = types.Int64Value(int64(*f.Index))
+	}
+	data.Options = optionsToList(ctx, f.Options, diags)
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -21,6 +22,10 @@ import (
 
 type fieldState struct {
 	id, internalID, uuid, label, optionsJSON string
+	required                                 *bool
+	description, help, customValidation      *string
+	editable, minimalView                    *bool
+	index                                    *float64
 	created                                  bool
 	deletedCt                                int
 }
@@ -33,10 +38,63 @@ func optionsJSON(vars map[string]any, fallback string) string {
 	return fallback
 }
 
+func jsonStr(p *string) string {
+	if p == nil {
+		return "null"
+	}
+	b, _ := json.Marshal(*p)
+	return string(b)
+}
+
+func jsonBool(p *bool) string {
+	if p == nil {
+		return "null"
+	}
+	if *p {
+		return "true"
+	}
+	return "false"
+}
+
+func jsonNum(p *float64) string {
+	if p == nil {
+		return "null"
+	}
+	return strconv.FormatFloat(*p, 'f', -1, 64)
+}
+
+func varBool(vars map[string]any, k string) *bool {
+	if v, ok := vars[k].(bool); ok {
+		return &v
+	}
+	return nil
+}
+
+func varStr(vars map[string]any, k string) *string {
+	if v, ok := vars[k].(string); ok {
+		return &v
+	}
+	return nil
+}
+
+func varNum(vars map[string]any, k string) *float64 {
+	if v, ok := vars[k].(float64); ok {
+		return &v
+	}
+	return nil
+}
+
 func fieldObj(st *fieldState) string {
 	return `{"id":"` + st.id + `","internal_id":"` + st.internalID +
 		`","uuid":"` + st.uuid + `","label":"` + st.label +
-		`","options":` + st.optionsJSON + `}`
+		`","required":` + jsonBool(st.required) +
+		`,"options":` + st.optionsJSON +
+		`,"description":` + jsonStr(st.description) +
+		`,"help":` + jsonStr(st.help) +
+		`,"editable":` + jsonBool(st.editable) +
+		`,"minimal_view":` + jsonBool(st.minimalView) +
+		`,"custom_validation":` + jsonStr(st.customValidation) +
+		`,"index":` + jsonNum(st.index) + `}`
 }
 
 func fieldMockHandler(st *fieldState) http.HandlerFunc {
@@ -56,12 +114,46 @@ func fieldMockHandler(st *fieldState) http.HandlerFunc {
 		case strings.Contains(q, "createPhaseField"):
 			st.id, st.internalID, st.uuid = "field_123", "456", "field-uuid-1"
 			st.label, _ = gr.Variables["label"].(string)
+			st.required = varBool(gr.Variables, "required")
+			st.description = varStr(gr.Variables, "description")
+			st.help = varStr(gr.Variables, "help")
+			st.editable = varBool(gr.Variables, "editable")
+			st.minimalView = varBool(gr.Variables, "minimalView")
+			st.customValidation = varStr(gr.Variables, "customValidation")
+			st.index = varNum(gr.Variables, "index")
+			if st.index == nil {
+				// The real server always assigns a position; model that so the
+				// computed index has a value to refresh from.
+				def := 1.0
+				st.index = &def
+			}
 			st.optionsJSON = optionsJSON(gr.Variables, "null")
 			st.created = true
 			_, _ = io.WriteString(w, `{"data":{"createPhaseField":{"phase_field":`+fieldObj(st)+`}}}`)
 		case strings.Contains(q, "updatePhaseField"):
 			if v, ok := gr.Variables["label"].(string); ok {
 				st.label = v
+			}
+			if p := varBool(gr.Variables, "required"); p != nil {
+				st.required = p
+			}
+			if p := varStr(gr.Variables, "description"); p != nil {
+				st.description = p
+			}
+			if p := varStr(gr.Variables, "help"); p != nil {
+				st.help = p
+			}
+			if p := varBool(gr.Variables, "editable"); p != nil {
+				st.editable = p
+			}
+			if p := varBool(gr.Variables, "minimalView"); p != nil {
+				st.minimalView = p
+			}
+			if p := varStr(gr.Variables, "customValidation"); p != nil {
+				st.customValidation = p
+			}
+			if p := varNum(gr.Variables, "index"); p != nil {
+				st.index = p
 			}
 			st.optionsJSON = optionsJSON(gr.Variables, st.optionsJSON)
 			_, _ = io.WriteString(w, `{"data":{"updatePhaseField":{"phase_field":`+fieldObj(st)+`}}}`)
@@ -166,6 +258,124 @@ resource "pipefy_field" "test" {
 	if st.deletedCt == 0 {
 		t.Fatal("expected delete mutation to be called")
 	}
+}
+
+func TestUnit_FieldResource_SchemaAttributes(t *testing.T) {
+	st := &fieldState{}
+	srv := httptest.NewServer(fieldMockHandler(st))
+	defer srv.Close()
+
+	create := fieldConfig(srv.URL, `
+resource "pipefy_field" "test" {
+  phase_id          = pipefy_phase.ph.id
+  type              = "short_text"
+  label             = "Title"
+  required          = true
+  description       = "The card title"
+  help              = "Enter a short title"
+  editable          = true
+  minimal_view      = false
+  custom_validation = "min:3"
+  index             = 2
+}
+`)
+	update := strings.ReplaceAll(create, `"Enter a short title"`, `"Give it a clear name"`)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: create,
+				ConfigStateChecks: []statecheck.StateCheck{
+					expectStr("description", "The card title"),
+					expectStr("help", "Enter a short title"),
+					expectStr("custom_validation", "min:3"),
+					statecheck.ExpectKnownValue("pipefy_field.test", tfjsonpath.New("editable"), knownvalue.Bool(true)),
+					statecheck.ExpectKnownValue("pipefy_field.test", tfjsonpath.New("minimal_view"), knownvalue.Bool(false)),
+					statecheck.ExpectKnownValue("pipefy_field.test", tfjsonpath.New("required"), knownvalue.Bool(true)),
+					statecheck.ExpectKnownValue("pipefy_field.test", tfjsonpath.New("index"), knownvalue.Int64Exact(2)),
+				},
+			},
+			{
+				Config:           update,
+				ConfigPlanChecks: planUpdate,
+				ConfigStateChecks: []statecheck.StateCheck{
+					expectStr("help", "Give it a clear name"),
+				},
+			},
+		},
+	})
+}
+
+// TestUnit_FieldResource_ReadRefreshDetectsDrift proves the Read refresh: an
+// out-of-band change to a refreshed attribute must surface as a non-empty plan.
+func TestUnit_FieldResource_ReadRefreshDetectsDrift(t *testing.T) {
+	st := &fieldState{}
+	srv := httptest.NewServer(fieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := fieldConfig(srv.URL, `
+resource "pipefy_field" "test" {
+  phase_id    = pipefy_phase.ph.id
+  type        = "short_text"
+  label       = "Title"
+  required    = true
+  description = "original"
+}
+`)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: cfg},
+			{
+				// Mutate the server out of band, then a refresh-only step must
+				// surface the change as a non-empty plan.
+				PreConfig: func() {
+					drift := "changed by someone else"
+					st.description = &drift
+					no := false
+					st.required = &no
+				},
+				RefreshState:       true,
+				ExpectNonEmptyPlan: true,
+			},
+		},
+	})
+}
+
+// TestUnit_FieldResource_ComputedIndexNoPerpetualDiff proves that omitting the
+// server-managed index does not produce a perpetual diff.
+func TestUnit_FieldResource_ComputedIndexNoPerpetualDiff(t *testing.T) {
+	st := &fieldState{}
+	srv := httptest.NewServer(fieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := fieldConfig(srv.URL, `
+resource "pipefy_field" "test" {
+  phase_id = pipefy_phase.ph.id
+  type     = "short_text"
+  label    = "Title"
+}
+`)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create with index omitted; the mock assigns a server-side position.
+			{Config: cfg},
+			// Re-plan with the same config: the computed index must not diff.
+			{
+				Config: cfg,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+			},
+		},
+	})
 }
 
 type collisionField struct {
