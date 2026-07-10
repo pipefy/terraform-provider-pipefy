@@ -24,10 +24,16 @@ resource "pipefy_phase" "example" {
 }
 
 resource "pipefy_field" "example" {
-  phase_id = pipefy_phase.example.id
-  type     = "short_text"
-  label    = "Title"
-  required = true
+  phase_id          = pipefy_phase.example.id
+  type              = "short_text"
+  label             = "Title"
+  required          = true
+  description       = "The card title"
+  help              = "Enter a short, clear title"
+  editable          = true
+  minimal_view      = true
+  custom_validation = "min:3"
+  index             = 1
 }
 
 resource "pipefy_field" "priority" {
@@ -45,10 +51,16 @@ resource "pipefy_field" "priority" {
 
 - `label` (String) The displayed name of the field
 - `phase_id` (String) The ID of the phase that the field belongs to
-- `type` (String) The type of the field
+- `type` (String) The field type. See https://developers.pipefy.com/reference for the current list of supported types.
 
 ### Optional
 
+- `custom_validation` (String) Custom validation rule applied to the field value
+- `description` (String) Helper description shown under the field
+- `editable` (Boolean) Whether the field value can be edited after creation
+- `help` (String) Help text shown for the field
+- `index` (Number) Position of the field within the phase form
+- `minimal_view` (Boolean) Whether the field is shown in the card's minimal (summary) view
 - `options` (List of String) Choices for option-based field types (checklist_vertical, checklist_horizontal, radio_vertical, radio_horizontal, select, label_select). Order is preserved and user-visible.
 - `required` (Boolean) Whether the field is required or not
 

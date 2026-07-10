@@ -9,10 +9,16 @@ resource "pipefy_phase" "example" {
 }
 
 resource "pipefy_field" "example" {
-  phase_id = pipefy_phase.example.id
-  type     = "short_text"
-  label    = "Title"
-  required = true
+  phase_id          = pipefy_phase.example.id
+  type              = "short_text"
+  label             = "Title"
+  required          = true
+  description       = "The card title"
+  help              = "Enter a short, clear title"
+  editable          = true
+  minimal_view      = true
+  custom_validation = "min:3"
+  index             = 1
 }
 
 resource "pipefy_field" "priority" {
