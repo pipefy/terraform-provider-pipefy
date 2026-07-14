@@ -77,6 +77,6 @@ Import is supported using the following syntax:
 The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
-# Import an existing Field by ID (slug)
-terraform import pipefy_field.example "<FIELD_ID>"
+# Import an existing Field using the format phase_id/field_uuid
+terraform import pipefy_field.example "<PHASE_ID>/<FIELD_UUID>"
 ```

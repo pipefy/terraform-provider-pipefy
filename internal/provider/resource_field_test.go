@@ -16,18 +16,19 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/statecheck"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 	"github.com/hashicorp/terraform-plugin-testing/tfversion"
 )
 
 type fieldState struct {
-	id, internalID, uuid, label, optionsJSON string
-	required                                 *bool
-	description, help, customValidation      *string
-	editable, minimalView                    *bool
-	index                                    *float64
-	created                                  bool
-	deletedCt                                int
+	id, internalID, uuid, label, fieldType, optionsJSON string
+	required                                            *bool
+	description, help, customValidation                 *string
+	editable, minimalView                               *bool
+	index                                               *float64
+	created                                             bool
+	deletedCt                                           int
 }
 
 func optionsJSON(vars map[string]any, fallback string) string {
@@ -87,6 +88,7 @@ func varNum(vars map[string]any, k string) *float64 {
 func fieldObj(st *fieldState) string {
 	return `{"id":"` + st.id + `","internal_id":"` + st.internalID +
 		`","uuid":"` + st.uuid + `","label":"` + st.label +
+		`","type":"` + st.fieldType +
 		`","required":` + jsonBool(st.required) +
 		`,"options":` + st.optionsJSON +
 		`,"description":` + jsonStr(st.description) +
@@ -114,6 +116,7 @@ func fieldMockHandler(st *fieldState) http.HandlerFunc {
 		case strings.Contains(q, "createPhaseField"):
 			st.id, st.internalID, st.uuid = "field_123", "456", "field-uuid-1"
 			st.label, _ = gr.Variables["label"].(string)
+			st.fieldType, _ = gr.Variables["type"].(string)
 			st.required = varBool(gr.Variables, "required")
 			st.description = varStr(gr.Variables, "description")
 			st.help = varStr(gr.Variables, "help")
@@ -122,8 +125,7 @@ func fieldMockHandler(st *fieldState) http.HandlerFunc {
 			st.customValidation = varStr(gr.Variables, "customValidation")
 			st.index = varNum(gr.Variables, "index")
 			if st.index == nil {
-				// The real server always assigns a position; model that so the
-				// computed index has a value to refresh from.
+				// The real server always assigns a position; model that.
 				def := 1.0
 				st.index = &def
 			}
@@ -308,8 +310,6 @@ resource "pipefy_field" "test" {
 	})
 }
 
-// TestUnit_FieldResource_ReadRefreshDetectsDrift proves the Read refresh: an
-// out-of-band change to a refreshed attribute must surface as a non-empty plan.
 func TestUnit_FieldResource_ReadRefreshDetectsDrift(t *testing.T) {
 	st := &fieldState{}
 	srv := httptest.NewServer(fieldMockHandler(st))
@@ -331,8 +331,6 @@ resource "pipefy_field" "test" {
 		Steps: []resource.TestStep{
 			{Config: cfg},
 			{
-				// Mutate the server out of band, then a refresh-only step must
-				// surface the change as a non-empty plan.
 				PreConfig: func() {
 					drift := "changed by someone else"
 					st.description = &drift
@@ -346,8 +344,6 @@ resource "pipefy_field" "test" {
 	})
 }
 
-// TestUnit_FieldResource_ComputedIndexNoPerpetualDiff proves that omitting the
-// server-managed index does not produce a perpetual diff.
 func TestUnit_FieldResource_ComputedIndexNoPerpetualDiff(t *testing.T) {
 	st := &fieldState{}
 	srv := httptest.NewServer(fieldMockHandler(st))
@@ -365,14 +361,52 @@ resource "pipefy_field" "test" {
 		TerraformVersionChecks:   skipBelow18,
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
-			// Create with index omitted; the mock assigns a server-side position.
 			{Config: cfg},
-			// Re-plan with the same config: the computed index must not diff.
 			{
 				Config: cfg,
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
 				},
+			},
+		},
+	})
+}
+
+// phase_id is a literal here: the mock ignores it on read, so the import ID
+// round-trips without depending on the pipe/phase scaffolding (ids are empty here).
+func TestUnit_FieldResource_ImportState(t *testing.T) {
+	st := &fieldState{}
+	srv := httptest.NewServer(fieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := `
+provider "pipefy" {
+  endpoint = "` + srv.URL + `"
+  token    = "testtoken"
+}
+
+resource "pipefy_field" "test" {
+  phase_id    = "phase_1"
+  type        = "short_text"
+  label       = "Title"
+  required    = true
+  description = "desc"
+}
+`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: cfg},
+			{
+				ResourceName: "pipefy_field.test",
+				ImportState:  true,
+				ImportStateIdFunc: func(s *terraform.State) (string, error) {
+					rs := s.RootModule().Resources["pipefy_field.test"]
+					return rs.Primary.Attributes["phase_id"] + "/" + rs.Primary.Attributes["uuid"], nil
+				},
+				ImportStateVerify: true,
 			},
 		},
 	})
@@ -389,7 +423,7 @@ type collisionState struct {
 
 func collisionFieldJSON(f collisionField) string {
 	return `{"id":"` + f.id + `","internal_id":"` + f.internalID +
-		`","uuid":"` + f.uuid + `","label":"` + f.label + `","options":null}`
+		`","uuid":"` + f.uuid + `","label":"` + f.label + `","type":"short_text","options":null}`
 }
 
 func collisionMockHandler(st *collisionState) http.HandlerFunc {

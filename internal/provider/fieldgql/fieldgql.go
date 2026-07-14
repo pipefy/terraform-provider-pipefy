@@ -5,7 +5,7 @@
 // payload shared across the pipefy_field resource's reads and writes.
 package fieldgql
 
-const Selection = "id internal_id uuid label required options " +
+const Selection = "id internal_id uuid label type required options " +
 	"description help editable minimal_view custom_validation index"
 
 type Field struct {
@@ -13,6 +13,7 @@ type Field struct {
 	InternalId       string   `json:"internal_id"`
 	Uuid             string   `json:"uuid"`
 	Label            string   `json:"label"`
+	Type             string   `json:"type"`
 	Required         *bool    `json:"required"`
 	Options          []string `json:"options"`
 	Description      *string  `json:"description"`

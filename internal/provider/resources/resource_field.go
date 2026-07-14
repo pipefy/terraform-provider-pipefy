@@ -188,7 +188,8 @@ func (r *FieldResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if data.Id.IsNull() || data.Id.ValueString() == "" {
+	// uuid is Read's lookup key; on import id is unset and resolved here.
+	if data.Uuid.IsNull() || data.Uuid.ValueString() == "" {
 		return
 	}
 
@@ -316,7 +317,13 @@ func (r *FieldResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 }
 
 func (r *FieldResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	parts, ok := splitImportID(req.ID, 2)
+	if !ok {
+		resp.Diagnostics.AddError("invalid import ID", "expected phase_id/field_uuid, got "+req.ID)
+		return
+	}
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("phase_id"), parts[0])...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("uuid"), parts[1])...)
 }
 
 func optionsToList(ctx context.Context, opts []string, diags *diag.Diagnostics) types.List {
@@ -342,10 +349,8 @@ func boolPtr(p *bool) types.Bool {
 	return types.BoolValue(*p)
 }
 
-// addFieldWriteVars adds the settable field attributes to a create/update input.
-// Optional+Computed attributes are sent only when they carry a concrete value, so
-// an omitted attribute leaves the server default (create) or existing value
-// (update) intact rather than overwriting it with a zero value.
+// addFieldWriteVars sends each attribute only when it has a concrete value, so an
+// omitted Optional+Computed attribute keeps its server value instead of being cleared.
 func addFieldWriteVars(ctx context.Context, data FieldModel, vars map[string]any, diags *diag.Diagnostics) {
 	if !data.Required.IsNull() && !data.Required.IsUnknown() {
 		vars["required"] = data.Required.ValueBool()
@@ -375,14 +380,14 @@ func addFieldWriteVars(ctx context.Context, data FieldModel, vars map[string]any
 	}
 }
 
-// applyFieldToModel maps a fetched field payload onto the model. Create, Read,
-// and Update all use it so every attribute (and thus drift detection) stays in
-// step. phase_id and type are not part of the payload and are left untouched.
+// applyFieldToModel maps a fetched field onto the model. phase_id is not in the
+// payload; it is set at create/import and left untouched here.
 func applyFieldToModel(ctx context.Context, data *FieldModel, f fieldgql.Field, diags *diag.Diagnostics) {
 	data.Id = types.StringValue(f.Id)
 	data.InternalId = types.StringValue(f.InternalId)
 	data.Uuid = types.StringValue(f.Uuid)
 	data.Label = types.StringValue(f.Label)
+	data.Type = types.StringValue(f.Type)
 	data.Required = boolPtr(f.Required)
 	data.Description = strPtr(f.Description)
 	data.Help = strPtr(f.Help)
