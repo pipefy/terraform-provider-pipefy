@@ -53,4 +53,48 @@ resource "pipefy_automation" "example_ai" {
     }]
     expressions_structure = [[0]]
   })
+
+  # Optional JSON schema describing the automation's structured response.
+  response_schema = jsonencode({
+    type = "object"
+    properties = {
+      translation = { type = "string" }
+    }
+  })
+}
+
+# A recurring (scheduler) automation: every day at 09:30 it selects matching
+# cards and moves them. scheduler_cron uses standard crontab syntax, and
+# search_for lists the selection conditions in order.
+resource "pipefy_automation" "daily_move" {
+  name           = "Move follow-up cards daily"
+  event_id       = "scheduler"
+  action_id      = "move_multiple_cards"
+  event_repo_id  = pipefy_pipe.test.id
+  action_repo_id = pipefy_pipe.test.id
+  active         = true
+
+  scheduler_frequency = "daily"
+
+  scheduler_cron = {
+    minute       = "30"
+    hour         = "9"
+    day_of_month = "*"
+    month        = "*"
+    day_of_week  = "*"
+  }
+
+  search_for = [
+    {
+      field     = pipefy_field.title.internal_id
+      id        = "match-follow-ups"
+      operation = "eq"
+      value     = "Follow up"
+    },
+  ]
+
+  # move_multiple_cards moves the selected cards to this phase.
+  action_params = jsonencode({
+    to_phase_id = pipefy_phase.backlog.id
+  })
 }

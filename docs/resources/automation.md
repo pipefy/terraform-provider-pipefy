@@ -68,6 +68,50 @@ resource "pipefy_automation" "example_ai" {
     }]
     expressions_structure = [[0]]
   })
+
+  # Optional JSON schema describing the automation's structured response.
+  response_schema = jsonencode({
+    type = "object"
+    properties = {
+      translation = { type = "string" }
+    }
+  })
+}
+
+# A recurring (scheduler) automation: every day at 09:30 it selects matching
+# cards and moves them. scheduler_cron uses standard crontab syntax, and
+# search_for lists the selection conditions in order.
+resource "pipefy_automation" "daily_move" {
+  name           = "Move follow-up cards daily"
+  event_id       = "scheduler"
+  action_id      = "move_multiple_cards"
+  event_repo_id  = pipefy_pipe.test.id
+  action_repo_id = pipefy_pipe.test.id
+  active         = true
+
+  scheduler_frequency = "daily"
+
+  scheduler_cron = {
+    minute       = "30"
+    hour         = "9"
+    day_of_month = "*"
+    month        = "*"
+    day_of_week  = "*"
+  }
+
+  search_for = [
+    {
+      field     = pipefy_field.title.internal_id
+      id        = "match-follow-ups"
+      operation = "eq"
+      value     = "Follow up"
+    },
+  ]
+
+  # move_multiple_cards moves the selected cards to this phase.
+  action_params = jsonencode({
+    to_phase_id = pipefy_phase.backlog.id
+  })
 }
 ```
 
@@ -78,20 +122,49 @@ resource "pipefy_automation" "example_ai" {
 
 - `action_id` (String) The type of the action that the automation performs
 - `action_repo_id` (String) The ID of the pipe that the automation performs actions on
+- `active` (Boolean) Whether the automation is active.
 - `event_id` (String) The type of the event that the automation listens to
 - `event_repo_id` (String) The ID of the pipe that the automation listens to
 - `name` (String) Name of the automation
 
 ### Optional
 
-- `action_params` (String) The parameters of the action for the automation
-- `active` (Boolean) Whether the automation is active or not
-- `condition` (String) The condition for the automation to be executed
-- `event_params` (String) The parameters of the event for the automation
+- `action_params` (String) The parameters of the action for the automation, as a JSON string. Not read back from the API, so drift is not detected.
+- `condition` (String) The condition for the automation to be executed, as a JSON string. Not read back from the API, so drift is not detected.
+- `event_params` (String) The parameters of the event for the automation, as a JSON string. Not read back from the API, so drift is not detected.
+- `response_schema` (String) JSON response schema for the automation, as a JSON string. Compared semantically, so formatting and key order do not cause a diff.
+- `scheduler_cron` (Attributes) Cron schedule for time-based (scheduler) triggers. Fields use standard crontab syntax. (see [below for nested schema](#nestedatt--scheduler_cron))
+- `scheduler_frequency` (String) Frequency for time-based (scheduler) triggers. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference/automation-creation) and the GraphiQL explorer (https://app.pipefy.com/graphiql).
+- `search_for` (Attributes List) Conditions that select the cards a recurring (scheduler) automation acts on. The list is managed in full: the configured conditions are authoritative, and an empty list (or omitting the block) clears them on the server. Order is preserved. (see [below for nested schema](#nestedatt--search_for))
 
 ### Read-Only
 
 - `id` (String) The ID of this resource.
+
+<a id="nestedatt--scheduler_cron"></a>
+### Nested Schema for `scheduler_cron`
+
+Required:
+
+- `day_of_month` (String) Cron day-of-month field.
+- `day_of_week` (String) Cron day-of-week field.
+- `hour` (String) Cron hour field.
+- `minute` (String) Cron minute field.
+- `month` (String) Cron month field.
+
+
+<a id="nestedatt--search_for"></a>
+### Nested Schema for `search_for`
+
+Required:
+
+- `field` (String) The id of the field used as a filter.
+- `id` (String) Caller-assigned identifier for the condition.
+- `operation` (String) The filter operation. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).
+
+Optional:
+
+- `value` (String) The value or field id to compare against.
 
 ## Import
 
