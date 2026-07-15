@@ -13,7 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/float64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -40,12 +40,12 @@ type FieldModel struct {
 	Required   types.Bool   `tfsdk:"required"`
 	Options    types.List   `tfsdk:"options"`
 
-	Description      types.String `tfsdk:"description"`
-	Help             types.String `tfsdk:"help"`
-	Editable         types.Bool   `tfsdk:"editable"`
-	MinimalView      types.Bool   `tfsdk:"minimal_view"`
-	CustomValidation types.String `tfsdk:"custom_validation"`
-	Index            types.Int64  `tfsdk:"index"`
+	Description      types.String  `tfsdk:"description"`
+	Help             types.String  `tfsdk:"help"`
+	Editable         types.Bool    `tfsdk:"editable"`
+	MinimalView      types.Bool    `tfsdk:"minimal_view"`
+	CustomValidation types.String  `tfsdk:"custom_validation"`
+	Index            types.Float64 `tfsdk:"index"`
 }
 
 func (r *FieldResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -105,11 +105,11 @@ func (r *FieldResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				Description:   "Custom validation rule applied to the field value",
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
-			"index": schema.Int64Attribute{
+			"index": schema.Float64Attribute{
 				Optional:      true,
 				Computed:      true,
 				Description:   "Position of the field within the phase form",
-				PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()},
+				PlanModifiers: []planmodifier.Float64{float64planmodifier.UseStateForUnknown()},
 			},
 		},
 	}
@@ -376,7 +376,7 @@ func addFieldWriteVars(ctx context.Context, data FieldModel, vars map[string]any
 		vars["customValidation"] = data.CustomValidation.ValueString()
 	}
 	if !data.Index.IsNull() && !data.Index.IsUnknown() {
-		vars["index"] = data.Index.ValueInt64()
+		vars["index"] = data.Index.ValueFloat64()
 	}
 }
 
@@ -395,9 +395,9 @@ func applyFieldToModel(ctx context.Context, data *FieldModel, f fieldgql.Field, 
 	data.MinimalView = boolPtr(f.MinimalView)
 	data.CustomValidation = strPtr(f.CustomValidation)
 	if f.Index == nil {
-		data.Index = types.Int64Null()
+		data.Index = types.Float64Null()
 	} else {
-		data.Index = types.Int64Value(int64(*f.Index))
+		data.Index = types.Float64Value(*f.Index)
 	}
 	data.Options = optionsToList(ctx, f.Options, diags)
 }

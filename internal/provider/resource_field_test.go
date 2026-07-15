@@ -125,8 +125,7 @@ func fieldMockHandler(st *fieldState) http.HandlerFunc {
 			st.customValidation = varStr(gr.Variables, "customValidation")
 			st.index = varNum(gr.Variables, "index")
 			if st.index == nil {
-				// The real server always assigns a position; model that.
-				def := 1.0
+				def := 1.5
 				st.index = &def
 			}
 			st.optionsJSON = optionsJSON(gr.Variables, "null")
@@ -278,7 +277,7 @@ resource "pipefy_field" "test" {
   editable          = true
   minimal_view      = false
   custom_validation = "min:3"
-  index             = 2
+  index             = 2.5
 }
 `)
 	update := strings.ReplaceAll(create, `"Enter a short title"`, `"Give it a clear name"`)
@@ -296,7 +295,7 @@ resource "pipefy_field" "test" {
 					statecheck.ExpectKnownValue("pipefy_field.test", tfjsonpath.New("editable"), knownvalue.Bool(true)),
 					statecheck.ExpectKnownValue("pipefy_field.test", tfjsonpath.New("minimal_view"), knownvalue.Bool(false)),
 					statecheck.ExpectKnownValue("pipefy_field.test", tfjsonpath.New("required"), knownvalue.Bool(true)),
-					statecheck.ExpectKnownValue("pipefy_field.test", tfjsonpath.New("index"), knownvalue.Int64Exact(2)),
+					statecheck.ExpectKnownValue("pipefy_field.test", tfjsonpath.New("index"), knownvalue.Float64Exact(2.5)),
 				},
 			},
 			{
@@ -361,7 +360,12 @@ resource "pipefy_field" "test" {
 		TerraformVersionChecks:   skipBelow18,
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
-			{Config: cfg},
+			{
+				Config: cfg,
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("pipefy_field.test", tfjsonpath.New("index"), knownvalue.Float64Exact(1.5)),
+				},
+			},
 			{
 				Config: cfg,
 				ConfigPlanChecks: resource.ConfigPlanChecks{
