@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -15,14 +16,19 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/statecheck"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 	"github.com/hashicorp/terraform-plugin-testing/tfversion"
 )
 
 type fieldState struct {
-	id, internalID, uuid, label, optionsJSON string
-	created                                  bool
-	deletedCt                                int
+	id, internalID, uuid, label, fieldType, optionsJSON string
+	required                                            *bool
+	description, help, customValidation                 *string
+	editable, minimalView                               *bool
+	index                                               *float64
+	created                                             bool
+	deletedCt                                           int
 }
 
 func optionsJSON(vars map[string]any, fallback string) string {
@@ -33,10 +39,64 @@ func optionsJSON(vars map[string]any, fallback string) string {
 	return fallback
 }
 
+func jsonStr(p *string) string {
+	if p == nil {
+		return "null"
+	}
+	b, _ := json.Marshal(*p)
+	return string(b)
+}
+
+func jsonBool(p *bool) string {
+	if p == nil {
+		return "null"
+	}
+	if *p {
+		return "true"
+	}
+	return "false"
+}
+
+func jsonNum(p *float64) string {
+	if p == nil {
+		return "null"
+	}
+	return strconv.FormatFloat(*p, 'f', -1, 64)
+}
+
+func varBool(vars map[string]any, k string) *bool {
+	if v, ok := vars[k].(bool); ok {
+		return &v
+	}
+	return nil
+}
+
+func varStr(vars map[string]any, k string) *string {
+	if v, ok := vars[k].(string); ok {
+		return &v
+	}
+	return nil
+}
+
+func varNum(vars map[string]any, k string) *float64 {
+	if v, ok := vars[k].(float64); ok {
+		return &v
+	}
+	return nil
+}
+
 func fieldObj(st *fieldState) string {
 	return `{"id":"` + st.id + `","internal_id":"` + st.internalID +
 		`","uuid":"` + st.uuid + `","label":"` + st.label +
-		`","options":` + st.optionsJSON + `}`
+		`","type":"` + st.fieldType +
+		`","required":` + jsonBool(st.required) +
+		`,"options":` + st.optionsJSON +
+		`,"description":` + jsonStr(st.description) +
+		`,"help":` + jsonStr(st.help) +
+		`,"editable":` + jsonBool(st.editable) +
+		`,"minimal_view":` + jsonBool(st.minimalView) +
+		`,"custom_validation":` + jsonStr(st.customValidation) +
+		`,"index":` + jsonNum(st.index) + `}`
 }
 
 func fieldMockHandler(st *fieldState) http.HandlerFunc {
@@ -56,12 +116,45 @@ func fieldMockHandler(st *fieldState) http.HandlerFunc {
 		case strings.Contains(q, "createPhaseField"):
 			st.id, st.internalID, st.uuid = "field_123", "456", "field-uuid-1"
 			st.label, _ = gr.Variables["label"].(string)
+			st.fieldType, _ = gr.Variables["type"].(string)
+			st.required = varBool(gr.Variables, "required")
+			st.description = varStr(gr.Variables, "description")
+			st.help = varStr(gr.Variables, "help")
+			st.editable = varBool(gr.Variables, "editable")
+			st.minimalView = varBool(gr.Variables, "minimalView")
+			st.customValidation = varStr(gr.Variables, "customValidation")
+			st.index = varNum(gr.Variables, "index")
+			if st.index == nil {
+				def := 1.5
+				st.index = &def
+			}
 			st.optionsJSON = optionsJSON(gr.Variables, "null")
 			st.created = true
 			_, _ = io.WriteString(w, `{"data":{"createPhaseField":{"phase_field":`+fieldObj(st)+`}}}`)
 		case strings.Contains(q, "updatePhaseField"):
 			if v, ok := gr.Variables["label"].(string); ok {
 				st.label = v
+			}
+			if p := varBool(gr.Variables, "required"); p != nil {
+				st.required = p
+			}
+			if p := varStr(gr.Variables, "description"); p != nil {
+				st.description = p
+			}
+			if p := varStr(gr.Variables, "help"); p != nil {
+				st.help = p
+			}
+			if p := varBool(gr.Variables, "editable"); p != nil {
+				st.editable = p
+			}
+			if p := varBool(gr.Variables, "minimalView"); p != nil {
+				st.minimalView = p
+			}
+			if p := varStr(gr.Variables, "customValidation"); p != nil {
+				st.customValidation = p
+			}
+			if p := varNum(gr.Variables, "index"); p != nil {
+				st.index = p
 			}
 			st.optionsJSON = optionsJSON(gr.Variables, st.optionsJSON)
 			_, _ = io.WriteString(w, `{"data":{"updatePhaseField":{"phase_field":`+fieldObj(st)+`}}}`)
@@ -168,6 +261,161 @@ resource "pipefy_field" "test" {
 	}
 }
 
+func TestUnit_FieldResource_SchemaAttributes(t *testing.T) {
+	st := &fieldState{}
+	srv := httptest.NewServer(fieldMockHandler(st))
+	defer srv.Close()
+
+	create := fieldConfig(srv.URL, `
+resource "pipefy_field" "test" {
+  phase_id          = pipefy_phase.ph.id
+  type              = "short_text"
+  label             = "Title"
+  required          = true
+  description       = "The card title"
+  help              = "Enter a short title"
+  editable          = true
+  minimal_view      = false
+  custom_validation = "min:3"
+  index             = 2.5
+}
+`)
+	update := strings.ReplaceAll(create, `"Enter a short title"`, `"Give it a clear name"`)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: create,
+				ConfigStateChecks: []statecheck.StateCheck{
+					expectStr("description", "The card title"),
+					expectStr("help", "Enter a short title"),
+					expectStr("custom_validation", "min:3"),
+					statecheck.ExpectKnownValue("pipefy_field.test", tfjsonpath.New("editable"), knownvalue.Bool(true)),
+					statecheck.ExpectKnownValue("pipefy_field.test", tfjsonpath.New("minimal_view"), knownvalue.Bool(false)),
+					statecheck.ExpectKnownValue("pipefy_field.test", tfjsonpath.New("required"), knownvalue.Bool(true)),
+					statecheck.ExpectKnownValue("pipefy_field.test", tfjsonpath.New("index"), knownvalue.Float64Exact(2.5)),
+				},
+			},
+			{
+				Config:           update,
+				ConfigPlanChecks: planUpdate,
+				ConfigStateChecks: []statecheck.StateCheck{
+					expectStr("help", "Give it a clear name"),
+				},
+			},
+		},
+	})
+}
+
+func TestUnit_FieldResource_ReadRefreshDetectsDrift(t *testing.T) {
+	st := &fieldState{}
+	srv := httptest.NewServer(fieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := fieldConfig(srv.URL, `
+resource "pipefy_field" "test" {
+  phase_id    = pipefy_phase.ph.id
+  type        = "short_text"
+  label       = "Title"
+  required    = true
+  description = "original"
+}
+`)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: cfg},
+			{
+				PreConfig: func() {
+					drift := "changed by someone else"
+					st.description = &drift
+					no := false
+					st.required = &no
+				},
+				RefreshState:       true,
+				ExpectNonEmptyPlan: true,
+			},
+		},
+	})
+}
+
+func TestUnit_FieldResource_ComputedIndexNoPerpetualDiff(t *testing.T) {
+	st := &fieldState{}
+	srv := httptest.NewServer(fieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := fieldConfig(srv.URL, `
+resource "pipefy_field" "test" {
+  phase_id = pipefy_phase.ph.id
+  type     = "short_text"
+  label    = "Title"
+}
+`)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: cfg,
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("pipefy_field.test", tfjsonpath.New("index"), knownvalue.Float64Exact(1.5)),
+				},
+			},
+			{
+				Config: cfg,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+			},
+		},
+	})
+}
+
+// phase_id is a literal here: the mock ignores it on read, so the import ID
+// round-trips without depending on the pipe/phase scaffolding (ids are empty here).
+func TestUnit_FieldResource_ImportState(t *testing.T) {
+	st := &fieldState{}
+	srv := httptest.NewServer(fieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := `
+provider "pipefy" {
+  endpoint = "` + srv.URL + `"
+  token    = "testtoken"
+}
+
+resource "pipefy_field" "test" {
+  phase_id    = "phase_1"
+  type        = "short_text"
+  label       = "Title"
+  required    = true
+  description = "desc"
+}
+`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: cfg},
+			{
+				ResourceName: "pipefy_field.test",
+				ImportState:  true,
+				ImportStateIdFunc: func(s *terraform.State) (string, error) {
+					rs := s.RootModule().Resources["pipefy_field.test"]
+					return rs.Primary.Attributes["phase_id"] + "/" + rs.Primary.Attributes["uuid"], nil
+				},
+				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
 type collisionField struct {
 	id, internalID, uuid, label string
 }
@@ -179,7 +427,7 @@ type collisionState struct {
 
 func collisionFieldJSON(f collisionField) string {
 	return `{"id":"` + f.id + `","internal_id":"` + f.internalID +
-		`","uuid":"` + f.uuid + `","label":"` + f.label + `","options":null}`
+		`","uuid":"` + f.uuid + `","label":"` + f.label + `","type":"short_text","options":null}`
 }
 
 func collisionMockHandler(st *collisionState) http.HandlerFunc {
