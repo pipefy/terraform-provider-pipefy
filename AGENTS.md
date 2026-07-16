@@ -8,7 +8,7 @@ A Terraform provider that manages [Pipefy](https://www.pipefy.com) resources thr
 
 Module path: `github.com/pipefy/terraform-provider-pipefy`. Registry source: `pipefy/pipefy`.
 
-It exposes four resources (`pipefy_pipe`, `pipefy_phase`, `pipefy_field`, `pipefy_automation`, all importable) and two data sources (`pipefy_pipe`, `pipefy_phase`).
+It exposes eight resources (`pipefy_pipe`, `pipefy_phase`, `pipefy_field`, `pipefy_automation`, `pipefy_label`, `pipefy_pipe_relation`, `pipefy_webhook`, `pipefy_ai_agent`, all importable) and two data sources (`pipefy_pipe`, `pipefy_phase`).
 
 ## Setup and requirements
 
@@ -44,10 +44,11 @@ The `docs/` directory is generated. Run `make generate` after any schema change;
 ```
 internal/provider/
   provider.go              # Provider config, auth, resource/data-source registration
-  resources/               # pipefy_pipe, pipefy_phase, pipefy_field, pipefy_automation
+  resources/               # pipe, phase, field, automation, label, pipe_relation, webhook, ai_agent
   datasources/             # pipefy_pipe, pipefy_phase
   client/api_client.go     # Pipefy GraphQL HTTP client
   locks/                   # Mutex helpers for serializing API mutations
+  aiagentgql/              # Shared GraphQL selection/structs for AI agents
 examples/                  # Example .tf per resource and data source (feeds the docs)
 docs/                      # Generated reference docs (do not edit by hand)
 tools/                     # tfplugindocs tooling for `make generate`

@@ -286,25 +286,14 @@ func (r *FieldResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		return
 	}
 
-	// Fetch pipe uuid with repo_id
-	pipeQuery := "query GetPipeUuid_tf($id:ID!){ pipe(id:$id){ uuid } }"
-	pipeVars := map[string]any{"id": repoIDStr}
-	var pipeOut struct {
-		Pipe *struct {
-			Uuid string `json:"uuid"`
-		} `json:"pipe"`
-	}
-	if err := r.api.DoGraphQL(ctx, pipeQuery, pipeVars, &pipeOut); err != nil {
-		resp.Diagnostics.AddError("delete field failed", fmt.Sprintf("failed to fetch pipe uuid: %s", err.Error()))
-		return
-	}
-	if pipeOut.Pipe == nil || pipeOut.Pipe.Uuid == "" {
-		resp.Diagnostics.AddError("delete field failed", "could not resolve pipe uuid from pipe query")
+	pipeUUID, err := resolvePipeUUID(ctx, r.api, repoIDStr)
+	if err != nil {
+		resp.Diagnostics.AddError("delete field failed", err.Error())
 		return
 	}
 
 	mutation := "mutation DeletePhaseField_tf($id:ID!,$pipeUuid:ID!){ deletePhaseField(input:{ id:$id, pipeUuid:$pipeUuid }){ success } }"
-	vars := map[string]any{"id": data.Id.ValueString(), "pipeUuid": pipeOut.Pipe.Uuid}
+	vars := map[string]any{"id": data.Id.ValueString(), "pipeUuid": pipeUUID}
 	var out struct {
 		DeletePhaseField struct {
 			Success bool `json:"success"`

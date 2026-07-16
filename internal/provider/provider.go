@@ -152,6 +152,7 @@ func (p *PipefyProvider) Resources(ctx context.Context) []func() resource.Resour
 		resources.NewLabelResource,
 		resources.NewPipeRelationResource,
 		resources.NewWebhookResource,
+		resources.NewAiAgentResource,
 	}
 }
 

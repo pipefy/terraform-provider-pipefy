@@ -2,6 +2,8 @@
 
 FEATURES:
 
+* `resource/pipefy_ai_agent`: New resource to manage AI agents with typed behaviors and the supported actions `move_card`, `update_card`, and `create_card`. Covered by headless unit tests; live acceptance tests (`make testacc`) are deferred.
+
 ENHANCEMENTS:
 
 * `resource/pipefy_field`: Add `description`, `help`, `editable`, `minimal_view`, `custom_validation`, and `index` attributes.

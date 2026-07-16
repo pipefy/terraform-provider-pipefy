@@ -14,7 +14,7 @@
 [![Tests](https://github.com/pipefy/terraform-provider-pipefy/actions/workflows/test.yml/badge.svg)](https://github.com/pipefy/terraform-provider-pipefy/actions/workflows/test.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/pipefy/terraform-provider-pipefy)](https://goreportcard.com/report/github.com/pipefy/terraform-provider-pipefy)
 
-Manage [Pipefy](https://www.pipefy.com) as code. This provider lets you create and manage pipes, phases, fields, and automations through the Pipefy GraphQL API. It is built on the [Terraform Plugin Framework](https://github.com/hashicorp/terraform-plugin-framework).
+Manage [Pipefy](https://www.pipefy.com) as code. This provider lets you create and manage pipes, phases, fields, automations, labels, relations, webhooks, and AI agents through the Pipefy GraphQL API. It is built on the [Terraform Plugin Framework](https://github.com/hashicorp/terraform-plugin-framework).
 
 ## Documentation
 
@@ -109,7 +109,7 @@ resource "pipefy_field" "priority" {
 }
 ```
 
-The provider ships the `pipefy_pipe`, `pipefy_phase`, `pipefy_field`, and `pipefy_automation` resources (all importable) and the `pipefy_pipe` and `pipefy_phase` data sources. See [`examples/`](./examples) for automation and import examples.
+The provider ships the `pipefy_pipe`, `pipefy_phase`, `pipefy_field`, `pipefy_automation`, `pipefy_label`, `pipefy_pipe_relation`, `pipefy_webhook`, and `pipefy_ai_agent` resources (all importable) and the `pipefy_pipe` and `pipefy_phase` data sources. See [`examples/`](./examples) for runnable configurations and import examples.
 
 ## Developing the provider
 
