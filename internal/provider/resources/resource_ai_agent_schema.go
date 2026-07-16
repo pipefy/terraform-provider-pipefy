@@ -99,7 +99,7 @@ func aiAgentAttributes() map[string]schema.Attribute {
 func behaviorListAttribute() schema.ListNestedAttribute {
 	return schema.ListNestedAttribute{
 		Required: true, Description: "Ordered AI-agent behaviors, managed as a complete list.",
-		Validators: []validator.List{listvalidator.SizeBetween(1, 5)},
+		Validators: []validator.List{listvalidator.SizeAtLeast(1)},
 		NestedObject: schema.NestedAttributeObject{Attributes: map[string]schema.Attribute{
 			"id":   computedStableString("The API identifier of the behavior."),
 			"name": requiredNonEmptyString("The behavior name."),

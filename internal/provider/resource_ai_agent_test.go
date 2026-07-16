@@ -432,10 +432,7 @@ type aiAgentValidationCase struct {
 
 func aiAgentValidationCases() map[string]aiAgentValidationCase {
 	return map[string]aiAgentValidationCase{
-		"no behaviors": {behaviors: "[]", want: "at least 1 elements and at most 5"},
-		"too many behaviors": {
-			behaviors: sixAIBehaviors(), want: "at least 1 elements and at most 5",
-		},
+		"no behaviors": {behaviors: "[]", want: "at least 1"},
 		"no actions": {
 			behaviors: `[{name="B",event_id="card_created",instruction="I",actions=[]}]`,
 			want:      "at least 1",
@@ -453,12 +450,6 @@ func aiAgentValidationCases() map[string]aiAgentValidationCase {
 			want:      "(?s)requires pipe_id and at.*least one field",
 		},
 	}
-}
-
-func sixAIBehaviors() string {
-	behavior := `{name="B",event_id="card_created",instruction="I",` +
-		`actions=[{name="Move",action_type="move_card",destination_phase_id="2"}]}`
-	return "[" + strings.TrimSuffix(strings.Repeat(behavior+",", 6), ",") + "]"
 }
 
 func behaviorWithAction(action string) string {

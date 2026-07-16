@@ -273,7 +273,7 @@ func normalizeEmptyEventParams(model *AiAgentModel) {
 		if params == nil {
 			continue
 		}
-		// Unknown values are not "empty" — defer until apply-time known values exist.
+		// Unknown values are not "empty": defer until apply-time known values exist.
 		if params.ToPhaseID.IsUnknown() || params.TriggerFieldIDs.IsUnknown() ||
 			setHasUnknownElements(params.TriggerFieldIDs) {
 			continue
