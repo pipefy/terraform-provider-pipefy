@@ -92,6 +92,9 @@ func (mock *aiAgentMock) create(variables map[string]any) string {
 	mock.exists = true
 	mock.name, _ = agent["name"].(string)
 	mock.instruction, _ = agent["instruction"].(string)
+	mock.behaviors, _ = agent["behaviors"].([]any)
+	mock.dataSourceIDs, _ = agent["dataSourceIds"].([]any)
+	mock.referenceHistory = append(mock.referenceHistory, actionReferences(mock.behaviors))
 	return `{"data":{"createAiAgent":{"agent":{"uuid":"agent-uuid"}}}}`
 }
 
@@ -360,7 +363,7 @@ func aiAgentStateChecks() []statecheck.StateCheck {
 
 func assertAiAgentCRUD(t *testing.T, mock *aiAgentMock) {
 	t.Helper()
-	wantPrefix := []string{"GetPipeUuid", "Create", "Update", "Status", "Read"}
+	wantPrefix := []string{"GetPipeUuid", "Create", "Status", "Read"}
 	if len(mock.operations) < len(wantPrefix) {
 		t.Fatalf("operations = %v, want prefix %v", mock.operations, wantPrefix)
 	}

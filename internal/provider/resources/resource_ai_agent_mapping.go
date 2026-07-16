@@ -96,13 +96,6 @@ func (model AiAgentModel) graphQLInput(repoUUID string) map[string]any {
 	return input
 }
 
-func (model AiAgentModel) graphQLShellInput(repoUUID string) map[string]any {
-	return map[string]any{
-		"name": model.Name.ValueString(), "instruction": model.Instruction.ValueString(),
-		"repoUuid": repoUUID,
-	}
-}
-
 func (behavior AiAgentBehaviorModel) graphQLInput() map[string]any {
 	input := map[string]any{
 		"name": behavior.Name.ValueString(), "eventId": behavior.EventID.ValueString(),

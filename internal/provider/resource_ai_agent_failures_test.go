@@ -13,13 +13,13 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 )
 
-func TestUnit_AiAgentResource_RollsBackFailedUpdate(t *testing.T) {
-	mock := &aiAgentMock{failUpdate: true}
+func TestUnit_AiAgentResource_RollsBackFailedRead(t *testing.T) {
+	mock := &aiAgentMock{failRead: true}
 	server := newAiAgentServer(mock)
 	defer server.Close()
 	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{{
 		Config:      aiAgentConfig(server.URL, "", false),
-		ExpectError: regexp.MustCompile("behavior update rejected"),
+		ExpectError: regexp.MustCompile("agent read rejected"),
 	}}))
 	if mock.deleteCalls != 1 || mock.exists {
 		t.Fatalf("rollback deleteCalls=%d exists=%v, want 1 and false", mock.deleteCalls, mock.exists)
@@ -27,7 +27,7 @@ func TestUnit_AiAgentResource_RollsBackFailedUpdate(t *testing.T) {
 }
 
 func TestUnit_AiAgentResource_ReportsRollbackFailure(t *testing.T) {
-	mock := &aiAgentMock{failUpdate: true, failDelete: true}
+	mock := &aiAgentMock{failRead: true, failDelete: true}
 	server := newAiAgentServer(mock)
 	defer server.Close()
 	want := regexp.MustCompile(`create AI agent failed and rollback failed`)

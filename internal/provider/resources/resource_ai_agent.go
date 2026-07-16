@@ -83,7 +83,7 @@ func (r *AiAgentResource) Create(
 		resp.Diagnostics.AddError("create AI agent failed", "generate action reference IDs: "+err.Error())
 		return
 	}
-	if err := r.createShell(ctx, &model, repoUUID); err != nil {
+	if err := r.createAgent(ctx, &model, repoUUID); err != nil {
 		resp.Diagnostics.AddError("create AI agent failed", err.Error())
 		return
 	}
@@ -93,7 +93,7 @@ func (r *AiAgentResource) Create(
 		r.rollbackCreate(ctx, model.ID.ValueString(), fmt.Errorf("persist created agent state"), resp)
 		return
 	}
-	r.finishCreate(ctx, &model, repoUUID, configuredActive, resp)
+	r.finishCreate(ctx, &model, configuredActive, resp)
 }
 
 func loadCreateModel(
@@ -108,7 +108,7 @@ func loadCreateModel(
 	return model, configuredActive, !resp.Diagnostics.HasError()
 }
 
-func (r *AiAgentResource) createShell(
+func (r *AiAgentResource) createAgent(
 	ctx context.Context,
 	model *AiAgentModel,
 	repoUUID string,
@@ -121,7 +121,7 @@ func (r *AiAgentResource) createShell(
 		} `json:"createAiAgent"`
 	}
 	variables := map[string]any{"input": map[string]any{
-		"agent": model.graphQLShellInput(repoUUID),
+		"agent": model.graphQLInput(repoUUID),
 	}}
 	if err := r.api.DoGraphQL(ctx, createAIAgentMutation, variables, &output); err != nil {
 		return err
@@ -133,17 +133,14 @@ func (r *AiAgentResource) createShell(
 	return nil
 }
 
+// finishCreate applies optional status then refreshes state. Status stays a
+// separate mutation because createAiAgent does not accept the active flag.
 func (r *AiAgentResource) finishCreate(
 	ctx context.Context,
 	model *AiAgentModel,
-	repoUUID string,
 	configuredActive types.Bool,
 	resp *resource.CreateResponse,
 ) {
-	if err := r.updateAgent(ctx, *model, repoUUID); err != nil {
-		r.rollbackCreate(ctx, model.ID.ValueString(), err, resp)
-		return
-	}
 	if isConfiguredBool(configuredActive) {
 		if err := r.updateStatus(ctx, model.ID.ValueString(), configuredActive.ValueBool()); err != nil {
 			r.rollbackCreate(ctx, model.ID.ValueString(), err, resp)
