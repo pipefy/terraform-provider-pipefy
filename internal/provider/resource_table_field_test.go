@@ -349,15 +349,18 @@ func tableFieldCollisionMockHandler(st *tableFieldCollisionState) http.HandlerFu
 		case strings.Contains(q, "deleteTableField"):
 			_, _ = io.WriteString(w, `{"data":{"deleteTableField":{"success":true}}}`)
 		case strings.Contains(q, "table("):
-			// Table-scoped read returns only the managed field; the ghost is in another table.
-			_, _ = io.WriteString(w, `{"data":{"table":{"table_fields":[`+tableFieldCollisionJSON(st.managed)+`]}}}`)
+			// Both fields live in the queried table and share the label "Trigger";
+			// only the uuid tells them apart. Read must match the managed field by
+			// uuid and record its id, so the later update targets the right one.
+			_, _ = io.WriteString(w, `{"data":{"table":{"table_fields":[`+
+				tableFieldCollisionJSON(st.ghost)+`,`+tableFieldCollisionJSON(st.managed)+`]}}}`)
 		default:
 			_, _ = io.WriteString(w, `{"data":{}}`)
 		}
 	}
 }
 
-func TestUnit_TableFieldResource_UpdateTargetsByUuid(t *testing.T) {
+func TestUnit_TableFieldResource_UpdateTargetsByID(t *testing.T) {
 	st := &tableFieldCollisionState{
 		ghost:   tableFieldCollision{id: "ghost_id", internalID: "481", uuid: "uuid-ghost", label: "Trigger"},
 		managed: tableFieldCollision{id: "managed_id", internalID: "485", uuid: "uuid-managed", label: "Trigger"},
