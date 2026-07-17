@@ -11,13 +11,13 @@ resource "pipefy_table_field" "example" {
   unique            = true
   description       = "The record's display name"
   help              = "Enter a short, clear name"
-  minimal_view      = true
   custom_validation = "min:3"
 }
 
 resource "pipefy_table_field" "priority" {
-  table_id = pipefy_table.example.id
-  type     = "select"
-  label    = "Priority"
-  options  = ["Low", "Medium", "High"]
+  table_id     = pipefy_table.example.id
+  type         = "select"
+  label        = "Priority"
+  options      = ["Low", "Medium", "High"]
+  minimal_view = true
 }
