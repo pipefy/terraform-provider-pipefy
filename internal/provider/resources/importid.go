@@ -5,12 +5,10 @@ package resources
 
 import "strings"
 
-// splitImportID splits a composite import ID into exactly n non-empty parts.
-func splitImportID(id string, n int) ([]string, bool) {
+// splitImportID splits a composite import ID on "/" and reports whether every
+// part is non-empty. Callers assert the part count they require.
+func splitImportID(id string) ([]string, bool) {
 	parts := strings.Split(id, "/")
-	if len(parts) != n {
-		return nil, false
-	}
 	for _, p := range parts {
 		if p == "" {
 			return nil, false

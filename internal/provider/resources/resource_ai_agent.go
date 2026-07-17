@@ -411,8 +411,8 @@ func (r *AiAgentResource) ImportState(
 	req resource.ImportStateRequest,
 	resp *resource.ImportStateResponse,
 ) {
-	parts, ok := splitImportID(req.ID, 2)
-	if !ok {
+	parts, ok := splitImportID(req.ID)
+	if !ok || len(parts) != 2 {
 		resp.Diagnostics.AddError(
 			"invalid import ID",
 			fmt.Sprintf("got %q; expected pipe_id/agent_uuid", req.ID),

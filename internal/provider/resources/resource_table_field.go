@@ -256,8 +256,8 @@ func (r *TableFieldResource) Delete(ctx context.Context, req resource.DeleteRequ
 }
 
 func (r *TableFieldResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	parts, ok := splitImportID(req.ID, 2)
-	if !ok {
+	parts, ok := splitImportID(req.ID)
+	if !ok || len(parts) != 2 {
 		resp.Diagnostics.AddError("invalid import ID", "expected table_id/field_uuid, got "+req.ID)
 		return
 	}
