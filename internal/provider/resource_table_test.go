@@ -31,6 +31,7 @@ type tableState struct {
 	Deleted       bool
 	CreateTableCt int
 	UpdateTableCt int
+	CreateOrgID   string
 }
 
 func (st *tableState) resetDefaults(name string) {
@@ -39,10 +40,11 @@ func (st *tableState) resetDefaults(name string) {
 	st.Deleted = false
 	color := "blue"
 	icon := "briefing"
+	auth := "write"
 	st.Color = &color
 	st.Icon = &icon
+	st.Authorization = &auth
 	st.Description = nil
-	st.Authorization = nil
 }
 
 func (st *tableState) applyVars(vars map[string]any) {
@@ -64,6 +66,10 @@ func (st *tableState) applyVars(vars map[string]any) {
 }
 
 func (st *tableState) toMap() map[string]any {
+	org := st.CreateOrgID
+	if org == "" {
+		org = "org_1"
+	}
 	return map[string]any{
 		"id":            st.ID,
 		"name":          st.Name,
@@ -71,7 +77,7 @@ func (st *tableState) toMap() map[string]any {
 		"authorization": st.Authorization,
 		"color":         st.Color,
 		"icon":          st.Icon,
-		"organization":  map[string]any{"id": "org_1"},
+		"organization":  map[string]any{"id": org},
 	}
 }
 
@@ -96,6 +102,7 @@ func newTableServer(st *tableState) *httptest.Server {
 		switch q := gr.Query; {
 		case strings.Contains(q, "createTable"):
 			st.CreateTableCt++
+			st.CreateOrgID, _ = gr.Variables["orgId"].(string)
 			name, _ := gr.Variables["name"].(string)
 			st.resetDefaults(name)
 			st.applyVars(gr.Variables)
@@ -175,7 +182,7 @@ func TestUnit_TableResource_CRUD(t *testing.T) {
 					val(tfjsonpath.New("color"), knownvalue.StringExact("blue")),
 					val(tfjsonpath.New("icon"), knownvalue.StringExact("briefing")),
 					val(tfjsonpath.New("description"), knownvalue.Null()),
-					val(tfjsonpath.New("authorization"), knownvalue.Null()),
+					val(tfjsonpath.New("authorization"), knownvalue.StringExact("write")),
 				},
 			},
 			// 2. Update: set all optional attributes.
@@ -222,6 +229,122 @@ func TestUnit_TableResource_CRUD(t *testing.T) {
 	}
 	if st.UpdateTableCt == 0 {
 		t.Errorf("expected at least one updateTable call")
+	}
+}
+
+// A table created with only its required attributes gets color/icon/authorization
+// filled by the API. Those Optional+Computed attributes carry UseStateForUnknown,
+// so re-applying the same config is a no-op and changing an unrelated attribute
+// (name) must not send them to "(known after apply)" on the plan.
+func TestUnit_TableResource_OptionalComputedStableOnUpdate(t *testing.T) {
+	st := &tableState{}
+	srv := newTableServer(st)
+	defer srv.Close()
+
+	cfg := func(name string) string {
+		return `
+provider "pipefy" {
+  endpoint = "` + srv.URL + `"
+  token    = "testtoken"
+}
+
+resource "pipefy_table" "test" {
+  name            = "` + name + `"
+  organization_id = "org_1"
+}
+`
+	}
+
+	planKnown := func(attr, val string) plancheck.PlanCheck {
+		return plancheck.ExpectKnownValue("pipefy_table.test", tfjsonpath.New(attr), knownvalue.StringExact(val))
+	}
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// 1. Create with only the required attributes.
+			{Config: cfg("My Table")},
+			// 2. Re-applying the identical config is a no-op.
+			{
+				Config: cfg("My Table"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+			},
+			// 3. Changing only name keeps the server-filled optionals known in the
+			// plan (this fails without UseStateForUnknown: they go unknown).
+			{
+				Config: cfg("Renamed"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("pipefy_table.test", plancheck.ResourceActionUpdate),
+						planKnown("color", "blue"),
+						planKnown("icon", "briefing"),
+						planKnown("authorization", "write"),
+					},
+				},
+			},
+		},
+	})
+}
+
+// Creating a table with every optional attribute set must issue a single
+// createTable carrying orgId and all optionals, with no follow-up updateTable.
+func TestUnit_TableResource_CreateWithSettings(t *testing.T) {
+	st := &tableState{}
+	srv := newTableServer(st)
+	defer srv.Close()
+
+	config := `
+provider "pipefy" {
+  endpoint = "` + srv.URL + `"
+  token    = "testtoken"
+}
+
+resource "pipefy_table" "test" {
+  name            = "My Table"
+  organization_id = "org_42"
+  description     = "Tracks widgets"
+  authorization   = "read"
+  icon            = "rocket"
+  color           = "purple"
+}
+`
+
+	val := func(attr, v string) statecheck.StateCheck {
+		return statecheck.ExpectKnownValue("pipefy_table.test", tfjsonpath.New(attr), knownvalue.StringExact(v))
+	}
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:           config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("pipefy_table.test", plancheck.ResourceActionCreate)}},
+				ConfigStateChecks: []statecheck.StateCheck{
+					val("description", "Tracks widgets"),
+					val("authorization", "read"),
+					val("icon", "rocket"),
+					val("color", "purple"),
+				},
+			},
+		},
+	})
+
+	if st.CreateTableCt != 1 {
+		t.Errorf("expected exactly one createTable, got %d", st.CreateTableCt)
+	}
+	if st.UpdateTableCt != 0 {
+		t.Errorf("create-with-settings must not trigger updateTable, got %d", st.UpdateTableCt)
+	}
+	if st.CreateOrgID != "org_42" {
+		t.Errorf("createTable must receive orgId=org_42, got %q", st.CreateOrgID)
 	}
 }
 
