@@ -24,8 +24,8 @@ type tableFieldState struct {
 	required, unique                                    *bool
 	description, help, customValidation                 *string
 	minimalView                                         *bool
-	created                                              bool
-	deletedCt                                            int
+	created                                             bool
+	deletedCt                                           int
 }
 
 func tableFieldObj(st *tableFieldState) string {
