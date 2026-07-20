@@ -31,7 +31,7 @@ resource "pipefy_automation" "example_ai" {
   action_repo_id = pipefy_pipe.test.id
   active         = true
 
-  # action_params and condition must be JSON strings
+  # action_params must be a JSON string
   action_params = jsonencode({
     aiParams = {
       value    = "Translate to german: %%{${pipefy_field.title.internal_id}}"
@@ -44,15 +44,15 @@ resource "pipefy_automation" "example_ai" {
   }
 
   # conditions to trigger the automation
-  condition = jsonencode({
+  condition = {
     expressions = [{
-      structure_id  = 0
-      field_address = ""
-      operation     = ""
-      value         = ""
+      structure_id  = "0"
+      field_address = pipefy_field.title.internal_id
+      operation     = "equals"
+      value         = "translate"
     }]
-    expressions_structure = [[0]]
-  })
+    expressions_structure = [["0"]]
+  }
 
   # Optional JSON schema describing the automation's structured response.
   response_schema = jsonencode({

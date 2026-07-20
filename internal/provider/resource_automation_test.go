@@ -33,6 +33,7 @@ type automationState struct {
 	SearchFor           json.RawMessage
 	ResponseSchema      json.RawMessage
 	EventParams         json.RawMessage
+	Condition           json.RawMessage
 	CreatedEventParams  any
 	CreatedActionParams any
 	UpdatedEventParams  any
@@ -76,6 +77,9 @@ func automationCapture(st *automationState, in map[string]any) {
 	if v, ok := in["event_params"]; ok {
 		st.EventParams, _ = json.Marshal(v)
 	}
+	if v, ok := in["condition"]; ok {
+		st.Condition, _ = json.Marshal(v)
+	}
 }
 
 // writeAutomationRead returns the automation read payload built from the mock
@@ -114,6 +118,11 @@ func writeAutomationRead(w http.ResponseWriter, st *automationState) {
 		auto["event_params"] = st.EventParams
 	} else {
 		auto["event_params"] = nil
+	}
+	if len(st.Condition) > 0 {
+		auto["condition"] = st.Condition
+	} else {
+		auto["condition"] = nil
 	}
 	body, _ := json.Marshal(map[string]any{"data": map[string]any{"automation": auto}})
 	_, _ = w.Write(body)
@@ -870,6 +879,110 @@ func TestUnit_AutomationResource_EventParamsRoundTripAndDrift(t *testing.T) {
 				PreConfig:          func() { st.EventParams = json.RawMessage(`{"triggerFieldIds":["999"]}`) },
 				RefreshState:       true,
 				ExpectNonEmptyPlan: true,
+			},
+		},
+	})
+}
+
+func TestUnit_AutomationResource_ConditionRoundTripDriftAndClear(t *testing.T) {
+	st := &automationState{}
+	srv := newAutomationServer(st)
+	defer srv.Close()
+
+	base := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "Field updated with condition"
+		event_id       = "field_updated"
+		action_id      = "move_single_card"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+		active         = true
+
+		event_params = {
+			trigger_field_ids = ["427453916"]
+		}
+		CONDITION
+	}
+	`
+	withCond := strings.ReplaceAll(base, "CONDITION", `condition = {
+			expressions = [
+				{ field_address = "427453916", operation = "equals", value = "a", structure_id = "5" },
+				{ field_address = "427453917", operation = "equals", value = "b", structure_id = "7" },
+			]
+			expressions_structure = [["5", "7"]]
+		}`)
+	cleared := strings.ReplaceAll(base, "CONDITION", ``)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: withCond,
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("condition").AtMapKey("expressions").AtSliceIndex(0).AtMapKey("structure_id"), knownvalue.StringExact("5")),
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("condition").AtMapKey("expressions").AtSliceIndex(1).AtMapKey("structure_id"), knownvalue.StringExact("7")),
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("condition").AtMapKey("expressions_structure").AtSliceIndex(0).AtSliceIndex(1), knownvalue.StringExact("7")),
+				},
+			},
+			{
+				Config: withCond,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+			},
+			{
+				Config: cleared,
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("condition"), knownvalue.Null()),
+				},
+			},
+		},
+	})
+}
+
+func TestUnit_AutomationResource_ConditionRejectsEmptyExpressions(t *testing.T) {
+	st := &automationState{}
+	srv := newAutomationServer(st)
+	defer srv.Close()
+
+	config := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "Empty condition"
+		event_id       = "field_updated"
+		action_id      = "move_single_card"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+		active         = true
+
+		condition = {
+			expressions           = []
+			expressions_structure = []
+		}
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      config,
+				ExpectError: regexp.MustCompile(`(?i)at least 1 element`),
 			},
 		},
 	})

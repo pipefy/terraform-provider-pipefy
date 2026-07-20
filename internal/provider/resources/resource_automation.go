@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -18,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
 )
@@ -53,6 +55,18 @@ type automationEventParamsModel struct {
 	KindOfSla           types.String   `tfsdk:"kind_of_sla"`
 }
 
+type automationConditionExpressionModel struct {
+	FieldAddress types.String `tfsdk:"field_address"`
+	StructureId  types.String `tfsdk:"structure_id"`
+	Operation    types.String `tfsdk:"operation"`
+	Value        types.String `tfsdk:"value"`
+}
+
+type automationConditionModel struct {
+	Expressions          []automationConditionExpressionModel `tfsdk:"expressions"`
+	ExpressionsStructure [][]types.String                     `tfsdk:"expressions_structure"`
+}
+
 var searchForObjectType = types.ObjectType{AttrTypes: map[string]attr.Type{
 	"field":     types.StringType,
 	"id":        types.StringType,
@@ -69,7 +83,7 @@ type AutomationModel struct {
 	ActionRepoId       types.String                     `tfsdk:"action_repo_id"`
 	EventParams        *automationEventParamsModel      `tfsdk:"event_params"`
 	ActionParams       types.String                     `tfsdk:"action_params"`
-	Condition          types.String                     `tfsdk:"condition"`
+	Condition          *automationConditionModel        `tfsdk:"condition"`
 	Active             types.Bool                       `tfsdk:"active"`
 	SchedulerFrequency types.String                     `tfsdk:"scheduler_frequency"`
 	SchedulerCron      *automationCronModel             `tfsdk:"scheduler_cron"`
@@ -121,7 +135,8 @@ const automationSelection = "id name active event_id action_id " +
 	"event_repo{ id } action_repo_v2{ ... on Pipe{ id } ... on Table{ id } } " +
 	"scheduler_frequency schedulerCron{ minute hour dayOfMonth month dayOfWeek } " +
 	"searchFor{ field id operation value } responseSchema " +
-	"event_params{ triggerFieldIds fromPhaseId inPhaseId to_phase_id triggerAutomationId kindOfSla }"
+	"event_params{ triggerFieldIds fromPhaseId inPhaseId to_phase_id triggerAutomationId kindOfSla } " +
+	"condition{ expressions{ field_address structure_id operation value } expressions_structure }"
 
 type automationRepoRef struct {
 	Id string `json:"id"`
@@ -151,6 +166,18 @@ type automationEventParamsData struct {
 	KindOfSla           *string  `json:"kindOfSla"`
 }
 
+type automationConditionExpressionData struct {
+	FieldAddress string  `json:"field_address"`
+	StructureId  string  `json:"structure_id"`
+	Operation    string  `json:"operation"`
+	Value        *string `json:"value"`
+}
+
+type automationConditionData struct {
+	Expressions          []automationConditionExpressionData `json:"expressions"`
+	ExpressionsStructure [][]string                          `json:"expressions_structure"`
+}
+
 type automationData struct {
 	Id                 string                      `json:"id"`
 	Name               string                      `json:"name"`
@@ -164,6 +191,7 @@ type automationData struct {
 	SearchFor          []automationSearchCondition `json:"searchFor"`
 	ResponseSchema     json.RawMessage             `json:"responseSchema"`
 	EventParams        *automationEventParamsData  `json:"event_params"`
+	Condition          *automationConditionData    `json:"condition"`
 }
 
 // automationOptionalString maps a nullable API string to state: a null becomes
@@ -228,6 +256,37 @@ func automationEventParamsToModel(e *automationEventParamsData) *automationEvent
 	}
 }
 
+// automationConditionToModel maps the API's condition back to the nested block.
+// A null object, or one with no expressions, maps to no block so it matches an
+// unset config. The server-assigned expression id and the wrapper id /
+// related_cards are not selected and not mapped.
+func automationConditionToModel(c *automationConditionData) *automationConditionModel {
+	if c == nil || len(c.Expressions) == 0 {
+		return nil
+	}
+	exprs := make([]automationConditionExpressionModel, len(c.Expressions))
+	for i, e := range c.Expressions {
+		exprs[i] = automationConditionExpressionModel{
+			FieldAddress: types.StringValue(e.FieldAddress),
+			StructureId:  types.StringValue(e.StructureId),
+			Operation:    types.StringValue(e.Operation),
+			Value:        automationOptionalString(e.Value),
+		}
+	}
+	structure := make([][]types.String, len(c.ExpressionsStructure))
+	for i, grp := range c.ExpressionsStructure {
+		g := make([]types.String, len(grp))
+		for j, s := range grp {
+			g[j] = types.StringValue(s)
+		}
+		structure[i] = g
+	}
+	return &automationConditionModel{
+		Expressions:          exprs,
+		ExpressionsStructure: structure,
+	}
+}
+
 func automationNormalizeJSON(raw json.RawMessage) jsontypes.Normalized {
 	trimmed := strings.TrimSpace(string(raw))
 	if trimmed == "" || trimmed == "null" {
@@ -237,10 +296,11 @@ func automationNormalizeJSON(raw json.RawMessage) jsontypes.Normalized {
 }
 
 // apply refreshes the round-trippable attributes from a fetched automation.
-// search_for is managed in full, so it always maps to a list (empty, not null,
-// when the automation has no conditions). action_params and condition are
-// left untouched: their read types differ from the write inputs and do not
-// round-trip.
+// search_for and condition are managed in full: search_for always maps to a
+// list (empty, not null, when the automation has no conditions), and
+// condition maps to no block when the automation has no expressions, so an
+// empty config settles cleanly. action_params is left untouched: its read
+// type differs from the write input and does not round-trip.
 func (m *AutomationModel) apply(a *automationData) {
 	m.Id = types.StringValue(a.Id)
 	m.Name = types.StringValue(a.Name)
@@ -269,32 +329,24 @@ func (m *AutomationModel) apply(a *automationData) {
 	m.SearchFor = conds
 	m.ResponseSchema = automationNormalizeJSON(a.ResponseSchema)
 	m.EventParams = automationEventParamsToModel(a.EventParams)
+	m.Condition = automationConditionToModel(a.Condition)
 }
 
 // addAutomationOptionalInputs adds the optional inputs shared by Create and
-// Update. The JSON-string params are sent as decoded values; scheduler_cron and
-// search_for use the API's camelCase field keys. search_for is always sent (as
-// an empty list when there are no conditions) so it is managed in full. It
-// returns false after recording a diagnostic when a JSON string cannot be
-// parsed.
+// Update. action_params is sent as a decoded value from its JSON string;
+// scheduler_cron uses the API's camelCase field keys, and event_params mixes
+// snake_case and camelCase keys per its subfield. search_for and condition
+// are always sent (an empty list for search_for, an empty condition object
+// for condition) when unset, so both are managed in full. It returns false
+// after recording a diagnostic when a JSON string cannot be parsed.
 func addAutomationOptionalInputs(input map[string]any, data *AutomationModel, diags *diag.Diagnostics) bool {
-	jsonParams := []struct {
-		key   string
-		value types.String
-	}{
-		{"action_params", data.ActionParams},
-		{"condition", data.Condition},
-	}
-	for _, p := range jsonParams {
-		if p.value.IsNull() || p.value.ValueString() == "" {
-			continue
-		}
+	if !data.ActionParams.IsNull() && data.ActionParams.ValueString() != "" {
 		var v any
-		if err := json.Unmarshal([]byte(p.value.ValueString()), &v); err != nil {
-			diags.AddError("invalid "+p.key+" JSON", err.Error())
+		if err := json.Unmarshal([]byte(data.ActionParams.ValueString()), &v); err != nil {
+			diags.AddError("invalid action_params JSON", err.Error())
 			return false
 		}
-		input[p.key] = v
+		input["action_params"] = v
 	}
 	if data.EventParams != nil {
 		ev := data.EventParams
@@ -356,6 +408,35 @@ func addAutomationOptionalInputs(input map[string]any, data *AutomationModel, di
 		}
 		input["responseSchema"] = v
 	}
+	condInput := map[string]any{
+		"expressions":           []map[string]any{},
+		"expressions_structure": [][]string{},
+	}
+	if data.Condition != nil {
+		exprs := make([]map[string]any, len(data.Condition.Expressions))
+		for i, e := range data.Condition.Expressions {
+			expr := map[string]any{
+				"field_address": e.FieldAddress.ValueString(),
+				"operation":     e.Operation.ValueString(),
+				"structure_id":  e.StructureId.ValueString(),
+			}
+			if !e.Value.IsNull() {
+				expr["value"] = e.Value.ValueString()
+			}
+			exprs[i] = expr
+		}
+		structure := make([][]string, len(data.Condition.ExpressionsStructure))
+		for i, grp := range data.Condition.ExpressionsStructure {
+			g := make([]string, len(grp))
+			for j, s := range grp {
+				g[j] = s.ValueString()
+			}
+			structure[i] = g
+		}
+		condInput["expressions"] = exprs
+		condInput["expressions_structure"] = structure
+	}
+	input["condition"] = condInput
 	return true
 }
 
@@ -390,10 +471,34 @@ func (r *AutomationResource) Schema(ctx context.Context, req resource.SchemaRequ
 					"kind_of_sla":           schema.StringAttribute{Optional: true, Description: "SLA kind for sla_based events."},
 				},
 			},
-			// JSON strings for complex structures to avoid over-modeling in Terraform schema
+			// action_params is a JSON string to avoid over-modeling in the Terraform schema.
 			"action_params": schema.StringAttribute{Optional: true, Description: "The parameters of the action for the automation, as a JSON string. Not read back from the API, so drift is not detected."},
-			"condition":     schema.StringAttribute{Optional: true, Description: "The condition for the automation to be executed, as a JSON string. Not read back from the API, so drift is not detected."},
-			"active":        schema.BoolAttribute{Required: true, Description: "Whether the automation is active."},
+			"condition": schema.SingleNestedAttribute{
+				Optional:    true,
+				Description: "Condition that gates the automation. Managed in full: the configured expressions are authoritative, and omitting the block clears the condition on the server.",
+				Attributes: map[string]schema.Attribute{
+					"expressions": schema.ListNestedAttribute{
+						Required:    true,
+						Description: "Condition expressions.",
+						Validators:  []validator.List{listvalidator.SizeAtLeast(1)},
+						NestedObject: schema.NestedAttributeObject{
+							Attributes: map[string]schema.Attribute{
+								"field_address": schema.StringAttribute{Required: true, Description: "Field id the expression tests."},
+								"operation":     schema.StringAttribute{Required: true, Description: "Comparison operation. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference)."},
+								"value":         schema.StringAttribute{Optional: true, Description: "Value to compare against."},
+								"structure_id":  schema.StringAttribute{Required: true, Description: "Caller-assigned handle referenced by expressions_structure."},
+							},
+						},
+					},
+					"expressions_structure": schema.ListAttribute{
+						Required:    true,
+						ElementType: types.ListType{ElemType: types.StringType},
+						Description: "Boolean grouping of expressions by structure_id. Outer list is OR, inner lists are AND.",
+						Validators:  []validator.List{listvalidator.SizeAtLeast(1)},
+					},
+				},
+			},
+			"active": schema.BoolAttribute{Required: true, Description: "Whether the automation is active."},
 			"scheduler_frequency": schema.StringAttribute{
 				Optional:    true,
 				Description: "Frequency for time-based (scheduler) triggers. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference/automation-creation) and the GraphiQL explorer (https://app.pipefy.com/graphiql).",
