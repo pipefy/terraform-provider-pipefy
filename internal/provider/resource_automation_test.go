@@ -939,6 +939,13 @@ func TestUnit_AutomationResource_ConditionRoundTripDriftAndClear(t *testing.T) {
 				},
 			},
 			{
+				PreConfig: func() {
+					st.Condition = json.RawMessage(`{"expressions":[{"field_address":"427453916","operation":"equals","value":"CHANGED","structure_id":"5"}],"expressions_structure":[["5"]]}`)
+				},
+				RefreshState:       true,
+				ExpectNonEmptyPlan: true,
+			},
+			{
 				Config: cleared,
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("condition"), knownvalue.Null()),
@@ -946,6 +953,10 @@ func TestUnit_AutomationResource_ConditionRoundTripDriftAndClear(t *testing.T) {
 			},
 		},
 	})
+
+	if !strings.Contains(string(st.Condition), `"expressions":[]`) {
+		t.Fatalf("expected clear step to send an empty condition, got: %s", st.Condition)
+	}
 }
 
 func TestUnit_AutomationResource_ConditionRejectsEmptyExpressions(t *testing.T) {

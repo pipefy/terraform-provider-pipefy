@@ -461,7 +461,7 @@ func (r *AutomationResource) Schema(ctx context.Context, req resource.SchemaRequ
 			"action_repo_id": schema.StringAttribute{Required: true, Description: "The ID of the pipe that the automation performs actions on"},
 			"event_params": schema.SingleNestedAttribute{
 				Optional:    true,
-				Description: "Parameters of the event the automation listens to. Which subfields apply depends on event_id; see the API reference (https://developers.pipefy.com/reference/automation-creation). Removing the whole block does not clear it on the server.",
+				Description: "Parameters of the event the automation listens to. Which subfields apply depends on event_id; see the API reference (https://developers.pipefy.com/reference/automation-creation). Removing the whole block does not clear it on the server; because Read refreshes this attribute, a removed block reappears on the next plan. Change its fields instead of deleting the block.",
 				Attributes: map[string]schema.Attribute{
 					"trigger_field_ids":     schema.ListAttribute{Optional: true, ElementType: types.StringType, Description: "Field ids whose update triggers the automation."},
 					"from_phase_id":         schema.StringAttribute{Optional: true, Description: "Source phase id for phase-based events."},
