@@ -259,8 +259,8 @@ func (r *WebhookResource) Delete(ctx context.Context, req resource.DeleteRequest
 }
 
 func (r *WebhookResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	parts, ok := splitImportID(req.ID, 2)
-	if !ok {
+	parts, ok := splitImportID(req.ID)
+	if !ok || len(parts) != 2 {
 		resp.Diagnostics.AddError("invalid import ID", "expected pipe_id/webhook_id, got "+req.ID)
 		return
 	}

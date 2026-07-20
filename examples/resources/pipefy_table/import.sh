@@ -1,0 +1,1 @@
+terraform import pipefy_table.example "<TABLE_ID>"
