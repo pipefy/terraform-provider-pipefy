@@ -34,14 +34,14 @@ resource "pipefy_automation" "example_ai" {
   # action_params and condition must be JSON strings
   action_params = jsonencode({
     aiParams = {
-      value    = "Translate to german: %%{${pipefy_field.input.internal_id}}"
+      value    = "Translate to german: %%{${pipefy_field.title.internal_id}}"
       fieldIds = [pipefy_field.translation.internal_id]
     }
   })
 
-  event_params = jsonencode({
-    triggerFieldIds = [pipefy_field.input.internal_id]
-  })
+  event_params = {
+    trigger_field_ids = [pipefy_field.title.internal_id]
+  }
 
   # conditions to trigger the automation
   condition = jsonencode({

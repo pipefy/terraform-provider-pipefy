@@ -32,6 +32,7 @@ type automationState struct {
 	SchedulerCron       json.RawMessage
 	SearchFor           json.RawMessage
 	ResponseSchema      json.RawMessage
+	EventParams         json.RawMessage
 	CreatedEventParams  any
 	CreatedActionParams any
 	UpdatedEventParams  any
@@ -72,6 +73,9 @@ func automationCapture(st *automationState, in map[string]any) {
 	if v, ok := in["responseSchema"]; ok {
 		st.ResponseSchema, _ = json.Marshal(v)
 	}
+	if v, ok := in["event_params"]; ok {
+		st.EventParams, _ = json.Marshal(v)
+	}
 }
 
 // writeAutomationRead returns the automation read payload built from the mock
@@ -105,6 +109,11 @@ func writeAutomationRead(w http.ResponseWriter, st *automationState) {
 		auto["responseSchema"] = st.ResponseSchema
 	} else {
 		auto["responseSchema"] = nil
+	}
+	if len(st.EventParams) > 0 {
+		auto["event_params"] = st.EventParams
+	} else {
+		auto["event_params"] = nil
 	}
 	body, _ := json.Marshal(map[string]any{"data": map[string]any{"automation": auto}})
 	_, _ = w.Write(body)
@@ -174,9 +183,9 @@ func TestUnit_AutomationResource_CRUD(t *testing.T) {
 		action_repo_id = "306729113"
 		active         = true
 
-		event_params = jsonencode({
-			triggerFieldIds = [420173505]
-		})
+		event_params = {
+			trigger_field_ids = ["420173505"]
+		}
 
 		action_params = jsonencode({
 			aiParams = {
@@ -806,6 +815,59 @@ func TestUnit_AutomationResource_ReadDetectsDrift(t *testing.T) {
 				// Someone changes the automation outside Terraform; Read must
 				// refresh state so the next plan shows a diff.
 				PreConfig:          func() { st.Name = "Changed outside Terraform" },
+				RefreshState:       true,
+				ExpectNonEmptyPlan: true,
+			},
+		},
+	})
+}
+
+func TestUnit_AutomationResource_EventParamsRoundTripAndDrift(t *testing.T) {
+	st := &automationState{}
+	srv := newAutomationServer(st)
+	defer srv.Close()
+
+	config := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "Field updated"
+		event_id       = "field_updated"
+		action_id      = "move_single_card"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+		active         = true
+
+		event_params = {
+			trigger_field_ids = ["427453916", "427453917"]
+		}
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("event_params").AtMapKey("trigger_field_ids").AtSliceIndex(0), knownvalue.StringExact("427453916")),
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("event_params").AtMapKey("trigger_field_ids").AtSliceIndex(1), knownvalue.StringExact("427453917")),
+				},
+			},
+			{
+				Config: config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+			},
+			{
+				PreConfig:          func() { st.EventParams = json.RawMessage(`{"triggerFieldIds":["999"]}`) },
 				RefreshState:       true,
 				ExpectNonEmptyPlan: true,
 			},

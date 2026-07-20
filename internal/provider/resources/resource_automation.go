@@ -44,6 +44,15 @@ type automationSearchConditionModel struct {
 	Value     types.String `tfsdk:"value"`
 }
 
+type automationEventParamsModel struct {
+	TriggerFieldIds     []types.String `tfsdk:"trigger_field_ids"`
+	FromPhaseId         types.String   `tfsdk:"from_phase_id"`
+	InPhaseId           types.String   `tfsdk:"in_phase_id"`
+	ToPhaseId           types.String   `tfsdk:"to_phase_id"`
+	TriggerAutomationId types.String   `tfsdk:"trigger_automation_id"`
+	KindOfSla           types.String   `tfsdk:"kind_of_sla"`
+}
+
 var searchForObjectType = types.ObjectType{AttrTypes: map[string]attr.Type{
 	"field":     types.StringType,
 	"id":        types.StringType,
@@ -58,7 +67,7 @@ type AutomationModel struct {
 	ActionId           types.String                     `tfsdk:"action_id"`
 	EventRepoId        types.String                     `tfsdk:"event_repo_id"`
 	ActionRepoId       types.String                     `tfsdk:"action_repo_id"`
-	EventParams        types.String                     `tfsdk:"event_params"`
+	EventParams        *automationEventParamsModel      `tfsdk:"event_params"`
 	ActionParams       types.String                     `tfsdk:"action_params"`
 	Condition          types.String                     `tfsdk:"condition"`
 	Active             types.Bool                       `tfsdk:"active"`
@@ -111,7 +120,8 @@ func automationError(automationPresent bool, details []automationErrorDetail, er
 const automationSelection = "id name active event_id action_id " +
 	"event_repo{ id } action_repo_v2{ ... on Pipe{ id } ... on Table{ id } } " +
 	"scheduler_frequency schedulerCron{ minute hour dayOfMonth month dayOfWeek } " +
-	"searchFor{ field id operation value } responseSchema"
+	"searchFor{ field id operation value } responseSchema " +
+	"event_params{ triggerFieldIds fromPhaseId inPhaseId to_phase_id triggerAutomationId kindOfSla }"
 
 type automationRepoRef struct {
 	Id string `json:"id"`
@@ -132,6 +142,15 @@ type automationSearchCondition struct {
 	Value     *string `json:"value"`
 }
 
+type automationEventParamsData struct {
+	TriggerFieldIds     []string `json:"triggerFieldIds"`
+	FromPhaseId         *string  `json:"fromPhaseId"`
+	InPhaseId           *string  `json:"inPhaseId"`
+	ToPhaseId           *string  `json:"to_phase_id"`
+	TriggerAutomationId *string  `json:"triggerAutomationId"`
+	KindOfSla           *string  `json:"kindOfSla"`
+}
+
 type automationData struct {
 	Id                 string                      `json:"id"`
 	Name               string                      `json:"name"`
@@ -144,6 +163,7 @@ type automationData struct {
 	SchedulerCron      *automationCron             `json:"schedulerCron"`
 	SearchFor          []automationSearchCondition `json:"searchFor"`
 	ResponseSchema     json.RawMessage             `json:"responseSchema"`
+	EventParams        *automationEventParamsData  `json:"event_params"`
 }
 
 // automationOptionalString maps a nullable API string to state: a null becomes
@@ -178,6 +198,36 @@ func automationCronToModel(c *automationCron) *automationCronModel {
 	}
 }
 
+// automationEventParamsToModel maps the API's event params back to the nested
+// block. A null object, or one whose fields are all empty, maps to no block so
+// it matches an unset config. The API adds a phase object that the input never
+// carried; it is not selected and not mapped.
+func automationEventParamsToModel(e *automationEventParamsData) *automationEventParamsModel {
+	if e == nil {
+		return nil
+	}
+	empty := len(e.TriggerFieldIds) == 0 && e.FromPhaseId == nil && e.InPhaseId == nil &&
+		e.ToPhaseId == nil && e.TriggerAutomationId == nil && e.KindOfSla == nil
+	if empty {
+		return nil
+	}
+	var ids []types.String
+	if len(e.TriggerFieldIds) > 0 {
+		ids = make([]types.String, len(e.TriggerFieldIds))
+		for i, v := range e.TriggerFieldIds {
+			ids[i] = types.StringValue(v)
+		}
+	}
+	return &automationEventParamsModel{
+		TriggerFieldIds:     ids,
+		FromPhaseId:         automationOptionalString(e.FromPhaseId),
+		InPhaseId:           automationOptionalString(e.InPhaseId),
+		ToPhaseId:           automationOptionalString(e.ToPhaseId),
+		TriggerAutomationId: automationOptionalString(e.TriggerAutomationId),
+		KindOfSla:           automationOptionalString(e.KindOfSla),
+	}
+}
+
 func automationNormalizeJSON(raw json.RawMessage) jsontypes.Normalized {
 	trimmed := strings.TrimSpace(string(raw))
 	if trimmed == "" || trimmed == "null" {
@@ -188,9 +238,9 @@ func automationNormalizeJSON(raw json.RawMessage) jsontypes.Normalized {
 
 // apply refreshes the round-trippable attributes from a fetched automation.
 // search_for is managed in full, so it always maps to a list (empty, not null,
-// when the automation has no conditions). event_params, action_params, and
-// condition are left untouched: their read types differ from the write inputs
-// and do not round-trip.
+// when the automation has no conditions). action_params and condition are
+// left untouched: their read types differ from the write inputs and do not
+// round-trip.
 func (m *AutomationModel) apply(a *automationData) {
 	m.Id = types.StringValue(a.Id)
 	m.Name = types.StringValue(a.Name)
@@ -218,6 +268,7 @@ func (m *AutomationModel) apply(a *automationData) {
 	}
 	m.SearchFor = conds
 	m.ResponseSchema = automationNormalizeJSON(a.ResponseSchema)
+	m.EventParams = automationEventParamsToModel(a.EventParams)
 }
 
 // addAutomationOptionalInputs adds the optional inputs shared by Create and
@@ -231,7 +282,6 @@ func addAutomationOptionalInputs(input map[string]any, data *AutomationModel, di
 		key   string
 		value types.String
 	}{
-		{"event_params", data.EventParams},
 		{"action_params", data.ActionParams},
 		{"condition", data.Condition},
 	}
@@ -245,6 +295,33 @@ func addAutomationOptionalInputs(input map[string]any, data *AutomationModel, di
 			return false
 		}
 		input[p.key] = v
+	}
+	if data.EventParams != nil {
+		ev := data.EventParams
+		ep := map[string]any{}
+		if len(ev.TriggerFieldIds) > 0 {
+			ids := make([]string, len(ev.TriggerFieldIds))
+			for i, v := range ev.TriggerFieldIds {
+				ids[i] = v.ValueString()
+			}
+			ep["triggerFieldIds"] = ids
+		}
+		if !ev.FromPhaseId.IsNull() {
+			ep["fromPhaseId"] = ev.FromPhaseId.ValueString()
+		}
+		if !ev.InPhaseId.IsNull() {
+			ep["inPhaseId"] = ev.InPhaseId.ValueString()
+		}
+		if !ev.ToPhaseId.IsNull() {
+			ep["to_phase_id"] = ev.ToPhaseId.ValueString()
+		}
+		if !ev.TriggerAutomationId.IsNull() {
+			ep["triggerAutomationId"] = ev.TriggerAutomationId.ValueString()
+		}
+		if !ev.KindOfSla.IsNull() {
+			ep["kindOfSla"] = ev.KindOfSla.ValueString()
+		}
+		input["event_params"] = ep
 	}
 	if !data.SchedulerFrequency.IsNull() && data.SchedulerFrequency.ValueString() != "" {
 		input["scheduler_frequency"] = data.SchedulerFrequency.ValueString()
@@ -301,8 +378,19 @@ func (r *AutomationResource) Schema(ctx context.Context, req resource.SchemaRequ
 			"action_id":      schema.StringAttribute{Required: true, Description: "The type of the action that the automation performs"},
 			"event_repo_id":  schema.StringAttribute{Required: true, Description: "The ID of the pipe that the automation listens to", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 			"action_repo_id": schema.StringAttribute{Required: true, Description: "The ID of the pipe that the automation performs actions on"},
+			"event_params": schema.SingleNestedAttribute{
+				Optional:    true,
+				Description: "Parameters of the event the automation listens to. Which subfields apply depends on event_id; see the API reference (https://developers.pipefy.com/reference/automation-creation). Removing the whole block does not clear it on the server.",
+				Attributes: map[string]schema.Attribute{
+					"trigger_field_ids":     schema.ListAttribute{Optional: true, ElementType: types.StringType, Description: "Field ids whose update triggers the automation."},
+					"from_phase_id":         schema.StringAttribute{Optional: true, Description: "Source phase id for phase-based events."},
+					"in_phase_id":           schema.StringAttribute{Optional: true, Description: "Phase id the event is scoped to."},
+					"to_phase_id":           schema.StringAttribute{Optional: true, Description: "Destination phase id for move events."},
+					"trigger_automation_id": schema.StringAttribute{Optional: true, Description: "Id of the automation that triggers this one."},
+					"kind_of_sla":           schema.StringAttribute{Optional: true, Description: "SLA kind for sla_based events."},
+				},
+			},
 			// JSON strings for complex structures to avoid over-modeling in Terraform schema
-			"event_params":  schema.StringAttribute{Optional: true, Description: "The parameters of the event for the automation, as a JSON string. Not read back from the API, so drift is not detected."},
 			"action_params": schema.StringAttribute{Optional: true, Description: "The parameters of the action for the automation, as a JSON string. Not read back from the API, so drift is not detected."},
 			"condition":     schema.StringAttribute{Optional: true, Description: "The condition for the automation to be executed, as a JSON string. Not read back from the API, so drift is not detected."},
 			"active":        schema.BoolAttribute{Required: true, Description: "Whether the automation is active."},
