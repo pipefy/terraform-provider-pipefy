@@ -46,27 +46,71 @@ resource "pipefy_automation" "example_ai" {
   action_repo_id = pipefy_pipe.test.id
   active         = true
 
-  # action_params and condition must be JSON strings
+  # action_params must be a JSON string
   action_params = jsonencode({
     aiParams = {
-      value    = "Translate to german: %%{${pipefy_field.input.internal_id}}"
+      value    = "Translate to german: %%{${pipefy_field.title.internal_id}}"
       fieldIds = [pipefy_field.translation.internal_id]
     }
   })
 
-  event_params = jsonencode({
-    triggerFieldIds = [pipefy_field.input.internal_id]
-  })
+  event_params = {
+    trigger_field_ids = [pipefy_field.title.internal_id]
+  }
 
   # conditions to trigger the automation
-  condition = jsonencode({
+  condition = {
     expressions = [{
-      structure_id  = 0
-      field_address = ""
-      operation     = ""
-      value         = ""
+      structure_id  = "0"
+      field_address = pipefy_field.title.internal_id
+      operation     = "equals"
+      value         = "translate"
     }]
-    expressions_structure = [[0]]
+    expressions_structure = [["0"]]
+  }
+
+  # Optional JSON schema describing the automation's structured response.
+  response_schema = jsonencode({
+    type = "object"
+    properties = {
+      translation = { type = "string" }
+    }
+  })
+}
+
+# A recurring (scheduler) automation: every day at 09:30 it selects matching
+# cards and moves them. scheduler_cron uses standard crontab syntax, and
+# search_for lists the selection conditions in order.
+resource "pipefy_automation" "daily_move" {
+  name           = "Move follow-up cards daily"
+  event_id       = "scheduler"
+  action_id      = "move_multiple_cards"
+  event_repo_id  = pipefy_pipe.test.id
+  action_repo_id = pipefy_pipe.test.id
+  active         = true
+
+  scheduler_frequency = "daily"
+
+  scheduler_cron = {
+    minute       = "30"
+    hour         = "9"
+    day_of_month = "*"
+    month        = "*"
+    day_of_week  = "*"
+  }
+
+  search_for = [
+    {
+      field     = pipefy_field.title.internal_id
+      id        = "match-follow-ups"
+      operation = "eq"
+      value     = "Follow up"
+    },
+  ]
+
+  # move_multiple_cards moves the selected cards to this phase.
+  action_params = jsonencode({
+    to_phase_id = pipefy_phase.backlog.id
   })
 }
 ```
@@ -78,20 +122,85 @@ resource "pipefy_automation" "example_ai" {
 
 - `action_id` (String) The type of the action that the automation performs
 - `action_repo_id` (String) The ID of the pipe that the automation performs actions on
+- `active` (Boolean) Whether the automation is active.
 - `event_id` (String) The type of the event that the automation listens to
 - `event_repo_id` (String) The ID of the pipe that the automation listens to
 - `name` (String) Name of the automation
 
 ### Optional
 
-- `action_params` (String) The parameters of the action for the automation
-- `active` (Boolean) Whether the automation is active or not
-- `condition` (String) The condition for the automation to be executed
-- `event_params` (String) The parameters of the event for the automation
+- `action_params` (String) The parameters of the action for the automation, as a JSON string. Not read back from the API, so drift is not detected.
+- `condition` (Attributes) Condition that gates the automation. Managed in full: the configured expressions are authoritative, and omitting the block clears the condition on the server. (see [below for nested schema](#nestedatt--condition))
+- `event_params` (Attributes) Parameters of the event the automation listens to. Which subfields apply depends on event_id; see the API reference (https://developers.pipefy.com/reference/automation-creation). Not read back from the API, so drift is not detected. (see [below for nested schema](#nestedatt--event_params))
+- `response_schema` (String) JSON response schema for the automation, as a JSON string. Compared semantically, so formatting and key order do not cause a diff.
+- `scheduler_cron` (Attributes) Cron schedule for time-based (scheduler) triggers. Fields use standard crontab syntax. (see [below for nested schema](#nestedatt--scheduler_cron))
+- `scheduler_frequency` (String) Frequency for time-based (scheduler) triggers. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference/automation-creation) and the GraphiQL explorer (https://app.pipefy.com/graphiql).
+- `search_for` (Attributes List) Conditions that select the cards a recurring (scheduler) automation acts on. The list is managed in full: the configured conditions are authoritative, and an empty list (or omitting the block) clears them on the server. Order is preserved. (see [below for nested schema](#nestedatt--search_for))
 
 ### Read-Only
 
 - `id` (String) The ID of this resource.
+
+<a id="nestedatt--condition"></a>
+### Nested Schema for `condition`
+
+Required:
+
+- `expressions` (Attributes List) Condition expressions. (see [below for nested schema](#nestedatt--condition--expressions))
+- `expressions_structure` (List of List of String) Boolean grouping of expressions by structure_id. Outer list is OR, inner lists are AND.
+
+<a id="nestedatt--condition--expressions"></a>
+### Nested Schema for `condition.expressions`
+
+Required:
+
+- `field_address` (String) Field id the expression tests.
+- `operation` (String) Comparison operation. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).
+- `structure_id` (String) Caller-assigned handle referenced by expressions_structure.
+
+Optional:
+
+- `value` (String) Value to compare against.
+
+
+
+<a id="nestedatt--event_params"></a>
+### Nested Schema for `event_params`
+
+Optional:
+
+- `from_phase_id` (String) Source phase id for phase-based events.
+- `in_phase_id` (String) Phase id the event is scoped to.
+- `kind_of_sla` (String) SLA kind for sla_based events.
+- `to_phase_id` (String) Destination phase id for move events.
+- `trigger_automation_id` (String) Id of the automation that triggers this one.
+- `trigger_field_ids` (List of String) Field ids whose update triggers the automation.
+
+
+<a id="nestedatt--scheduler_cron"></a>
+### Nested Schema for `scheduler_cron`
+
+Required:
+
+- `day_of_month` (String) Cron day-of-month field.
+- `day_of_week` (String) Cron day-of-week field.
+- `hour` (String) Cron hour field.
+- `minute` (String) Cron minute field.
+- `month` (String) Cron month field.
+
+
+<a id="nestedatt--search_for"></a>
+### Nested Schema for `search_for`
+
+Required:
+
+- `field` (String) The id of the field used as a filter.
+- `id` (String) Caller-assigned identifier for the condition.
+- `operation` (String) The filter operation. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).
+
+Optional:
+
+- `value` (String) The value or field id to compare against.
 
 ## Import
 

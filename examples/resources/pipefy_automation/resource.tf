@@ -31,26 +31,70 @@ resource "pipefy_automation" "example_ai" {
   action_repo_id = pipefy_pipe.test.id
   active         = true
 
-  # action_params and condition must be JSON strings
+  # action_params must be a JSON string
   action_params = jsonencode({
     aiParams = {
-      value    = "Translate to german: %%{${pipefy_field.input.internal_id}}"
+      value    = "Translate to german: %%{${pipefy_field.title.internal_id}}"
       fieldIds = [pipefy_field.translation.internal_id]
     }
   })
 
-  event_params = jsonencode({
-    triggerFieldIds = [pipefy_field.input.internal_id]
-  })
+  event_params = {
+    trigger_field_ids = [pipefy_field.title.internal_id]
+  }
 
   # conditions to trigger the automation
-  condition = jsonencode({
+  condition = {
     expressions = [{
-      structure_id  = 0
-      field_address = ""
-      operation     = ""
-      value         = ""
+      structure_id  = "0"
+      field_address = pipefy_field.title.internal_id
+      operation     = "equals"
+      value         = "translate"
     }]
-    expressions_structure = [[0]]
+    expressions_structure = [["0"]]
+  }
+
+  # Optional JSON schema describing the automation's structured response.
+  response_schema = jsonencode({
+    type = "object"
+    properties = {
+      translation = { type = "string" }
+    }
+  })
+}
+
+# A recurring (scheduler) automation: every day at 09:30 it selects matching
+# cards and moves them. scheduler_cron uses standard crontab syntax, and
+# search_for lists the selection conditions in order.
+resource "pipefy_automation" "daily_move" {
+  name           = "Move follow-up cards daily"
+  event_id       = "scheduler"
+  action_id      = "move_multiple_cards"
+  event_repo_id  = pipefy_pipe.test.id
+  action_repo_id = pipefy_pipe.test.id
+  active         = true
+
+  scheduler_frequency = "daily"
+
+  scheduler_cron = {
+    minute       = "30"
+    hour         = "9"
+    day_of_month = "*"
+    month        = "*"
+    day_of_week  = "*"
+  }
+
+  search_for = [
+    {
+      field     = pipefy_field.title.internal_id
+      id        = "match-follow-ups"
+      operation = "eq"
+      value     = "Follow up"
+    },
+  ]
+
+  # move_multiple_cards moves the selected cards to this phase.
+  action_params = jsonencode({
+    to_phase_id = pipefy_phase.backlog.id
   })
 }
