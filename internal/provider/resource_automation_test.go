@@ -831,7 +831,7 @@ func TestUnit_AutomationResource_ReadDetectsDrift(t *testing.T) {
 	})
 }
 
-func TestUnit_AutomationResource_EventParamsRoundTripAndDrift(t *testing.T) {
+func TestUnit_AutomationResource_EventParamsWriteOnly(t *testing.T) {
 	st := &automationState{}
 	srv := newAutomationServer(st)
 	defer srv.Close()
@@ -876,9 +876,10 @@ func TestUnit_AutomationResource_EventParamsRoundTripAndDrift(t *testing.T) {
 				},
 			},
 			{
-				PreConfig:          func() { st.EventParams = json.RawMessage(`{"triggerFieldIds":["999"]}`) },
-				RefreshState:       true,
-				ExpectNonEmptyPlan: true,
+				// event_params is write-only: an out-of-band change is not read
+				// back, so a refresh surfaces no diff (the plan stays empty).
+				PreConfig:    func() { st.EventParams = json.RawMessage(`{"triggerFieldIds":["999"]}`) },
+				RefreshState: true,
 			},
 		},
 	})

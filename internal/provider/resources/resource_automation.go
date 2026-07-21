@@ -135,7 +135,6 @@ const automationSelection = "id name active event_id action_id " +
 	"event_repo{ id } action_repo_v2{ ... on Pipe{ id } ... on Table{ id } } " +
 	"scheduler_frequency schedulerCron{ minute hour dayOfMonth month dayOfWeek } " +
 	"searchFor{ field id operation value } responseSchema " +
-	"event_params{ triggerFieldIds fromPhaseId inPhaseId to_phase_id triggerAutomationId kindOfSla } " +
 	"condition{ expressions{ field_address structure_id operation value } expressions_structure }"
 
 type automationRepoRef struct {
@@ -155,15 +154,6 @@ type automationSearchCondition struct {
 	Id        string  `json:"id"`
 	Operation string  `json:"operation"`
 	Value     *string `json:"value"`
-}
-
-type automationEventParamsData struct {
-	TriggerFieldIds     []string `json:"triggerFieldIds"`
-	FromPhaseId         *string  `json:"fromPhaseId"`
-	InPhaseId           *string  `json:"inPhaseId"`
-	ToPhaseId           *string  `json:"to_phase_id"`
-	TriggerAutomationId *string  `json:"triggerAutomationId"`
-	KindOfSla           *string  `json:"kindOfSla"`
 }
 
 type automationConditionExpressionData struct {
@@ -190,7 +180,6 @@ type automationData struct {
 	SchedulerCron      *automationCron             `json:"schedulerCron"`
 	SearchFor          []automationSearchCondition `json:"searchFor"`
 	ResponseSchema     json.RawMessage             `json:"responseSchema"`
-	EventParams        *automationEventParamsData  `json:"event_params"`
 	Condition          *automationConditionData    `json:"condition"`
 }
 
@@ -223,36 +212,6 @@ func automationCronToModel(c *automationCron) *automationCronModel {
 		DayOfMonth: deref(c.DayOfMonth),
 		Month:      deref(c.Month),
 		DayOfWeek:  deref(c.DayOfWeek),
-	}
-}
-
-// automationEventParamsToModel maps the API's event params back to the nested
-// block. A null object, or one whose fields are all empty, maps to no block so
-// it matches an unset config. The API adds a phase object that the input never
-// carried; it is not selected and not mapped.
-func automationEventParamsToModel(e *automationEventParamsData) *automationEventParamsModel {
-	if e == nil {
-		return nil
-	}
-	empty := len(e.TriggerFieldIds) == 0 && e.FromPhaseId == nil && e.InPhaseId == nil &&
-		e.ToPhaseId == nil && e.TriggerAutomationId == nil && e.KindOfSla == nil
-	if empty {
-		return nil
-	}
-	var ids []types.String
-	if len(e.TriggerFieldIds) > 0 {
-		ids = make([]types.String, len(e.TriggerFieldIds))
-		for i, v := range e.TriggerFieldIds {
-			ids[i] = types.StringValue(v)
-		}
-	}
-	return &automationEventParamsModel{
-		TriggerFieldIds:     ids,
-		FromPhaseId:         automationOptionalString(e.FromPhaseId),
-		InPhaseId:           automationOptionalString(e.InPhaseId),
-		ToPhaseId:           automationOptionalString(e.ToPhaseId),
-		TriggerAutomationId: automationOptionalString(e.TriggerAutomationId),
-		KindOfSla:           automationOptionalString(e.KindOfSla),
 	}
 }
 
@@ -299,16 +258,22 @@ func automationNormalizeJSON(raw json.RawMessage) jsontypes.Normalized {
 // search_for and condition are managed in full: search_for always maps to a
 // list (empty, not null, when the automation has no conditions), and
 // condition maps to no block when the automation has no expressions, so an
-// empty config settles cleanly. action_params is left untouched: its read
-// type differs from the write input and does not round-trip.
+// empty config settles cleanly. action_params and event_params are not read
+// back, so drift in them is not detected.
 func (m *AutomationModel) apply(a *automationData) {
 	m.Id = types.StringValue(a.Id)
-	m.Name = types.StringValue(a.Name)
+	if a.Name != "" {
+		m.Name = types.StringValue(a.Name)
+	}
 	if a.Active != nil {
 		m.Active = types.BoolValue(*a.Active)
 	}
-	m.EventId = types.StringValue(a.EventId)
-	m.ActionId = types.StringValue(a.ActionId)
+	if a.EventId != "" {
+		m.EventId = types.StringValue(a.EventId)
+	}
+	if a.ActionId != "" {
+		m.ActionId = types.StringValue(a.ActionId)
+	}
 	if a.EventRepo != nil && a.EventRepo.Id != "" {
 		m.EventRepoId = types.StringValue(a.EventRepo.Id)
 	}
@@ -328,7 +293,6 @@ func (m *AutomationModel) apply(a *automationData) {
 	}
 	m.SearchFor = conds
 	m.ResponseSchema = automationNormalizeJSON(a.ResponseSchema)
-	m.EventParams = automationEventParamsToModel(a.EventParams)
 	m.Condition = automationConditionToModel(a.Condition)
 }
 
@@ -461,7 +425,7 @@ func (r *AutomationResource) Schema(ctx context.Context, req resource.SchemaRequ
 			"action_repo_id": schema.StringAttribute{Required: true, Description: "The ID of the pipe that the automation performs actions on"},
 			"event_params": schema.SingleNestedAttribute{
 				Optional:    true,
-				Description: "Parameters of the event the automation listens to. Which subfields apply depends on event_id; see the API reference (https://developers.pipefy.com/reference/automation-creation). Removing the whole block does not clear it on the server; because Read refreshes this attribute, a removed block reappears on the next plan. Change its fields instead of deleting the block.",
+				Description: "Parameters of the event the automation listens to. Which subfields apply depends on event_id; see the API reference (https://developers.pipefy.com/reference/automation-creation). Not read back from the API, so drift is not detected.",
 				Attributes: map[string]schema.Attribute{
 					"trigger_field_ids":     schema.ListAttribute{Optional: true, ElementType: types.StringType, Description: "Field ids whose update triggers the automation."},
 					"from_phase_id":         schema.StringAttribute{Optional: true, Description: "Source phase id for phase-based events."},
@@ -627,25 +591,13 @@ func (r *AutomationResource) Update(ctx context.Context, req resource.UpdateRequ
 
 	mutation := "mutation UpdateAutomation_tf($input:UpdateAutomationInput!){ updateAutomation(input:$input){ automation{ id } error_details{ object_name object_key messages } } }"
 	input := map[string]any{
-		"id": data.Id.ValueString(),
-	}
-	if !data.Name.IsNull() {
-		input["name"] = data.Name.ValueString()
-	}
-	if !data.EventId.IsNull() {
-		input["event_id"] = data.EventId.ValueString()
-	}
-	if !data.ActionId.IsNull() {
-		input["action_id"] = data.ActionId.ValueString()
-	}
-	if !data.EventRepoId.IsNull() {
-		input["event_repo_id"] = data.EventRepoId.ValueString()
-	}
-	if !data.ActionRepoId.IsNull() {
-		input["action_repo_id"] = data.ActionRepoId.ValueString()
-	}
-	if !data.Active.IsNull() {
-		input["active"] = data.Active.ValueBool()
+		"id":             data.Id.ValueString(),
+		"name":           data.Name.ValueString(),
+		"event_id":       data.EventId.ValueString(),
+		"action_id":      data.ActionId.ValueString(),
+		"event_repo_id":  data.EventRepoId.ValueString(),
+		"action_repo_id": data.ActionRepoId.ValueString(),
+		"active":         data.Active.ValueBool(),
 	}
 	if !addAutomationOptionalInputs(input, &data, &resp.Diagnostics) {
 		return
