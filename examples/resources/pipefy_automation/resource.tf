@@ -11,10 +11,9 @@ resource "pipefy_phase" "backlog" {
 resource "pipefy_field" "title" {
   phase_id = pipefy_phase.backlog.id
   type     = "short_text"
-  label    = "input"
+  label    = "Title"
   required = true
 }
-
 
 resource "pipefy_field" "translation" {
   phase_id = pipefy_phase.backlog.id

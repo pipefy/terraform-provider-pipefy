@@ -5,6 +5,7 @@ package provider_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/statecheck"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 	"github.com/hashicorp/terraform-plugin-testing/tfversion"
 )
@@ -885,6 +887,97 @@ func TestUnit_AutomationResource_EventParamsWriteOnly(t *testing.T) {
 	})
 }
 
+func TestUnit_AutomationResource_EventParamsPhaseBasedKeys(t *testing.T) {
+	st := &automationState{}
+	srv := newAutomationServer(st)
+	defer srv.Close()
+
+	config := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "Move between phases"
+		event_id       = "card_left_phase"
+		action_id      = "move_single_card"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+		active         = true
+
+		event_params = {
+			from_phase_id         = "111"
+			in_phase_id           = "222"
+			to_phase_id           = "333"
+			trigger_automation_id = "444"
+			kind_of_sla           = "expiration"
+		}
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config},
+		},
+	})
+
+	got := string(st.EventParams)
+	for _, want := range []string{
+		`"fromPhaseId":"111"`,
+		`"inPhaseId":"222"`,
+		`"to_phase_id":"333"`,
+		`"triggerAutomationId":"444"`,
+		`"kindOfSla":"expiration"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("event_params missing %s; got %s", want, got)
+		}
+	}
+}
+
+func TestUnit_AutomationResource_EmptyEventParamsNotSent(t *testing.T) {
+	st := &automationState{}
+	srv := newAutomationServer(st)
+	defer srv.Close()
+
+	config := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "No event params"
+		event_id       = "field_updated"
+		action_id      = "move_single_card"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+		active         = true
+
+		event_params = {}
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config},
+		},
+	})
+
+	if len(st.EventParams) != 0 {
+		t.Fatalf("expected no event_params to be sent, got: %s", st.EventParams)
+	}
+}
+
 func TestUnit_AutomationResource_ConditionRoundTripDriftAndClear(t *testing.T) {
 	st := &automationState{}
 	srv := newAutomationServer(st)
@@ -1000,6 +1093,115 @@ func TestUnit_AutomationResource_ConditionRejectsEmptyExpressions(t *testing.T) 
 	})
 }
 
+func TestUnit_AutomationResource_ConditionRejectsBlankExpressionFields(t *testing.T) {
+	st := &automationState{}
+	srv := newAutomationServer(st)
+	defer srv.Close()
+
+	config := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "Blank condition field"
+		event_id       = "field_updated"
+		action_id      = "move_single_card"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+		active         = true
+
+		condition = {
+			expressions           = [EXPRESSION]
+			expressions_structure = [["0"]]
+		}
+	}
+	`
+	blankFieldAddress := strings.ReplaceAll(config, "EXPRESSION", `{ field_address = "", operation = "equals", structure_id = "0" }`)
+	blankOperation := strings.ReplaceAll(config, "EXPRESSION", `{ field_address = "427453916", operation = "  ", structure_id = "0" }`)
+	blankStructureId := strings.ReplaceAll(config, "EXPRESSION", `{ field_address = "427453916", operation = "equals", structure_id = "" }`)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      blankFieldAddress,
+				ExpectError: regexp.MustCompile(`(?i)non-empty|blank`),
+			},
+			{
+				Config:      blankOperation,
+				ExpectError: regexp.MustCompile(`(?i)non-empty|blank`),
+			},
+			{
+				Config:      blankStructureId,
+				ExpectError: regexp.MustCompile(`(?i)non-empty|blank`),
+			},
+		},
+	})
+}
+
+func TestUnit_AutomationResource_SearchForRejectsBlankField(t *testing.T) {
+	st := &automationState{}
+	srv := newAutomationServer(st)
+	defer srv.Close()
+
+	config := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "Blank search field"
+		event_id       = "scheduler"
+		action_id      = "move_multiple_cards"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+		active         = true
+
+		scheduler_frequency = "daily"
+
+		scheduler_cron = {
+			minute       = "30"
+			hour         = "9"
+			day_of_month = "*"
+			month        = "*"
+			day_of_week  = "*"
+		}
+
+		search_for = [CONDITION]
+	}
+	`
+	blankField := strings.ReplaceAll(config, "CONDITION", `{ field = "", id = "c1", operation = "eq" }`)
+	blankOperation := strings.ReplaceAll(config, "CONDITION", `{ field = "title", id = "c1", operation = "\t" }`)
+	blankId := strings.ReplaceAll(config, "CONDITION", `{ field = "title", id = "", operation = "eq" }`)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      blankField,
+				ExpectError: regexp.MustCompile(`(?i)non-empty|blank`),
+			},
+			{
+				Config:      blankOperation,
+				ExpectError: regexp.MustCompile(`(?i)non-empty|blank`),
+			},
+			{
+				Config:      blankId,
+				ExpectError: regexp.MustCompile(`(?i)non-empty|blank`),
+			},
+		},
+	})
+}
+
 func TestUnit_AutomationResource_SearchForManagedInFull(t *testing.T) {
 	st := &automationState{}
 	srv := newAutomationServer(st)
@@ -1018,6 +1220,16 @@ func TestUnit_AutomationResource_SearchForManagedInFull(t *testing.T) {
 		event_repo_id  = "306729113"
 		action_repo_id = "306729113"
 		active         = true
+
+		scheduler_frequency = "daily"
+
+		scheduler_cron = {
+			minute       = "30"
+			hour         = "9"
+			day_of_month = "*"
+			month        = "*"
+			day_of_week  = "*"
+		}
 		SEARCH_FOR
 	}
 	`
@@ -1041,10 +1253,374 @@ func TestUnit_AutomationResource_SearchForManagedInFull(t *testing.T) {
 			},
 			{
 				// Omitting the block clears the conditions on the server: the
-				// list is managed in full and settles to empty.
+				// list is managed in full and settles to null, matching how an
+				// unset condition block settles.
 				Config: cleared,
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("search_for"), knownvalue.ListSizeExact(0)),
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("search_for"), knownvalue.Null()),
+				},
+			},
+		},
+	})
+}
+
+// response_schema is compared semantically: the API echoes the schema back with
+// its object keys sorted (the mock marshals the decoded value, mirroring that),
+// which reorders them relative to the config. That read-back reordering must not
+// surface as a diff. The config's keys are deliberately not in sorted order so
+// the read-back differs textually.
+func TestUnit_AutomationResource_ResponseSchemaSemanticEquality(t *testing.T) {
+	st := &automationState{}
+	srv := newAutomationServer(st)
+	defer srv.Close()
+
+	config := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "AI with schema"
+		event_id       = "field_updated"
+		action_id      = "generate_with_ai"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+		active         = true
+
+		response_schema = "{\"type\":\"object\",\"properties\":{\"foo\":{\"type\":\"string\"},\"bar\":{\"type\":\"number\"}}}"
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config},
+			{
+				// The refresh reads back the same schema with keys sorted; the
+				// semantic comparison must keep the plan empty.
+				Config: config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+			},
+		},
+	})
+}
+
+// scheduler_cron is refreshed on read, so an out-of-band change to the schedule
+// is detected as drift.
+func TestUnit_AutomationResource_SchedulerCronDetectsDrift(t *testing.T) {
+	st := &automationState{}
+	srv := newAutomationServer(st)
+	defer srv.Close()
+
+	config := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "Recurring move"
+		event_id       = "scheduler"
+		action_id      = "move_multiple_cards"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+		active         = true
+
+		scheduler_frequency = "daily"
+
+		scheduler_cron = {
+			minute       = "30"
+			hour         = "9"
+			day_of_month = "*"
+			month        = "*"
+			day_of_week  = "*"
+		}
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("scheduler_cron").AtMapKey("hour"), knownvalue.StringExact("9")),
+				},
+			},
+			{
+				// The schedule is changed outside Terraform; a refresh must
+				// surface the drift so the next plan is non-empty.
+				PreConfig: func() {
+					st.SchedulerCron = json.RawMessage(`{"minute":"0","hour":"18","dayOfMonth":"*","month":"*","dayOfWeek":"*"}`)
+				},
+				RefreshState:       true,
+				ExpectNonEmptyPlan: true,
+			},
+		},
+	})
+}
+
+func TestUnit_AutomationResource_NonSchedulerSchedulerFieldsPlanEmpty(t *testing.T) {
+	st := &automationState{}
+	srv := newAutomationServer(st)
+	defer srv.Close()
+
+	config := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "No schedule"
+		event_id       = "field_updated"
+		action_id      = "generate_with_ai"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+		active         = true
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				// Create must not send responseSchema at all when it is unset.
+				// The explicit null that clears it belongs to Update only.
+				Check: func(*terraform.State) error {
+					if len(st.ResponseSchema) != 0 {
+						return fmt.Errorf("create sent responseSchema, got %q", string(st.ResponseSchema))
+					}
+					return nil
+				},
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("scheduler_frequency"), knownvalue.Null()),
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("scheduler_cron"), knownvalue.Null()),
+				},
+			},
+			{
+				Config: config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+			},
+		},
+	})
+}
+
+func TestUnit_AutomationResource_SchedulerFieldsRequiredForSchedulerEvent(t *testing.T) {
+	st := &automationState{}
+	srv := newAutomationServer(st)
+	defer srv.Close()
+
+	head := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "Recurring move"
+		event_id       = "scheduler"
+		action_id      = "move_multiple_cards"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+		active         = true
+	`
+	withSchedule := head + `
+		scheduler_frequency = "daily"
+
+		scheduler_cron = {
+			minute       = "30"
+			hour         = "9"
+			day_of_month = "*"
+			month        = "*"
+			day_of_week  = "*"
+		}
+	}
+	`
+	omitted := head + `
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: withSchedule},
+			{
+				Config:      omitted,
+				ExpectError: regexp.MustCompile(`(?s)Missing scheduler_frequency.*Missing scheduler_cron`),
+			},
+			{
+				Config: withSchedule,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+			},
+		},
+	})
+}
+
+func TestUnit_AutomationResource_ResponseSchemaOmitAfterSetClears(t *testing.T) {
+	st := &automationState{}
+	srv := newAutomationServer(st)
+	defer srv.Close()
+
+	head := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "HTTP with schema"
+		event_id       = "field_updated"
+		action_id      = "send_http_request"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+		active         = true
+	`
+	withSchema := head + `
+		response_schema = jsonencode({ type = "object" })
+	}
+	`
+	omitted := head + `
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: withSchema},
+			{
+				Config: omitted,
+				Check: func(*terraform.State) error {
+					if got := string(st.ResponseSchema); got != "null" {
+						return fmt.Errorf("update did not clear responseSchema on the server, got %q", got)
+					}
+					return nil
+				},
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("response_schema"), knownvalue.Null()),
+				},
+			},
+			{
+				Config: omitted,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+			},
+		},
+	})
+}
+
+// A blank scheduler_frequency is rejected at plan time. ValidateConfig only
+// checks for a null (missing) frequency on scheduler automations, so an empty
+// string would otherwise slip through to an apply-time API error.
+func TestUnit_AutomationResource_SchedulerFrequencyRejectsBlank(t *testing.T) {
+	st := &automationState{}
+	srv := newAutomationServer(st)
+	defer srv.Close()
+
+	config := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "Frequency validation check"
+		event_id       = "scheduler"
+		action_id      = "move_multiple_cards"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+		active         = true
+
+		scheduler_frequency = ""
+
+		scheduler_cron = {
+			minute       = "30"
+			hour         = "9"
+			day_of_month = "*"
+			month        = "*"
+			day_of_week  = "*"
+		}
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      config,
+				ExpectError: regexp.MustCompile(`(?i)non-empty, non-whitespace`),
+			},
+		},
+	})
+}
+
+// The Read mapper sets name/event_id/action_id unconditionally, so a server-side
+// clear is detected as drift rather than masked. Reinstating an `if a.Name != ""`
+// guard would make this test fail (the empty read would not reach state).
+func TestUnit_AutomationResource_ReadDetectsDriftToEmpty(t *testing.T) {
+	st := &automationState{}
+	srv := newAutomationServer(st)
+	defer srv.Close()
+
+	config := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "Original name"
+		event_id       = "field_updated"
+		action_id      = "generate_with_ai"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+		active         = true
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config},
+			{
+				// The name is cleared outside Terraform; the refresh maps the
+				// empty value into state, so a plan against the unchanged config
+				// proposes restoring it. ExpectNonEmptyPlan (the plan check, which
+				// asserts rather than tolerates) fails if drift is masked.
+				PreConfig: func() { st.Name = "" },
+				Config:    config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectNonEmptyPlan()},
 				},
 			},
 		},

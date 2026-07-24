@@ -11,21 +11,21 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
+	"github.com/pipefy/terraform-provider-pipefy/internal/provider/validators"
 )
 
 var _ resource.Resource = &AutomationResource{}
 var _ resource.ResourceWithImportState = &AutomationResource{}
+var _ resource.ResourceWithValidateConfig = &AutomationResource{}
 
 func NewAutomationResource() resource.Resource { return &AutomationResource{} }
 
@@ -66,13 +66,6 @@ type automationConditionModel struct {
 	Expressions          []automationConditionExpressionModel `tfsdk:"expressions"`
 	ExpressionsStructure [][]types.String                     `tfsdk:"expressions_structure"`
 }
-
-var searchForObjectType = types.ObjectType{AttrTypes: map[string]attr.Type{
-	"field":     types.StringType,
-	"id":        types.StringType,
-	"operation": types.StringType,
-	"value":     types.StringType,
-}}
 
 type AutomationModel struct {
 	Id                 types.String                     `tfsdk:"id"`
@@ -246,6 +239,25 @@ func automationConditionToModel(c *automationConditionData) *automationCondition
 	}
 }
 
+// automationSearchForToModel maps the API's search conditions back to state. An
+// empty (or absent) list maps to no value so it matches an unset block, matching
+// how a condition with no expressions settles.
+func automationSearchForToModel(cs []automationSearchCondition) []automationSearchConditionModel {
+	if len(cs) == 0 {
+		return nil
+	}
+	conds := make([]automationSearchConditionModel, len(cs))
+	for i, c := range cs {
+		conds[i] = automationSearchConditionModel{
+			Field:     types.StringValue(c.Field),
+			Id:        types.StringValue(c.Id),
+			Operation: types.StringValue(c.Operation),
+			Value:     automationOptionalString(c.Value),
+		}
+	}
+	return conds
+}
+
 func automationNormalizeJSON(raw json.RawMessage) jsontypes.Normalized {
 	trimmed := strings.TrimSpace(string(raw))
 	if trimmed == "" || trimmed == "null" {
@@ -255,25 +267,18 @@ func automationNormalizeJSON(raw json.RawMessage) jsontypes.Normalized {
 }
 
 // apply refreshes the round-trippable attributes from a fetched automation.
-// search_for and condition are managed in full: search_for always maps to a
-// list (empty, not null, when the automation has no conditions), and
-// condition maps to no block when the automation has no expressions, so an
-// empty config settles cleanly. action_params and event_params are not read
-// back, so drift in them is not detected.
+// search_for and condition are managed in full and settle the same way: each
+// maps to no value (null) when the automation carries none, so an unset config
+// settles cleanly. action_params and event_params are not read back, so drift
+// in them is not detected.
 func (m *AutomationModel) apply(a *automationData) {
 	m.Id = types.StringValue(a.Id)
-	if a.Name != "" {
-		m.Name = types.StringValue(a.Name)
-	}
+	m.Name = types.StringValue(a.Name)
 	if a.Active != nil {
 		m.Active = types.BoolValue(*a.Active)
 	}
-	if a.EventId != "" {
-		m.EventId = types.StringValue(a.EventId)
-	}
-	if a.ActionId != "" {
-		m.ActionId = types.StringValue(a.ActionId)
-	}
+	m.EventId = types.StringValue(a.EventId)
+	m.ActionId = types.StringValue(a.ActionId)
 	if a.EventRepo != nil && a.EventRepo.Id != "" {
 		m.EventRepoId = types.StringValue(a.EventRepo.Id)
 	}
@@ -282,16 +287,7 @@ func (m *AutomationModel) apply(a *automationData) {
 	}
 	m.SchedulerFrequency = automationOptionalString(a.SchedulerFrequency)
 	m.SchedulerCron = automationCronToModel(a.SchedulerCron)
-	conds := make([]automationSearchConditionModel, len(a.SearchFor))
-	for i, c := range a.SearchFor {
-		conds[i] = automationSearchConditionModel{
-			Field:     types.StringValue(c.Field),
-			Id:        types.StringValue(c.Id),
-			Operation: types.StringValue(c.Operation),
-			Value:     automationOptionalString(c.Value),
-		}
-	}
-	m.SearchFor = conds
+	m.SearchFor = automationSearchForToModel(a.SearchFor)
 	m.ResponseSchema = automationNormalizeJSON(a.ResponseSchema)
 	m.Condition = automationConditionToModel(a.Condition)
 }
@@ -337,7 +333,9 @@ func addAutomationOptionalInputs(input map[string]any, data *AutomationModel, di
 		if !ev.KindOfSla.IsNull() {
 			ep["kindOfSla"] = ev.KindOfSla.ValueString()
 		}
-		input["event_params"] = ep
+		if len(ep) > 0 {
+			input["event_params"] = ep
+		}
 	}
 	if !data.SchedulerFrequency.IsNull() && data.SchedulerFrequency.ValueString() != "" {
 		input["scheduler_frequency"] = data.SchedulerFrequency.ValueString()
@@ -425,7 +423,7 @@ func (r *AutomationResource) Schema(ctx context.Context, req resource.SchemaRequ
 			"action_repo_id": schema.StringAttribute{Required: true, Description: "The ID of the pipe that the automation performs actions on"},
 			"event_params": schema.SingleNestedAttribute{
 				Optional:    true,
-				Description: "Parameters of the event the automation listens to. Which subfields apply depends on event_id; see the API reference (https://developers.pipefy.com/reference/automation-creation). Not read back from the API, so drift is not detected.",
+				Description: "Parameters of the event the automation listens to. Which subfields apply depends on event_id; see the API reference (https://developers.pipefy.com/reference/automation-creation). Write-only: not read back from the API, so drift is not detected and removing the block does not clear it on the server.",
 				Attributes: map[string]schema.Attribute{
 					"trigger_field_ids":     schema.ListAttribute{Optional: true, ElementType: types.StringType, Description: "Field ids whose update triggers the automation."},
 					"from_phase_id":         schema.StringAttribute{Optional: true, Description: "Source phase id for phase-based events."},
@@ -436,7 +434,7 @@ func (r *AutomationResource) Schema(ctx context.Context, req resource.SchemaRequ
 				},
 			},
 			// action_params is a JSON string to avoid over-modeling in the Terraform schema.
-			"action_params": schema.StringAttribute{Optional: true, Description: "The parameters of the action for the automation, as a JSON string. Not read back from the API, so drift is not detected."},
+			"action_params": schema.StringAttribute{Optional: true, Description: "The parameters of the action for the automation, as a JSON string. Write-only: not read back from the API, so drift is not detected and removing it does not clear it on the server."},
 			"condition": schema.SingleNestedAttribute{
 				Optional:    true,
 				Description: "Condition that gates the automation. Managed in full: the configured expressions are authoritative, and omitting the block clears the condition on the server.",
@@ -447,10 +445,10 @@ func (r *AutomationResource) Schema(ctx context.Context, req resource.SchemaRequ
 						Validators:  []validator.List{listvalidator.SizeAtLeast(1)},
 						NestedObject: schema.NestedAttributeObject{
 							Attributes: map[string]schema.Attribute{
-								"field_address": schema.StringAttribute{Required: true, Description: "Field id the expression tests."},
-								"operation":     schema.StringAttribute{Required: true, Description: "Comparison operation. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference)."},
+								"field_address": schema.StringAttribute{Required: true, Description: "Field id the expression tests.", Validators: []validator.String{validators.NonBlank()}},
+								"operation":     schema.StringAttribute{Required: true, Description: "Comparison operation. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).", Validators: []validator.String{validators.NonBlank()}},
 								"value":         schema.StringAttribute{Optional: true, Description: "Value to compare against."},
-								"structure_id":  schema.StringAttribute{Required: true, Description: "Caller-assigned handle referenced by expressions_structure."},
+								"structure_id":  schema.StringAttribute{Required: true, Description: "Caller-assigned handle referenced by expressions_structure.", Validators: []validator.String{validators.NonBlank()}},
 							},
 						},
 					},
@@ -465,11 +463,12 @@ func (r *AutomationResource) Schema(ctx context.Context, req resource.SchemaRequ
 			"active": schema.BoolAttribute{Required: true, Description: "Whether the automation is active."},
 			"scheduler_frequency": schema.StringAttribute{
 				Optional:    true,
-				Description: "Frequency for time-based (scheduler) triggers. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference/automation-creation) and the GraphiQL explorer (https://app.pipefy.com/graphiql).",
+				Validators:  []validator.String{validators.NonBlank()},
+				Description: "Frequency for time-based (scheduler) triggers. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference/automation-creation) and the GraphiQL explorer (https://app.pipefy.com/graphiql). Required while event_id is \"scheduler\".",
 			},
 			"scheduler_cron": schema.SingleNestedAttribute{
 				Optional:    true,
-				Description: "Cron schedule for time-based (scheduler) triggers. Fields use standard crontab syntax.",
+				Description: "Cron schedule for time-based (scheduler) triggers. Fields use standard crontab syntax. Required while event_id is \"scheduler\".",
 				Attributes: map[string]schema.Attribute{
 					"minute":       schema.StringAttribute{Required: true, Description: "Cron minute field."},
 					"hour":         schema.StringAttribute{Required: true, Description: "Cron hour field."},
@@ -480,14 +479,12 @@ func (r *AutomationResource) Schema(ctx context.Context, req resource.SchemaRequ
 			},
 			"search_for": schema.ListNestedAttribute{
 				Optional:    true,
-				Computed:    true,
-				Default:     listdefault.StaticValue(types.ListValueMust(searchForObjectType, []attr.Value{})),
-				Description: "Conditions that select the cards a recurring (scheduler) automation acts on. The list is managed in full: the configured conditions are authoritative, and an empty list (or omitting the block) clears them on the server. Order is preserved.",
+				Description: "Conditions that select the cards a recurring (scheduler) automation acts on. The list is managed in full: the configured conditions are authoritative, and omitting the block clears them on the server. Order is preserved.",
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
-						"field":     schema.StringAttribute{Required: true, Description: "The id of the field used as a filter."},
-						"id":        schema.StringAttribute{Required: true, Description: "Caller-assigned identifier for the condition."},
-						"operation": schema.StringAttribute{Required: true, Description: "The filter operation. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference)."},
+						"field":     schema.StringAttribute{Required: true, Description: "The id of the field used as a filter.", Validators: []validator.String{validators.NonBlank()}},
+						"id":        schema.StringAttribute{Required: true, Description: "Caller-assigned identifier for the condition.", Validators: []validator.String{validators.NonBlank()}},
+						"operation": schema.StringAttribute{Required: true, Description: "The filter operation. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).", Validators: []validator.String{validators.NonBlank()}},
 						"value":     schema.StringAttribute{Optional: true, Description: "The value or field id to compare against."},
 					},
 				},
@@ -498,6 +495,34 @@ func (r *AutomationResource) Schema(ctx context.Context, req resource.SchemaRequ
 				Description: "JSON response schema for the automation, as a JSON string. Compared semantically, so formatting and key order do not cause a diff.",
 			},
 		},
+	}
+}
+
+func (r *AutomationResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var eventId, frequency types.String
+	var cron types.Object
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("event_id"), &eventId)...)
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("scheduler_frequency"), &frequency)...)
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("scheduler_cron"), &cron)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if eventId.IsNull() || eventId.IsUnknown() || eventId.ValueString() != "scheduler" {
+		return
+	}
+	if frequency.IsNull() {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("scheduler_frequency"),
+			"Missing scheduler_frequency",
+			`scheduler_frequency is required when event_id is "scheduler". The API rejects an automation on that event without a frequency, and it cannot be cleared once set.`,
+		)
+	}
+	if cron.IsNull() {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("scheduler_cron"),
+			"Missing scheduler_cron",
+			`scheduler_cron is required when event_id is "scheduler". The API rejects an automation on that event without a cron schedule, and it cannot be cleared once set.`,
+		)
 	}
 }
 
@@ -582,6 +607,12 @@ func (r *AutomationResource) Read(ctx context.Context, req resource.ReadRequest,
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+func updateResponseSchemaInput(input map[string]any, value jsontypes.Normalized) {
+	if value.IsNull() || value.ValueString() == "" {
+		input["responseSchema"] = nil
+	}
+}
+
 func (r *AutomationResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var data AutomationModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -602,6 +633,7 @@ func (r *AutomationResource) Update(ctx context.Context, req resource.UpdateRequ
 	if !addAutomationOptionalInputs(input, &data, &resp.Diagnostics) {
 		return
 	}
+	updateResponseSchemaInput(input, data.ResponseSchema)
 
 	vars := map[string]any{"input": input}
 	var out struct {

@@ -26,10 +26,9 @@ resource "pipefy_phase" "backlog" {
 resource "pipefy_field" "title" {
   phase_id = pipefy_phase.backlog.id
   type     = "short_text"
-  label    = "input"
+  label    = "Title"
   required = true
 }
-
 
 resource "pipefy_field" "translation" {
   phase_id = pipefy_phase.backlog.id
@@ -129,13 +128,13 @@ resource "pipefy_automation" "daily_move" {
 
 ### Optional
 
-- `action_params` (String) The parameters of the action for the automation, as a JSON string. Not read back from the API, so drift is not detected.
+- `action_params` (String) The parameters of the action for the automation, as a JSON string. Write-only: not read back from the API, so drift is not detected and removing it does not clear it on the server.
 - `condition` (Attributes) Condition that gates the automation. Managed in full: the configured expressions are authoritative, and omitting the block clears the condition on the server. (see [below for nested schema](#nestedatt--condition))
-- `event_params` (Attributes) Parameters of the event the automation listens to. Which subfields apply depends on event_id; see the API reference (https://developers.pipefy.com/reference/automation-creation). Not read back from the API, so drift is not detected. (see [below for nested schema](#nestedatt--event_params))
+- `event_params` (Attributes) Parameters of the event the automation listens to. Which subfields apply depends on event_id; see the API reference (https://developers.pipefy.com/reference/automation-creation). Write-only: not read back from the API, so drift is not detected and removing the block does not clear it on the server. (see [below for nested schema](#nestedatt--event_params))
 - `response_schema` (String) JSON response schema for the automation, as a JSON string. Compared semantically, so formatting and key order do not cause a diff.
-- `scheduler_cron` (Attributes) Cron schedule for time-based (scheduler) triggers. Fields use standard crontab syntax. (see [below for nested schema](#nestedatt--scheduler_cron))
-- `scheduler_frequency` (String) Frequency for time-based (scheduler) triggers. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference/automation-creation) and the GraphiQL explorer (https://app.pipefy.com/graphiql).
-- `search_for` (Attributes List) Conditions that select the cards a recurring (scheduler) automation acts on. The list is managed in full: the configured conditions are authoritative, and an empty list (or omitting the block) clears them on the server. Order is preserved. (see [below for nested schema](#nestedatt--search_for))
+- `scheduler_cron` (Attributes) Cron schedule for time-based (scheduler) triggers. Fields use standard crontab syntax. Required while event_id is "scheduler". (see [below for nested schema](#nestedatt--scheduler_cron))
+- `scheduler_frequency` (String) Frequency for time-based (scheduler) triggers. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference/automation-creation) and the GraphiQL explorer (https://app.pipefy.com/graphiql). Required while event_id is "scheduler".
+- `search_for` (Attributes List) Conditions that select the cards a recurring (scheduler) automation acts on. The list is managed in full: the configured conditions are authoritative, and omitting the block clears them on the server. Order is preserved. (see [below for nested schema](#nestedatt--search_for))
 
 ### Read-Only
 
