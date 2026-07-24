@@ -44,28 +44,29 @@ resource "pipefy_field" "details" {
 }
 
 # Show the "Please describe" field only when "Request type" is "Other"
-# AND "Priority" is "High". Both expressions share one group in
-# expressions_structure ([["0", "1"]]), so they are ANDed together.
+# AND "Priority" is "High". Both expressions sit in the same group, so they
+# are ANDed together.
 resource "pipefy_field_condition" "show_details" {
   phase_id = pipefy_phase.example.id
   name     = "Show details for high-priority Other requests"
 
   condition = {
-    expressions = [
+    groups = [
       {
-        structure_id  = "0"
-        field_address = pipefy_field.type.internal_id
-        operation     = "equals"
-        value         = "Other"
-      },
-      {
-        structure_id  = "1"
-        field_address = pipefy_field.priority.internal_id
-        operation     = "equals"
-        value         = "High"
+        expressions = [
+          {
+            field_address = pipefy_field.type.internal_id
+            operation     = "equals"
+            value         = "Other"
+          },
+          {
+            field_address = pipefy_field.priority.internal_id
+            operation     = "equals"
+            value         = "High"
+          }
+        ]
       }
     ]
-    expressions_structure = [["0", "1"]]
   }
 
   actions = [
@@ -78,28 +79,32 @@ resource "pipefy_field_condition" "show_details" {
 
 # Reusing the same fields with an OR grouping: hide "Priority" when either
 # "Request type" is "Standard" OR "Priority" itself is "Low". Each expression
-# sits in its own group in expressions_structure ([["0"], ["1"]]), so the
-# condition holds when any group is true.
+# sits in its own group, so the condition holds when any group is true.
 resource "pipefy_field_condition" "hide_priority" {
   phase_id = pipefy_phase.example.id
   name     = "Hide priority for standard or low requests"
 
   condition = {
-    expressions = [
+    groups = [
       {
-        structure_id  = "0"
-        field_address = pipefy_field.type.internal_id
-        operation     = "equals"
-        value         = "Standard"
+        expressions = [
+          {
+            field_address = pipefy_field.type.internal_id
+            operation     = "equals"
+            value         = "Standard"
+          }
+        ]
       },
       {
-        structure_id  = "1"
-        field_address = pipefy_field.priority.internal_id
-        operation     = "equals"
-        value         = "Low"
+        expressions = [
+          {
+            field_address = pipefy_field.priority.internal_id
+            operation     = "equals"
+            value         = "Low"
+          }
+        ]
       }
     ]
-    expressions_structure = [["0"], ["1"]]
   }
 
   actions = [
@@ -117,7 +122,7 @@ resource "pipefy_field_condition" "hide_priority" {
 ### Required
 
 - `actions` (Attributes List) What happens to phase fields when the condition holds. (see [below for nested schema](#nestedatt--actions))
-- `condition` (Attributes) The criteria that must hold for the actions to run. (see [below for nested schema](#nestedatt--condition))
+- `condition` (Attributes) The criteria that must hold for the actions to run. Groups are ORed together; expressions within a group are ANDed. (see [below for nested schema](#nestedatt--condition))
 - `name` (String) Name that describes what this condition does
 - `phase_id` (String) The ID of the phase the condition belongs to. Changing it forces a new field condition.
 
@@ -143,17 +148,22 @@ Optional:
 
 Required:
 
-- `expressions` (Attributes List) The comparisons evaluated by the condition. (see [below for nested schema](#nestedatt--condition--expressions))
-- `expressions_structure` (List of List of String) Groups of expression structure_ids that define the AND/OR logic. Each inner list is ANDed; the outer list ORs the groups. Example: [["0", "1"]] evaluates expression 0 AND expression 1.
+- `groups` (Attributes List) Groups of expressions, ORed together. The condition holds when any group holds. (see [below for nested schema](#nestedatt--condition--groups))
 
-<a id="nestedatt--condition--expressions"></a>
-### Nested Schema for `condition.expressions`
+<a id="nestedatt--condition--groups"></a>
+### Nested Schema for `condition.groups`
+
+Required:
+
+- `expressions` (Attributes List) Comparisons within this group, ANDed together. (see [below for nested schema](#nestedatt--condition--groups--expressions))
+
+<a id="nestedatt--condition--groups--expressions"></a>
+### Nested Schema for `condition.groups.expressions`
 
 Required:
 
 - `field_address` (String) The internal_id of the field this expression compares.
 - `operation` (String) The comparison operator (for example equals, not_equals, present, blank). Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).
-- `structure_id` (String) Identifier used to reference this expression from expressions_structure. Values are commonly small integers ("0", "1", ...).
 
 Optional:
 

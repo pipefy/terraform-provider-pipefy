@@ -94,15 +94,17 @@ func TestUnit_FieldConditionResource_CRUD(t *testing.T) {
 			name     = "` + name + `"
 
 			condition = {
-				expressions = [
+				groups = [
 					{
-						structure_id  = "0"
-						field_address = "1001"
-						operation     = "equals"
-						value         = "Other"
+						expressions = [
+							{
+								field_address = "1001"
+								operation     = "equals"
+								value         = "Other"
+							}
+						]
 					}
 				]
-				expressions_structure = [["0"]]
 			}
 
 			actions = [
@@ -139,15 +141,8 @@ func TestUnit_FieldConditionResource_CRUD(t *testing.T) {
 					),
 					statecheck.ExpectKnownValue(
 						"pipefy_field_condition.test",
-						tfjsonpath.New("condition").AtMapKey("expressions").AtSliceIndex(0).AtMapKey("operation"),
+						tfjsonpath.New("condition").AtMapKey("groups").AtSliceIndex(0).AtMapKey("expressions").AtSliceIndex(0).AtMapKey("operation"),
 						knownvalue.StringExact("equals"),
-					),
-					statecheck.ExpectKnownValue(
-						"pipefy_field_condition.test",
-						tfjsonpath.New("condition").AtMapKey("expressions_structure"),
-						knownvalue.ListExact([]knownvalue.Check{
-							knownvalue.ListExact([]knownvalue.Check{knownvalue.StringExact("0")}),
-						}),
 					),
 					statecheck.ExpectKnownValue(
 						"pipefy_field_condition.test",
@@ -177,11 +172,11 @@ func TestUnit_FieldConditionResource_CRUD(t *testing.T) {
 	}
 }
 
-// fieldConditionOrderingBody echoes two expressions in the same order the config
-// declares them (structure_id 1 then 0), and returns expressions_structure
-// elements as strings. The API preserves the caller's expression order on both
-// create and read, and returns structure elements as strings rather than
-// integers.
+// fieldConditionOrderingBody returns two expressions, each in its own
+// structure-group (["1"],["0"]), with structure elements as strings rather
+// than integers. It exercises reconstructing condition.groups in
+// expressions_structure order even when that doesn't match the order
+// expressions themselves happen to appear in.
 func fieldConditionOrderingBody(name string) string {
 	return `{"id":"fc_123","name":"` + name + `","phase":{"id":"phase_1"},` +
 		`"condition":{"expressions":[` +
@@ -191,12 +186,11 @@ func fieldConditionOrderingBody(name string) string {
 		`"actions":[{"actionId":"show","phaseField":{"internal_id":"1002"},"whenEvaluator":true}]}`
 }
 
-// TestUnit_FieldConditionResource_ExpressionOrdering declares expressions in
-// descending structure_id order (1 then 0) and asserts the resource preserves
-// that order through create and the follow-up plan. The API keeps the caller's
-// order, so a stable round-trip here guards against a regression that would
-// reorder expressions and produce a spurious diff or an inconsistent result
-// after apply.
+// TestUnit_FieldConditionResource_ExpressionOrdering declares two groups and
+// asserts the resource preserves both group order and within-group expression
+// order through create and the follow-up plan. This guards against a
+// regression that would reorder groups or expressions and produce a spurious
+// diff or an inconsistent result after apply.
 func TestUnit_FieldConditionResource_ExpressionOrdering(t *testing.T) {
 	st := &fieldConditionState{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -249,21 +243,26 @@ func TestUnit_FieldConditionResource_ExpressionOrdering(t *testing.T) {
 		name     = "Ordering"
 
 		condition = {
-			expressions = [
+			groups = [
 				{
-					structure_id  = "1"
-					field_address = "2001"
-					operation     = "equals"
-					value         = "High"
+					expressions = [
+						{
+							field_address = "2001"
+							operation     = "equals"
+							value         = "High"
+						}
+					]
 				},
 				{
-					structure_id  = "0"
-					field_address = "1001"
-					operation     = "equals"
-					value         = "Other"
+					expressions = [
+						{
+							field_address = "1001"
+							operation     = "equals"
+							value         = "Other"
+						}
+					]
 				}
 			]
-			expressions_structure = [["1"], ["0"]]
 		}
 
 		actions = [
@@ -286,21 +285,13 @@ func TestUnit_FieldConditionResource_ExpressionOrdering(t *testing.T) {
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"pipefy_field_condition.test",
-						tfjsonpath.New("condition").AtMapKey("expressions").AtSliceIndex(0).AtMapKey("structure_id"),
-						knownvalue.StringExact("1"),
+						tfjsonpath.New("condition").AtMapKey("groups").AtSliceIndex(0).AtMapKey("expressions").AtSliceIndex(0).AtMapKey("field_address"),
+						knownvalue.StringExact("2001"),
 					),
 					statecheck.ExpectKnownValue(
 						"pipefy_field_condition.test",
-						tfjsonpath.New("condition").AtMapKey("expressions").AtSliceIndex(1).AtMapKey("structure_id"),
-						knownvalue.StringExact("0"),
-					),
-					statecheck.ExpectKnownValue(
-						"pipefy_field_condition.test",
-						tfjsonpath.New("condition").AtMapKey("expressions_structure"),
-						knownvalue.ListExact([]knownvalue.Check{
-							knownvalue.ListExact([]knownvalue.Check{knownvalue.StringExact("1")}),
-							knownvalue.ListExact([]knownvalue.Check{knownvalue.StringExact("0")}),
-						}),
+						tfjsonpath.New("condition").AtMapKey("groups").AtSliceIndex(1).AtMapKey("expressions").AtSliceIndex(0).AtMapKey("field_address"),
+						knownvalue.StringExact("1001"),
 					),
 				},
 			},
@@ -388,15 +379,17 @@ func TestUnit_FieldConditionResource_ValueClear(t *testing.T) {
 			name     = "Value clear"
 
 			condition = {
-				expressions = [
+				groups = [
 					{
-						structure_id  = "0"
-						field_address = "1001"
-						operation     = "` + operation + `"
-						` + valueLine + `
+						expressions = [
+							{
+								field_address = "1001"
+								operation     = "` + operation + `"
+								` + valueLine + `
+							}
+						]
 					}
 				]
-				expressions_structure = [["0"]]
 			}
 
 			actions = [
@@ -420,7 +413,7 @@ func TestUnit_FieldConditionResource_ValueClear(t *testing.T) {
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"pipefy_field_condition.test",
-						tfjsonpath.New("condition").AtMapKey("expressions").AtSliceIndex(0).AtMapKey("value"),
+						tfjsonpath.New("condition").AtMapKey("groups").AtSliceIndex(0).AtMapKey("expressions").AtSliceIndex(0).AtMapKey("value"),
 						knownvalue.StringExact("Other"),
 					),
 				},
@@ -430,11 +423,174 @@ func TestUnit_FieldConditionResource_ValueClear(t *testing.T) {
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"pipefy_field_condition.test",
-						tfjsonpath.New("condition").AtMapKey("expressions").AtSliceIndex(0).AtMapKey("value"),
+						tfjsonpath.New("condition").AtMapKey("groups").AtSliceIndex(0).AtMapKey("expressions").AtSliceIndex(0).AtMapKey("value"),
 						knownvalue.Null(),
 					),
 				},
 			},
 		},
 	})
+}
+
+// fieldConditionGroupFlatteningBody mirrors what the API would return for two
+// groups: the first with two ANDed expressions, the second with one. It
+// assumes the provider flattens groups into sequential integer structure_ids
+// in declaration order (group 0's expressions first, then group 1's).
+func fieldConditionGroupFlatteningBody(name string) string {
+	return `{"id":"fc_123","name":"` + name + `","phase":{"id":"phase_1"},` +
+		`"condition":{"expressions":[` +
+		`{"structure_id":"0","field_address":"1001","operation":"equals","value":"Other"},` +
+		`{"structure_id":"1","field_address":"2001","operation":"equals","value":"High"},` +
+		`{"structure_id":"2","field_address":"3001","operation":"present"}` +
+		`],"expressions_structure":[[0,1],[2]]},` +
+		`"actions":[{"actionId":"show","phaseField":{"internal_id":"1002"},"whenEvaluator":true}]}`
+}
+
+// TestUnit_FieldConditionResource_GroupFlattening exercises a group with more
+// than one ANDed expression alongside a second, single-expression group. It
+// verifies the provider sends sequential integer structure_ids to the API in
+// group-then-expression order, and that the response reconstructs into groups
+// matching the original nesting.
+func TestUnit_FieldConditionResource_GroupFlattening(t *testing.T) {
+	st := &fieldConditionState{}
+	var sentCondition map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer testtoken" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = io.WriteString(w, `{"errors":[{"message":"unauthorized"}]}`)
+			return
+		}
+		var gr gqlReq
+		defer r.Body.Close()
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gr)
+		w.Header().Set("Content-Type", "application/json")
+
+		q := gr.Query
+		switch {
+		case strings.Contains(q, "createFieldCondition"):
+			st.ID = "fc_123"
+			if v, ok := gr.Variables["input"].(map[string]any); ok {
+				if n, ok := v["name"].(string); ok {
+					st.Name = n
+				}
+				if c, ok := v["condition"].(map[string]any); ok {
+					sentCondition = c
+				}
+			}
+			_, _ = io.WriteString(w, `{"data":{"createFieldCondition":{"fieldCondition":`+fieldConditionGroupFlatteningBody(st.Name)+`}}}`)
+		case strings.Contains(q, "deleteFieldCondition"):
+			st.DeletedCt++
+			_, _ = io.WriteString(w, `{"data":{"deleteFieldCondition":{"success":true}}}`)
+		case strings.Contains(q, "repo_id"):
+			_, _ = io.WriteString(w, `{"data":{"phase":{"repo_id":123}}}`)
+		case strings.Contains(q, "fieldCondition("):
+			if st.ID == "" {
+				_, _ = io.WriteString(w, `{"data":{"fieldCondition":null}}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"data":{"fieldCondition":`+fieldConditionGroupFlatteningBody(st.Name)+`}}`)
+		default:
+			_, _ = io.WriteString(w, `{"data":{}}`)
+		}
+	}))
+	defer srv.Close()
+
+	config := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_field_condition" "test" {
+		phase_id = "phase_1"
+		name     = "Group flattening"
+
+		condition = {
+			groups = [
+				{
+					expressions = [
+						{
+							field_address = "1001"
+							operation     = "equals"
+							value         = "Other"
+						},
+						{
+							field_address = "2001"
+							operation     = "equals"
+							value         = "High"
+						}
+					]
+				},
+				{
+					expressions = [
+						{
+							field_address = "3001"
+							operation     = "present"
+						}
+					]
+				}
+			]
+		}
+
+		actions = [
+			{
+				action_id      = "show"
+				phase_field_id  = "1002"
+			}
+		]
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(
+						"pipefy_field_condition.test",
+						tfjsonpath.New("condition").AtMapKey("groups").AtSliceIndex(0).AtMapKey("expressions").AtSliceIndex(1).AtMapKey("field_address"),
+						knownvalue.StringExact("2001"),
+					),
+					statecheck.ExpectKnownValue(
+						"pipefy_field_condition.test",
+						tfjsonpath.New("condition").AtMapKey("groups").AtSliceIndex(1).AtMapKey("expressions").AtSliceIndex(0).AtMapKey("field_address"),
+						knownvalue.StringExact("3001"),
+					),
+				},
+			},
+		},
+	})
+
+	if sentCondition == nil {
+		t.Fatalf("createFieldCondition was never called")
+	}
+	exprs, ok := sentCondition["expressions"].([]any)
+	if !ok || len(exprs) != 3 {
+		t.Fatalf("expected 3 flattened expressions, got %#v", sentCondition["expressions"])
+	}
+	for i, e := range exprs {
+		expr, ok := e.(map[string]any)
+		if !ok {
+			t.Fatalf("expression %d is not an object: %#v", i, e)
+		}
+		id, ok := expr["structure_id"].(float64)
+		if !ok || int(id) != i {
+			t.Fatalf("expected expression %d to have structure_id %d, got %#v", i, i, expr["structure_id"])
+		}
+	}
+	structure, ok := sentCondition["expressions_structure"].([]any)
+	if !ok || len(structure) != 2 {
+		t.Fatalf("expected 2 groups in expressions_structure, got %#v", sentCondition["expressions_structure"])
+	}
+	if g0, ok := structure[0].([]any); !ok || len(g0) != 2 {
+		t.Fatalf("expected first group to reference 2 structure_ids, got %#v", structure[0])
+	}
+	if g1, ok := structure[1].([]any); !ok || len(g1) != 1 {
+		t.Fatalf("expected second group to reference 1 structure_id, got %#v", structure[1])
+	}
 }

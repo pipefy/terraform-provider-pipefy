@@ -8,13 +8,14 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/fieldconditiongql"
@@ -37,12 +38,14 @@ type FieldConditionModel struct {
 }
 
 type fieldConditionConditionModel struct {
-	Expressions          []fieldConditionExpressionModel `tfsdk:"expressions"`
-	ExpressionsStructure types.List                      `tfsdk:"expressions_structure"`
+	Groups []fieldConditionGroupModel `tfsdk:"groups"`
+}
+
+type fieldConditionGroupModel struct {
+	Expressions []fieldConditionExpressionModel `tfsdk:"expressions"`
 }
 
 type fieldConditionExpressionModel struct {
-	StructureId  types.String `tfsdk:"structure_id"`
 	FieldAddress types.String `tfsdk:"field_address"`
 	Operation    types.String `tfsdk:"operation"`
 	Value        types.String `tfsdk:"value"`
@@ -75,36 +78,37 @@ func (r *FieldConditionResource) Schema(ctx context.Context, req resource.Schema
 			"name": schema.StringAttribute{Required: true, Description: "Name that describes what this condition does"},
 			"condition": schema.SingleNestedAttribute{
 				Required:    true,
-				Description: "The criteria that must hold for the actions to run.",
+				Description: "The criteria that must hold for the actions to run. Groups are ORed together; expressions within a group are ANDed.",
 				Attributes: map[string]schema.Attribute{
-					"expressions": schema.ListNestedAttribute{
+					"groups": schema.ListNestedAttribute{
 						Required:    true,
-						Description: "The comparisons evaluated by the condition.",
+						Description: "Groups of expressions, ORed together. The condition holds when any group holds.",
+						Validators:  []validator.List{listvalidator.SizeAtLeast(1)},
 						NestedObject: schema.NestedAttributeObject{
 							Attributes: map[string]schema.Attribute{
-								"structure_id": schema.StringAttribute{
+								"expressions": schema.ListNestedAttribute{
 									Required:    true,
-									Description: "Identifier used to reference this expression from expressions_structure. Values are commonly small integers (\"0\", \"1\", ...).",
-								},
-								"field_address": schema.StringAttribute{
-									Required:    true,
-									Description: "The internal_id of the field this expression compares.",
-								},
-								"operation": schema.StringAttribute{
-									Required:    true,
-									Description: "The comparison operator (for example equals, not_equals, present, blank). Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).",
-								},
-								"value": schema.StringAttribute{
-									Optional:    true,
-									Description: "The value compared against. Omit for operators that take no value, such as present and blank.",
+									Description: "Comparisons within this group, ANDed together.",
+									Validators:  []validator.List{listvalidator.SizeAtLeast(1)},
+									NestedObject: schema.NestedAttributeObject{
+										Attributes: map[string]schema.Attribute{
+											"field_address": schema.StringAttribute{
+												Required:    true,
+												Description: "The internal_id of the field this expression compares.",
+											},
+											"operation": schema.StringAttribute{
+												Required:    true,
+												Description: "The comparison operator (for example equals, not_equals, present, blank). Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).",
+											},
+											"value": schema.StringAttribute{
+												Optional:    true,
+												Description: "The value compared against. Omit for operators that take no value, such as present and blank.",
+											},
+										},
+									},
 								},
 							},
 						},
-					},
-					"expressions_structure": schema.ListAttribute{
-						Required:    true,
-						ElementType: types.ListType{ElemType: types.StringType},
-						Description: "Groups of expression structure_ids that define the AND/OR logic. Each inner list is ANDed; the outer list ORs the groups. Example: [[\"0\", \"1\"]] evaluates expression 0 AND expression 1.",
 					},
 				},
 			},
@@ -162,11 +166,8 @@ func (r *FieldConditionResource) Create(ctx context.Context, req resource.Create
 		"name":    data.Name.ValueString(),
 		"phaseId": data.PhaseId.ValueString(),
 	}
-	input["condition"] = data.conditionInput(ctx, &resp.Diagnostics)
+	input["condition"] = data.conditionInput()
 	input["actions"] = data.actionsInput()
-	if resp.Diagnostics.HasError() {
-		return
-	}
 
 	mutation := "mutation CreateFieldCondition_tf($input:createFieldConditionInput!){ createFieldCondition(input:$input){ fieldCondition{ " + fieldconditiongql.Selection + " } } }"
 	var out struct {
@@ -182,7 +183,7 @@ func (r *FieldConditionResource) Create(ctx context.Context, req resource.Create
 		resp.Diagnostics.AddError("create field condition failed", "the API returned no field condition")
 		return
 	}
-	applyFieldConditionToModel(ctx, &data, out.CreateFieldCondition.FieldCondition, &resp.Diagnostics)
+	applyFieldConditionToModel(&data, out.CreateFieldCondition.FieldCondition, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -211,7 +212,7 @@ func (r *FieldConditionResource) Read(ctx context.Context, req resource.ReadRequ
 		resp.State.RemoveResource(ctx)
 		return
 	}
-	applyFieldConditionToModel(ctx, &data, out.FieldCondition, &resp.Diagnostics)
+	applyFieldConditionToModel(&data, out.FieldCondition, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -236,11 +237,8 @@ func (r *FieldConditionResource) Update(ctx context.Context, req resource.Update
 		"name":     data.Name.ValueString(),
 		"phase_id": data.PhaseId.ValueString(),
 	}
-	input["condition"] = data.conditionInput(ctx, &resp.Diagnostics)
+	input["condition"] = data.conditionInput()
 	input["actions"] = data.actionsInput()
-	if resp.Diagnostics.HasError() {
-		return
-	}
 
 	mutation := "mutation UpdateFieldCondition_tf($input:UpdateFieldConditionInput!){ updateFieldCondition(input:$input){ fieldCondition{ " + fieldconditiongql.Selection + " } } }"
 	var out struct {
@@ -256,7 +254,7 @@ func (r *FieldConditionResource) Update(ctx context.Context, req resource.Update
 		resp.Diagnostics.AddError("update field condition failed", "the API returned no field condition")
 		return
 	}
-	applyFieldConditionToModel(ctx, &data, out.UpdateFieldCondition.FieldCondition, &resp.Diagnostics)
+	applyFieldConditionToModel(&data, out.UpdateFieldCondition.FieldCondition, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -315,32 +313,30 @@ func (r *FieldConditionResource) lockPhaseRepo(ctx context.Context, phaseID, err
 	return locks.LockRepo(strconv.FormatInt(int64(out.Phase.RepoId), 10)), true
 }
 
-// conditionInput builds the ConditionInput payload. structure_id and the
-// expressions_structure elements are sent as integers when numeric (their index
-// semantics), falling back to the raw string otherwise.
-func (m *FieldConditionModel) conditionInput(ctx context.Context, diags *diag.Diagnostics) map[string]any {
-	exprs := make([]map[string]any, len(m.Condition.Expressions))
-	for i, e := range m.Condition.Expressions {
-		expr := map[string]any{
-			"structure_id":  intOrString(e.StructureId.ValueString()),
-			"field_address": e.FieldAddress.ValueString(),
-			"operation":     e.Operation.ValueString(),
-		}
-		if !e.Value.IsNull() && !e.Value.IsUnknown() {
-			expr["value"] = e.Value.ValueString()
-		}
-		exprs[i] = expr
-	}
+// conditionInput flattens condition.groups into the wire ConditionInput shape:
+// a flat expressions list plus expressions_structure, assigning fresh
+// sequential integer structure_ids in flattening order.
+func (m *FieldConditionModel) conditionInput() map[string]any {
+	var exprs []map[string]any
+	groups := make([][]any, len(m.Condition.Groups))
 
-	var structure [][]string
-	diags.Append(m.Condition.ExpressionsStructure.ElementsAs(ctx, &structure, false)...)
-	groups := make([][]any, len(structure))
-	for i, grp := range structure {
-		row := make([]any, len(grp))
-		for j, s := range grp {
-			row[j] = intOrString(s)
+	nextID := 0
+	for gi, g := range m.Condition.Groups {
+		row := make([]any, len(g.Expressions))
+		for ei, e := range g.Expressions {
+			expr := map[string]any{
+				"structure_id":  nextID,
+				"field_address": e.FieldAddress.ValueString(),
+				"operation":     e.Operation.ValueString(),
+			}
+			if !e.Value.IsNull() && !e.Value.IsUnknown() {
+				expr["value"] = e.Value.ValueString()
+			}
+			exprs = append(exprs, expr)
+			row[ei] = nextID
+			nextID++
 		}
-		groups[i] = row
+		groups[gi] = row
 	}
 
 	return map[string]any{
@@ -365,25 +361,16 @@ func (m *FieldConditionModel) actionsInput() []map[string]any {
 }
 
 // applyFieldConditionToModel maps a fetched field condition onto the model.
-func applyFieldConditionToModel(ctx context.Context, data *FieldConditionModel, fc *fieldconditiongql.FieldCondition, diags *diag.Diagnostics) {
+func applyFieldConditionToModel(data *FieldConditionModel, fc *fieldconditiongql.FieldCondition, diags *diag.Diagnostics) {
 	data.Id = types.StringValue(fc.Id)
 	data.Name = types.StringValue(fc.Name)
 	if fc.Phase != nil && fc.Phase.Id != "" {
 		data.PhaseId = types.StringValue(fc.Phase.Id)
 	}
 
-	cond := &fieldConditionConditionModel{ExpressionsStructure: types.ListNull(types.ListType{ElemType: types.StringType})}
+	cond := &fieldConditionConditionModel{}
 	if fc.Condition != nil {
-		cond.Expressions = make([]fieldConditionExpressionModel, len(fc.Condition.Expressions))
-		for i, e := range fc.Condition.Expressions {
-			cond.Expressions[i] = fieldConditionExpressionModel{
-				StructureId:  types.StringValue(e.StructureId),
-				FieldAddress: types.StringValue(e.FieldAddress),
-				Operation:    types.StringValue(e.Operation),
-				Value:        strPtr(e.Value),
-			}
-		}
-		cond.ExpressionsStructure = expressionsStructureToList(ctx, fc.Condition.ExpressionsStructure, diags)
+		cond.Groups = groupsFromFieldCondition(fc.Condition, diags)
 	}
 	data.Condition = cond
 
@@ -401,24 +388,45 @@ func applyFieldConditionToModel(ctx context.Context, data *FieldConditionModel, 
 	}
 }
 
-// expressionsStructureToList converts the untyped array-of-arrays returned by the
-// API into a typed list(list(string)), stringifying numeric elements.
-func expressionsStructureToList(ctx context.Context, groups [][]any, diags *diag.Diagnostics) types.List {
-	rows := make([]attr.Value, len(groups))
-	for i, grp := range groups {
-		strs := make([]string, len(grp))
-		for j, v := range grp {
-			strs[j] = stringifyStructureElem(v)
+// groupsFromFieldCondition reconstructs condition.groups from the API's flat
+// expressions plus expressions_structure. Outer order follows
+// expressions_structure; inner (within-group) order follows each inner array.
+// A structure_id referenced by a group with no matching expression indicates
+// an inconsistency in the API response rather than a configuration error, so
+// it is reported as a diagnostic rather than silently dropped.
+func groupsFromFieldCondition(cond *fieldconditiongql.Condition, diags *diag.Diagnostics) []fieldConditionGroupModel {
+	byID := make(map[string]fieldConditionExpressionModel, len(cond.Expressions))
+	for _, e := range cond.Expressions {
+		byID[e.StructureId] = fieldConditionExpressionModel{
+			FieldAddress: types.StringValue(e.FieldAddress),
+			Operation:    types.StringValue(e.Operation),
+			Value:        strPtr(e.Value),
 		}
-		lv, d := types.ListValueFrom(ctx, types.StringType, strs)
-		diags.Append(d...)
-		rows[i] = lv
 	}
-	outer, d := types.ListValue(types.ListType{ElemType: types.StringType}, rows)
-	diags.Append(d...)
-	return outer
+
+	groups := make([]fieldConditionGroupModel, len(cond.ExpressionsStructure))
+	for gi, ids := range cond.ExpressionsStructure {
+		exprs := make([]fieldConditionExpressionModel, 0, len(ids))
+		for _, rawID := range ids {
+			key := stringifyStructureElem(rawID)
+			expr, ok := byID[key]
+			if !ok {
+				diags.AddError(
+					"field condition API inconsistency",
+					fmt.Sprintf("expressions_structure group %d references structure_id %q, which has no matching entry in expressions", gi, key),
+				)
+				continue
+			}
+			exprs = append(exprs, expr)
+		}
+		groups[gi] = fieldConditionGroupModel{Expressions: exprs}
+	}
+	return groups
 }
 
+// stringifyStructureElem normalizes an expressions_structure element (which the
+// API returns untyped, as a number or a string) to the same string form used to
+// key expressions by structure_id.
 func stringifyStructureElem(v any) string {
 	switch n := v.(type) {
 	case string:
@@ -428,13 +436,4 @@ func stringifyStructureElem(v any) string {
 	default:
 		return fmt.Sprintf("%v", v)
 	}
-}
-
-// intOrString sends numeric identifiers as integers (their index semantics on the
-// API), leaving non-numeric values as strings.
-func intOrString(s string) any {
-	if n, err := strconv.Atoi(s); err == nil {
-		return n
-	}
-	return s
 }

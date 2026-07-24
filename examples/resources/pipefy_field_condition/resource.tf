@@ -29,28 +29,29 @@ resource "pipefy_field" "details" {
 }
 
 # Show the "Please describe" field only when "Request type" is "Other"
-# AND "Priority" is "High". Both expressions share one group in
-# expressions_structure ([["0", "1"]]), so they are ANDed together.
+# AND "Priority" is "High". Both expressions sit in the same group, so they
+# are ANDed together.
 resource "pipefy_field_condition" "show_details" {
   phase_id = pipefy_phase.example.id
   name     = "Show details for high-priority Other requests"
 
   condition = {
-    expressions = [
+    groups = [
       {
-        structure_id  = "0"
-        field_address = pipefy_field.type.internal_id
-        operation     = "equals"
-        value         = "Other"
-      },
-      {
-        structure_id  = "1"
-        field_address = pipefy_field.priority.internal_id
-        operation     = "equals"
-        value         = "High"
+        expressions = [
+          {
+            field_address = pipefy_field.type.internal_id
+            operation     = "equals"
+            value         = "Other"
+          },
+          {
+            field_address = pipefy_field.priority.internal_id
+            operation     = "equals"
+            value         = "High"
+          }
+        ]
       }
     ]
-    expressions_structure = [["0", "1"]]
   }
 
   actions = [
@@ -63,28 +64,32 @@ resource "pipefy_field_condition" "show_details" {
 
 # Reusing the same fields with an OR grouping: hide "Priority" when either
 # "Request type" is "Standard" OR "Priority" itself is "Low". Each expression
-# sits in its own group in expressions_structure ([["0"], ["1"]]), so the
-# condition holds when any group is true.
+# sits in its own group, so the condition holds when any group is true.
 resource "pipefy_field_condition" "hide_priority" {
   phase_id = pipefy_phase.example.id
   name     = "Hide priority for standard or low requests"
 
   condition = {
-    expressions = [
+    groups = [
       {
-        structure_id  = "0"
-        field_address = pipefy_field.type.internal_id
-        operation     = "equals"
-        value         = "Standard"
+        expressions = [
+          {
+            field_address = pipefy_field.type.internal_id
+            operation     = "equals"
+            value         = "Standard"
+          }
+        ]
       },
       {
-        structure_id  = "1"
-        field_address = pipefy_field.priority.internal_id
-        operation     = "equals"
-        value         = "Low"
+        expressions = [
+          {
+            field_address = pipefy_field.priority.internal_id
+            operation     = "equals"
+            value         = "Low"
+          }
+        ]
       }
     ]
-    expressions_structure = [["0"], ["1"]]
   }
 
   actions = [
