@@ -29,73 +29,38 @@ resource "pipefy_field" "details" {
 }
 
 # Show the "Please describe" field only when "Request type" is "Other"
-# AND "Priority" is "High". Both expressions sit in the same group, so they
-# are ANDed together.
+# AND "Priority" is "High". all_of ANDs its comparisons together.
 resource "pipefy_field_condition" "show_details" {
   phase_id = pipefy_phase.example.id
   name     = "Show details for high-priority Other requests"
 
   condition = {
-    groups = [
-      {
-        expressions = [
-          {
-            field_address = pipefy_field.type.internal_id
-            operation     = "equals"
-            value         = "Other"
-          },
-          {
-            field_address = pipefy_field.priority.internal_id
-            operation     = "equals"
-            value         = "High"
-          }
-        ]
-      }
+    all_of = [
+      { field = pipefy_field.type.internal_id, operation = "equals", value = "Other" },
+      { field = pipefy_field.priority.internal_id, operation = "equals", value = "High" },
     ]
   }
 
   actions = [
-    {
-      action_id      = "show"
-      phase_field_id = pipefy_field.details.internal_id
-    }
+    { field = pipefy_field.details.internal_id, when_true = "show", when_false = "hide" },
   ]
 }
 
-# Reusing the same fields with an OR grouping: hide "Priority" when either
-# "Request type" is "Standard" OR "Priority" itself is "Low". Each expression
-# sits in its own group, so the condition holds when any group is true.
+# Reusing the same fields with an OR condition: hide "Priority" when either
+# "Request type" is "Standard" OR "Priority" itself is "Low". any_of ORs its
+# entries together.
 resource "pipefy_field_condition" "hide_priority" {
   phase_id = pipefy_phase.example.id
   name     = "Hide priority for standard or low requests"
 
   condition = {
-    groups = [
-      {
-        expressions = [
-          {
-            field_address = pipefy_field.type.internal_id
-            operation     = "equals"
-            value         = "Standard"
-          }
-        ]
-      },
-      {
-        expressions = [
-          {
-            field_address = pipefy_field.priority.internal_id
-            operation     = "equals"
-            value         = "Low"
-          }
-        ]
-      }
+    any_of = [
+      { field = pipefy_field.type.internal_id, operation = "equals", value = "Standard" },
+      { field = pipefy_field.priority.internal_id, operation = "equals", value = "Low" },
     ]
   }
 
   actions = [
-    {
-      action_id      = "hide"
-      phase_field_id = pipefy_field.priority.internal_id
-    }
+    { field = pipefy_field.priority.internal_id, when_true = "hide" },
   ]
 }

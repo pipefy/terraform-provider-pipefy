@@ -3,12 +3,12 @@
 page_title: "pipefy_field_condition Resource - pipefy"
 subcategory: ""
 description: |-
-  Conditional show/hide (and enable/disable) logic for a phase form. A field condition evaluates a set of expressions and, when they hold, runs actions against phase fields.
+  Conditional show/hide (and enable/disable) logic for a phase form. A field condition evaluates a set of comparisons and, when they hold, runs actions against phase fields.
 ---
 
 # pipefy_field_condition (Resource)
 
-Conditional show/hide (and enable/disable) logic for a phase form. A field condition evaluates a set of expressions and, when they hold, runs actions against phase fields.
+Conditional show/hide (and enable/disable) logic for a phase form. A field condition evaluates a set of comparisons and, when they hold, runs actions against phase fields.
 
 ## Example Usage
 
@@ -44,74 +44,39 @@ resource "pipefy_field" "details" {
 }
 
 # Show the "Please describe" field only when "Request type" is "Other"
-# AND "Priority" is "High". Both expressions sit in the same group, so they
-# are ANDed together.
+# AND "Priority" is "High". all_of ANDs its comparisons together.
 resource "pipefy_field_condition" "show_details" {
   phase_id = pipefy_phase.example.id
   name     = "Show details for high-priority Other requests"
 
   condition = {
-    groups = [
-      {
-        expressions = [
-          {
-            field_address = pipefy_field.type.internal_id
-            operation     = "equals"
-            value         = "Other"
-          },
-          {
-            field_address = pipefy_field.priority.internal_id
-            operation     = "equals"
-            value         = "High"
-          }
-        ]
-      }
+    all_of = [
+      { field = pipefy_field.type.internal_id, operation = "equals", value = "Other" },
+      { field = pipefy_field.priority.internal_id, operation = "equals", value = "High" },
     ]
   }
 
   actions = [
-    {
-      action_id      = "show"
-      phase_field_id = pipefy_field.details.internal_id
-    }
+    { field = pipefy_field.details.internal_id, when_true = "show", when_false = "hide" },
   ]
 }
 
-# Reusing the same fields with an OR grouping: hide "Priority" when either
-# "Request type" is "Standard" OR "Priority" itself is "Low". Each expression
-# sits in its own group, so the condition holds when any group is true.
+# Reusing the same fields with an OR condition: hide "Priority" when either
+# "Request type" is "Standard" OR "Priority" itself is "Low". any_of ORs its
+# entries together.
 resource "pipefy_field_condition" "hide_priority" {
   phase_id = pipefy_phase.example.id
   name     = "Hide priority for standard or low requests"
 
   condition = {
-    groups = [
-      {
-        expressions = [
-          {
-            field_address = pipefy_field.type.internal_id
-            operation     = "equals"
-            value         = "Standard"
-          }
-        ]
-      },
-      {
-        expressions = [
-          {
-            field_address = pipefy_field.priority.internal_id
-            operation     = "equals"
-            value         = "Low"
-          }
-        ]
-      }
+    any_of = [
+      { field = pipefy_field.type.internal_id, operation = "equals", value = "Standard" },
+      { field = pipefy_field.priority.internal_id, operation = "equals", value = "Low" },
     ]
   }
 
   actions = [
-    {
-      action_id      = "hide"
-      phase_field_id = pipefy_field.priority.internal_id
-    }
+    { field = pipefy_field.priority.internal_id, when_true = "hide" },
   ]
 }
 ```
@@ -121,8 +86,8 @@ resource "pipefy_field_condition" "hide_priority" {
 
 ### Required
 
-- `actions` (Attributes List) What happens to phase fields when the condition holds. (see [below for nested schema](#nestedatt--actions))
-- `condition` (Attributes) The criteria that must hold for the actions to run. Groups are ORed together; expressions within a group are ANDed. (see [below for nested schema](#nestedatt--condition))
+- `actions` (Attributes List) What happens to each phase field when the condition holds. One entry per target field. (see [below for nested schema](#nestedatt--actions))
+- `condition` (Attributes) The criteria that must hold for the actions to run. all_of ANDs its comparisons together; any_of ORs its entries together. Exactly one of all_of or any_of must be set. (see [below for nested schema](#nestedatt--condition))
 - `name` (String) Name that describes what this condition does
 - `phase_id` (String) The ID of the phase the condition belongs to. Changing it forces a new field condition.
 
@@ -135,34 +100,51 @@ resource "pipefy_field_condition" "hide_priority" {
 
 Required:
 
-- `action_id` (String) What to do with the target field (for example show, hide, able, disable). Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).
-- `phase_field_id` (String) The internal_id of the phase field affected by this action.
+- `field` (String) The internal_id of the phase field affected by this action.
 
 Optional:
 
-- `when_evaluator` (Boolean) Whether the action runs when the condition evaluates to true.
+- `when_false` (String) What to do with the field when the condition evaluates to false (for example hide, disable). Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).
+- `when_true` (String) What to do with the field when the condition evaluates to true (for example show, able). Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).
 
 
 <a id="nestedatt--condition"></a>
 ### Nested Schema for `condition`
 
-Required:
+Optional:
 
-- `groups` (Attributes List) Groups of expressions, ORed together. The condition holds when any group holds. (see [below for nested schema](#nestedatt--condition--groups))
+- `all_of` (Attributes List) Comparisons that must all hold. (see [below for nested schema](#nestedatt--condition--all_of))
+- `any_of` (Attributes List) Comparisons or nested all_of groups where at least one must hold. (see [below for nested schema](#nestedatt--condition--any_of))
 
-<a id="nestedatt--condition--groups"></a>
-### Nested Schema for `condition.groups`
-
-Required:
-
-- `expressions` (Attributes List) Comparisons within this group, ANDed together. (see [below for nested schema](#nestedatt--condition--groups--expressions))
-
-<a id="nestedatt--condition--groups--expressions"></a>
-### Nested Schema for `condition.groups.expressions`
+<a id="nestedatt--condition--all_of"></a>
+### Nested Schema for `condition.all_of`
 
 Required:
 
-- `field_address` (String) The internal_id of the field this expression compares.
+- `field` (String) The internal_id of the field this comparison evaluates.
+- `operation` (String) The comparison operator (for example equals, not_equals, present, blank). Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).
+
+Optional:
+
+- `value` (String) The value compared against. Omit for operators that take no value, such as present and blank.
+
+
+<a id="nestedatt--condition--any_of"></a>
+### Nested Schema for `condition.any_of`
+
+Optional:
+
+- `all_of` (Attributes List) A nested group of comparisons that must all hold, ORed against this entry's any_of siblings. (see [below for nested schema](#nestedatt--condition--any_of--all_of))
+- `field` (String) The internal_id of the field this entry compares. Omit when this entry is a nested all_of group instead.
+- `operation` (String) The comparison operator (for example equals, not_equals, present, blank). Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).
+- `value` (String) The value compared against. Omit for operators that take no value, such as present and blank.
+
+<a id="nestedatt--condition--any_of--all_of"></a>
+### Nested Schema for `condition.any_of.all_of`
+
+Required:
+
+- `field` (String) The internal_id of the field this comparison evaluates.
 - `operation` (String) The comparison operator (for example equals, not_equals, present, blank). Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).
 
 Optional:
