@@ -121,7 +121,7 @@ Optional:
 
 Required:
 
-- `field` (String) The internal_id of the field this comparison evaluates.
+- `field` (String) The internal_id of the field this comparison evaluates. A dotted path addresses a field reached through a connection.
 - `operation` (String) The comparison operator (for example equals, not_equals, present, blank). Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).
 
 Optional:
@@ -144,7 +144,7 @@ Optional:
 
 Required:
 
-- `field` (String) The internal_id of the field this comparison evaluates.
+- `field` (String) The internal_id of the field this comparison evaluates. A dotted path addresses a field reached through a connection.
 - `operation` (String) The comparison operator (for example equals, not_equals, present, blank). Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).
 
 Optional:

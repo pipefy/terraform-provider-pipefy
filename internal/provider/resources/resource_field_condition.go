@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -18,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
+	"github.com/pipefy/terraform-provider-pipefy/internal/provider/conditionschema"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/fieldconditiongql"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/locks"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/validators"
@@ -31,32 +31,11 @@ func NewFieldConditionResource() resource.Resource { return &FieldConditionResou
 type FieldConditionResource struct{ api *client.ApiClient }
 
 type FieldConditionModel struct {
-	Id        types.String                  `tfsdk:"id"`
-	PhaseId   types.String                  `tfsdk:"phase_id"`
-	Name      types.String                  `tfsdk:"name"`
-	Condition *fieldConditionConditionModel `tfsdk:"condition"`
-	Actions   []fieldConditionActionModel   `tfsdk:"actions"`
-}
-
-type fieldConditionConditionModel struct {
-	AllOf []fieldConditionComparisonModel `tfsdk:"all_of"`
-	AnyOf []fieldConditionAnyOfEntryModel `tfsdk:"any_of"`
-}
-
-type fieldConditionComparisonModel struct {
-	Field     types.String `tfsdk:"field"`
-	Operation types.String `tfsdk:"operation"`
-	Value     types.String `tfsdk:"value"`
-}
-
-// fieldConditionAnyOfEntryModel is a sum type: either a comparison (field +
-// operation, optionally value) or a nested group (all_of), never both. The
-// FieldConditionComparisonOrGroup validator enforces that exclusivity.
-type fieldConditionAnyOfEntryModel struct {
-	Field     types.String                    `tfsdk:"field"`
-	Operation types.String                    `tfsdk:"operation"`
-	Value     types.String                    `tfsdk:"value"`
-	AllOf     []fieldConditionComparisonModel `tfsdk:"all_of"`
+	Id        types.String                `tfsdk:"id"`
+	PhaseId   types.String                `tfsdk:"phase_id"`
+	Name      types.String                `tfsdk:"name"`
+	Condition *conditionschema.Condition  `tfsdk:"condition"`
+	Actions   []fieldConditionActionModel `tfsdk:"actions"`
 }
 
 type fieldConditionActionModel struct {
@@ -67,26 +46,6 @@ type fieldConditionActionModel struct {
 
 func (r *FieldConditionResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_field_condition"
-}
-
-// fieldConditionComparisonAttributes is the attribute set for a plain
-// comparison: a top-level all_of entry, or a comparison nested inside an
-// any_of entry's own all_of group. Both require field and operation.
-func fieldConditionComparisonAttributes() map[string]schema.Attribute {
-	return map[string]schema.Attribute{
-		"field": schema.StringAttribute{
-			Required:    true,
-			Description: "The internal_id of the field this comparison evaluates.",
-		},
-		"operation": schema.StringAttribute{
-			Required:    true,
-			Description: "The comparison operator (for example equals, not_equals, present, blank). Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).",
-		},
-		"value": schema.StringAttribute{
-			Optional:    true,
-			Description: "The value compared against. Omit for operators that take no value, such as present and blank.",
-		},
-	}
 }
 
 func (r *FieldConditionResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
@@ -106,50 +65,8 @@ func (r *FieldConditionResource) Schema(ctx context.Context, req resource.Schema
 			"name": schema.StringAttribute{Required: true, Description: "Name that describes what this condition does"},
 			"condition": schema.SingleNestedAttribute{
 				Required:    true,
-				Description: "The criteria that must hold for the actions to run. all_of ANDs its comparisons together; any_of ORs its entries together. Exactly one of all_of or any_of must be set.",
-				Attributes: map[string]schema.Attribute{
-					"all_of": schema.ListNestedAttribute{
-						Optional:    true,
-						Description: "Comparisons that must all hold.",
-						Validators: []validator.List{
-							listvalidator.SizeAtLeast(1),
-							listvalidator.ExactlyOneOf(path.Expressions{path.MatchRelative().AtParent().AtName("any_of")}...),
-						},
-						NestedObject: schema.NestedAttributeObject{
-							Attributes: fieldConditionComparisonAttributes(),
-						},
-					},
-					"any_of": schema.ListNestedAttribute{
-						Optional:    true,
-						Description: "Comparisons or nested all_of groups where at least one must hold.",
-						Validators:  []validator.List{validators.FieldConditionAnyOfMinSize()},
-						NestedObject: schema.NestedAttributeObject{
-							Attributes: map[string]schema.Attribute{
-								"field": schema.StringAttribute{
-									Optional:    true,
-									Description: "The internal_id of the field this entry compares. Omit when this entry is a nested all_of group instead.",
-								},
-								"operation": schema.StringAttribute{
-									Optional:    true,
-									Description: "The comparison operator (for example equals, not_equals, present, blank). Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).",
-								},
-								"value": schema.StringAttribute{
-									Optional:    true,
-									Description: "The value compared against. Omit for operators that take no value, such as present and blank.",
-								},
-								"all_of": schema.ListNestedAttribute{
-									Optional:    true,
-									Description: "A nested group of comparisons that must all hold, ORed against this entry's any_of siblings.",
-									Validators:  []validator.List{listvalidator.SizeAtLeast(2)},
-									NestedObject: schema.NestedAttributeObject{
-										Attributes: fieldConditionComparisonAttributes(),
-									},
-								},
-							},
-							Validators: []validator.Object{validators.FieldConditionComparisonOrGroup()},
-						},
-					},
-				},
+				Description: "The criteria that must hold for the actions to run. " + conditionschema.Description,
+				Attributes:  conditionschema.Attributes(),
 			},
 			"actions": schema.ListNestedAttribute{
 				Required:    true,
@@ -206,7 +123,7 @@ func (r *FieldConditionResource) Create(ctx context.Context, req resource.Create
 		"name":    data.Name.ValueString(),
 		"phaseId": data.PhaseId.ValueString(),
 	}
-	input["condition"] = data.conditionInput()
+	input["condition"] = data.Condition.Input()
 	input["actions"] = data.actionsInput()
 
 	mutation := "mutation CreateFieldCondition_tf($input:createFieldConditionInput!){ createFieldCondition(input:$input){ fieldCondition{ " + fieldconditiongql.Selection + " } } }"
@@ -277,7 +194,7 @@ func (r *FieldConditionResource) Update(ctx context.Context, req resource.Update
 		"name":     data.Name.ValueString(),
 		"phase_id": data.PhaseId.ValueString(),
 	}
-	input["condition"] = data.conditionInput()
+	input["condition"] = data.Condition.Input()
 	input["actions"] = data.actionsInput()
 
 	mutation := "mutation UpdateFieldCondition_tf($input:UpdateFieldConditionInput!){ updateFieldCondition(input:$input){ fieldCondition{ " + fieldconditiongql.Selection + " } } }"
@@ -377,63 +294,6 @@ func (r *FieldConditionResource) resolvePhaseRepoID(ctx context.Context, phaseID
 	return strconv.FormatInt(int64(out.Phase.RepoId), 10), true, nil
 }
 
-// conditionInput flattens condition.all_of/any_of into the wire
-// ConditionInput shape: a flat expressions list plus expressions_structure,
-// assigning fresh sequential integer structure_ids in flattening order.
-func (m *FieldConditionModel) conditionInput() map[string]any {
-	groups := m.Condition.comparisonGroups()
-
-	var exprs []map[string]any
-	structure := make([][]any, len(groups))
-
-	nextID := 0
-	for gi, g := range groups {
-		row := make([]any, len(g))
-		for ei, c := range g {
-			expr := map[string]any{
-				"structure_id":  nextID,
-				"field_address": c.Field.ValueString(),
-				"operation":     c.Operation.ValueString(),
-			}
-			if !c.Value.IsNull() && !c.Value.IsUnknown() {
-				expr["value"] = c.Value.ValueString()
-			}
-			exprs = append(exprs, expr)
-			row[ei] = nextID
-			nextID++
-		}
-		structure[gi] = row
-	}
-
-	return map[string]any{
-		"expressions":           exprs,
-		"expressions_structure": structure,
-	}
-}
-
-// comparisonGroups expands condition.all_of/any_of into the ordered list of
-// AND-groups the wire format expects: a single group for all_of, or one
-// group per any_of entry (that entry's all_of if set, otherwise a
-// one-comparison group built from its own field/operation/value).
-func (c *fieldConditionConditionModel) comparisonGroups() [][]fieldConditionComparisonModel {
-	if len(c.AllOf) > 0 {
-		return [][]fieldConditionComparisonModel{c.AllOf}
-	}
-	groups := make([][]fieldConditionComparisonModel, len(c.AnyOf))
-	for i, entry := range c.AnyOf {
-		if len(entry.AllOf) > 0 {
-			groups[i] = entry.AllOf
-			continue
-		}
-		groups[i] = []fieldConditionComparisonModel{{
-			Field:     entry.Field,
-			Operation: entry.Operation,
-			Value:     entry.Value,
-		}}
-	}
-	return groups
-}
-
 func (m *FieldConditionModel) actionsInput() []map[string]any {
 	var actions []map[string]any
 	for _, a := range m.Actions {
@@ -469,85 +329,15 @@ func applyFieldConditionToModel(data *FieldConditionModel, fc *fieldconditiongql
 		data.PhaseId = types.StringValue(fc.Phase.Id)
 	}
 
-	if fc.Condition != nil {
-		data.Condition = conditionFromFieldCondition(fc.Condition, diags)
-	} else {
-		data.Condition = &fieldConditionConditionModel{}
+	// condition is Required here, so it must never settle to null: a payload
+	// carrying no condition at all (or one the server pruned down to nothing)
+	// maps to an empty block rather than a missing one.
+	data.Condition = conditionschema.FromPayload(fc.Condition, diags)
+	if data.Condition == nil {
+		data.Condition = &conditionschema.Condition{}
 	}
 
 	data.Actions = actionsFromFieldCondition(fc.Actions, diags)
-}
-
-// conditionFromFieldCondition reconstructs condition.all_of/any_of from the
-// API's flat expressions plus expressions_structure, canonicalizing
-// deterministically so Read never has to guess between two configs that
-// flatten identically: a single group is always all_of; multiple groups are
-// always any_of, and within any_of a single-comparison group is a plain
-// entry while a multi-comparison group is a nested all_of. Without this
-// rule, all_of=[x] and any_of=[x] (or a nested all_of=[x] inside an any_of
-// entry) are indistinguishable on the wire, and reconstructing the "wrong"
-// legal shape would produce a permanent diff.
-func conditionFromFieldCondition(cond *fieldconditiongql.Condition, diags *diag.Diagnostics) *fieldConditionConditionModel {
-	groups := comparisonGroupsFromFieldCondition(cond, diags)
-
-	if len(groups) <= 1 {
-		result := &fieldConditionConditionModel{}
-		if len(groups) == 1 {
-			result.AllOf = groups[0]
-		}
-		return result
-	}
-
-	anyOf := make([]fieldConditionAnyOfEntryModel, len(groups))
-	for gi, g := range groups {
-		if len(g) == 1 {
-			anyOf[gi] = fieldConditionAnyOfEntryModel{
-				Field:     g[0].Field,
-				Operation: g[0].Operation,
-				Value:     g[0].Value,
-			}
-			continue
-		}
-		anyOf[gi] = fieldConditionAnyOfEntryModel{AllOf: g}
-	}
-	return &fieldConditionConditionModel{AnyOf: anyOf}
-}
-
-// comparisonGroupsFromFieldCondition reconstructs AND-groups of comparisons
-// from the API's flat expressions plus expressions_structure. Outer order
-// follows expressions_structure; inner (within-group) order follows each
-// inner array. A structure_id referenced by a group with no matching
-// expression indicates an inconsistency in the API response rather than a
-// configuration error, so it is reported as a diagnostic rather than
-// silently dropped.
-func comparisonGroupsFromFieldCondition(cond *fieldconditiongql.Condition, diags *diag.Diagnostics) [][]fieldConditionComparisonModel {
-	byID := make(map[string]fieldConditionComparisonModel, len(cond.Expressions))
-	for _, e := range cond.Expressions {
-		byID[e.StructureId] = fieldConditionComparisonModel{
-			Field:     types.StringValue(e.FieldAddress),
-			Operation: types.StringValue(e.Operation),
-			Value:     strPtr(e.Value),
-		}
-	}
-
-	groups := make([][]fieldConditionComparisonModel, len(cond.ExpressionsStructure))
-	for gi, ids := range cond.ExpressionsStructure {
-		comparisons := make([]fieldConditionComparisonModel, 0, len(ids))
-		for _, rawID := range ids {
-			key := stringifyStructureElem(rawID)
-			c, ok := byID[key]
-			if !ok {
-				diags.AddError(
-					"field condition API inconsistency",
-					fmt.Sprintf("expressions_structure group %d references structure_id %q, which has no matching entry in expressions", gi, key),
-				)
-				continue
-			}
-			comparisons = append(comparisons, c)
-		}
-		groups[gi] = comparisons
-	}
-	return groups
 }
 
 // actionsFromFieldCondition groups the API's flat actions by target field,
@@ -593,18 +383,4 @@ func actionsFromFieldCondition(actions []fieldconditiongql.Action, diags *diag.D
 		result[i] = *byField[fieldID]
 	}
 	return result
-}
-
-// stringifyStructureElem normalizes an expressions_structure element (which the
-// API returns untyped, as a number or a string) to the same string form used to
-// key expressions by structure_id.
-func stringifyStructureElem(v any) string {
-	switch n := v.(type) {
-	case string:
-		return n
-	case float64:
-		return strconv.FormatInt(int64(n), 10)
-	default:
-		return fmt.Sprintf("%v", v)
-	}
 }

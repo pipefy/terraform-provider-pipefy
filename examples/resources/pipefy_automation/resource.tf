@@ -42,15 +42,15 @@ resource "pipefy_automation" "example_ai" {
     trigger_field_ids = [pipefy_field.title.internal_id]
   }
 
-  # conditions to trigger the automation
+  # Conditions that gate the automation. all_of ANDs its comparisons together;
+  # use any_of instead to OR them, with a nested all_of on an entry that needs
+  # AND inside the OR.
   condition = {
-    expressions = [{
-      structure_id  = "0"
-      field_address = pipefy_field.title.internal_id
-      operation     = "equals"
-      value         = "translate"
+    all_of = [{
+      field     = pipefy_field.title.internal_id
+      operation = "equals"
+      value     = "translate"
     }]
-    expressions_structure = [["0"]]
   }
 
   # Optional JSON schema describing the automation's structured response.

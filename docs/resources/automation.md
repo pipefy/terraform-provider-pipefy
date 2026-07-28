@@ -57,15 +57,15 @@ resource "pipefy_automation" "example_ai" {
     trigger_field_ids = [pipefy_field.title.internal_id]
   }
 
-  # conditions to trigger the automation
+  # Conditions that gate the automation. all_of ANDs its comparisons together;
+  # use any_of instead to OR them, with a nested all_of on an entry that needs
+  # AND inside the OR.
   condition = {
-    expressions = [{
-      structure_id  = "0"
-      field_address = pipefy_field.title.internal_id
-      operation     = "equals"
-      value         = "translate"
+    all_of = [{
+      field     = pipefy_field.title.internal_id
+      operation = "equals"
+      value     = "translate"
     }]
-    expressions_structure = [["0"]]
   }
 
   # Optional JSON schema describing the automation's structured response.
@@ -129,7 +129,7 @@ resource "pipefy_automation" "daily_move" {
 ### Optional
 
 - `action_params` (String) The parameters of the action for the automation, as a JSON string. Write-only: not read back from the API, so drift is not detected and removing it does not clear it on the server.
-- `condition` (Attributes) Condition that gates the automation. Managed in full: the configured expressions are authoritative, and omitting the block clears the condition on the server. (see [below for nested schema](#nestedatt--condition))
+- `condition` (Attributes) Condition that gates the automation. all_of ANDs its comparisons together; any_of ORs its entries together. Exactly one of all_of or any_of must be set. Managed in full: the configured comparisons are authoritative, and omitting the block clears the condition on the server. (see [below for nested schema](#nestedatt--condition))
 - `event_params` (Attributes) Parameters of the event the automation listens to. Which subfields apply depends on event_id; see the API reference (https://developers.pipefy.com/reference/automation-creation). Write-only: not read back from the API, so drift is not detected and removing the block does not clear it on the server. (see [below for nested schema](#nestedatt--event_params))
 - `response_schema` (String) JSON response schema for the automation, as a JSON string. Compared semantically, so formatting and key order do not cause a diff.
 - `scheduler_cron` (Attributes) Cron schedule for time-based (scheduler) triggers. Fields use standard crontab syntax. Required while event_id is "scheduler". (see [below for nested schema](#nestedatt--scheduler_cron))
@@ -143,23 +143,46 @@ resource "pipefy_automation" "daily_move" {
 <a id="nestedatt--condition"></a>
 ### Nested Schema for `condition`
 
+Optional:
+
+- `all_of` (Attributes List) Comparisons that must all hold. (see [below for nested schema](#nestedatt--condition--all_of))
+- `any_of` (Attributes List) Comparisons or nested all_of groups where at least one must hold. (see [below for nested schema](#nestedatt--condition--any_of))
+
+<a id="nestedatt--condition--all_of"></a>
+### Nested Schema for `condition.all_of`
+
 Required:
 
-- `expressions` (Attributes List) Condition expressions. (see [below for nested schema](#nestedatt--condition--expressions))
-- `expressions_structure` (List of List of String) Boolean grouping of expressions by structure_id. Outer list is OR, inner lists are AND.
-
-<a id="nestedatt--condition--expressions"></a>
-### Nested Schema for `condition.expressions`
-
-Required:
-
-- `field_address` (String) Field id the expression tests.
-- `operation` (String) Comparison operation. Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).
-- `structure_id` (String) Caller-assigned handle referenced by expressions_structure.
+- `field` (String) The internal_id of the field this comparison evaluates. A dotted path addresses a field reached through a connection.
+- `operation` (String) The comparison operator (for example equals, not_equals, present, blank). Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).
 
 Optional:
 
-- `value` (String) Value to compare against.
+- `value` (String) The value compared against. Omit for operators that take no value, such as present and blank.
+
+
+<a id="nestedatt--condition--any_of"></a>
+### Nested Schema for `condition.any_of`
+
+Optional:
+
+- `all_of` (Attributes List) A nested group of comparisons that must all hold, ORed against this entry's any_of siblings. (see [below for nested schema](#nestedatt--condition--any_of--all_of))
+- `field` (String) The internal_id of the field this entry compares. Omit when this entry is a nested all_of group instead.
+- `operation` (String) The comparison operator (for example equals, not_equals, present, blank). Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).
+- `value` (String) The value compared against. Omit for operators that take no value, such as present and blank.
+
+<a id="nestedatt--condition--any_of--all_of"></a>
+### Nested Schema for `condition.any_of.all_of`
+
+Required:
+
+- `field` (String) The internal_id of the field this comparison evaluates. A dotted path addresses a field reached through a connection.
+- `operation` (String) The comparison operator (for example equals, not_equals, present, blank). Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).
+
+Optional:
+
+- `value` (String) The value compared against. Omit for operators that take no value, such as present and blank.
+
 
 
 
