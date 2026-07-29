@@ -22,7 +22,7 @@ func Attributes() map[string]schema.Attribute {
 	return map[string]schema.Attribute{
 		"all_of": schema.ListNestedAttribute{
 			Optional:    true,
-			Description: "Comparisons that must all hold. Set this or any_of, not both.",
+			Description: "Comparisons that must all hold. Exactly one of all_of or any_of must be set.",
 			Validators: []validator.List{
 				listvalidator.SizeAtLeast(1),
 				listvalidator.ExactlyOneOf(path.Expressions{path.MatchRelative().AtParent().AtName("any_of")}...),
@@ -33,7 +33,7 @@ func Attributes() map[string]schema.Attribute {
 		},
 		"any_of": schema.ListNestedAttribute{
 			Optional:    true,
-			Description: "Comparisons or nested all_of groups where at least one must hold. Set this or all_of, not both. Takes at least 2 entries; a single entry is all_of.",
+			Description: "Comparisons or nested all_of groups where at least one must hold. Exactly one of all_of or any_of must be set. Takes at least 2 entries; a single entry is all_of.",
 			Validators:  []validator.List{validators.ConditionAnyOfMinSize()},
 			NestedObject: schema.NestedAttributeObject{
 				Attributes: map[string]schema.Attribute{
@@ -67,8 +67,6 @@ func Attributes() map[string]schema.Attribute {
 	}
 }
 
-// comparisonAttributes is shared by a top-level all_of entry and a comparison
-// nested inside an any_of entry's own all_of group.
 func comparisonAttributes() map[string]schema.Attribute {
 	return map[string]schema.Attribute{
 		"field": schema.StringAttribute{

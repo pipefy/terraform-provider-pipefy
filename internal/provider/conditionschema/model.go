@@ -8,10 +8,10 @@ package conditionschema
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
-	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/conditiongql"
 )
@@ -113,15 +113,21 @@ func (c *Condition) comparisonGroups() [][]Comparison {
 // No condition at all maps to nil. A resource whose condition is optional
 // stores that as a null block; one whose condition is required substitutes an
 // empty condition.
-func FromPayload(p *conditiongql.Condition, diags *diag.Diagnostics) *Condition {
+//
+// A payload no condition can express yields an error and no condition, so a
+// caller cannot mistake a half-built result for a whole one.
+func FromPayload(p *conditiongql.Condition) (*Condition, error) {
 	if p == nil || len(p.Expressions) == 0 || len(p.ExpressionsStructure) == 0 {
-		return nil
+		return nil, nil
 	}
 
-	groups := comparisonGroupsFromPayload(p, diags)
+	groups, err := comparisonGroupsFromPayload(p)
+	if err != nil {
+		return nil, err
+	}
 
 	if len(groups) == 1 {
-		return &Condition{AllOf: groups[0]}
+		return &Condition{AllOf: groups[0]}, nil
 	}
 
 	anyOf := make([]AnyOfEntry, len(groups))
@@ -136,15 +142,13 @@ func FromPayload(p *conditiongql.Condition, diags *diag.Diagnostics) *Condition 
 		}
 		anyOf[gi] = AnyOfEntry{AllOf: g}
 	}
-	return &Condition{AnyOf: anyOf}
+	return &Condition{AnyOf: anyOf}, nil
 }
 
-// comparisonGroupsFromPayload orders groups by expressions_structure, and each
-// group's comparisons by that group's own array.
-func comparisonGroupsFromPayload(p *conditiongql.Condition, diags *diag.Diagnostics) [][]Comparison {
+func comparisonGroupsFromPayload(p *conditiongql.Condition) ([][]Comparison, error) {
 	byID := make(map[string]Comparison, len(p.Expressions))
 	for _, e := range p.Expressions {
-		byID[e.StructureId] = Comparison{
+		byID[stringifyStructureElem(e.StructureId)] = Comparison{
 			Field:     types.StringValue(e.FieldAddress),
 			Operation: types.StringValue(e.Operation),
 			Value:     comparisonValue(e.Value),
@@ -154,28 +158,20 @@ func comparisonGroupsFromPayload(p *conditiongql.Condition, diags *diag.Diagnost
 	groups := make([][]Comparison, len(p.ExpressionsStructure))
 	for gi, ids := range p.ExpressionsStructure {
 		if len(ids) == 0 {
-			diags.AddError(
-				"condition API inconsistency",
-				fmt.Sprintf("expressions_structure group %d is empty, which no condition can express", gi),
-			)
-			continue
+			return nil, fmt.Errorf("expressions_structure group %d is empty, which no condition can express", gi)
 		}
 		comparisons := make([]Comparison, 0, len(ids))
 		for _, rawID := range ids {
 			key := stringifyStructureElem(rawID)
 			c, ok := byID[key]
 			if !ok {
-				diags.AddError(
-					"condition API inconsistency",
-					fmt.Sprintf("expressions_structure group %d references structure_id %q, which has no matching entry in expressions", gi, key),
-				)
-				continue
+				return nil, fmt.Errorf("expressions_structure group %d references structure_id %q, which has no matching entry in expressions", gi, key)
 			}
 			comparisons = append(comparisons, c)
 		}
 		groups[gi] = comparisons
 	}
-	return groups
+	return groups, nil
 }
 
 // comparisonValue normalizes a blank value to null. Operations that take no
@@ -194,6 +190,12 @@ func stringifyStructureElem(v any) string {
 	case string:
 		return n
 	case float64:
+		// A fractional id is not one the server assigned. Truncating it would
+		// land on a real expression, so keep it distinct and let the caller
+		// report it as unmatched.
+		if n != math.Trunc(n) {
+			return strconv.FormatFloat(n, 'f', -1, 64)
+		}
 		return strconv.FormatInt(int64(n), 10)
 	default:
 		return fmt.Sprintf("%v", v)

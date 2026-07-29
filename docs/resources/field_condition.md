@@ -113,8 +113,8 @@ Optional:
 
 Optional:
 
-- `all_of` (Attributes List) Comparisons that must all hold. Set this or any_of, not both. (see [below for nested schema](#nestedatt--condition--all_of))
-- `any_of` (Attributes List) Comparisons or nested all_of groups where at least one must hold. Set this or all_of, not both. Takes at least 2 entries; a single entry is all_of. (see [below for nested schema](#nestedatt--condition--any_of))
+- `all_of` (Attributes List) Comparisons that must all hold. Exactly one of all_of or any_of must be set. (see [below for nested schema](#nestedatt--condition--all_of))
+- `any_of` (Attributes List) Comparisons or nested all_of groups where at least one must hold. Exactly one of all_of or any_of must be set. Takes at least 2 entries; a single entry is all_of. (see [below for nested schema](#nestedatt--condition--any_of))
 
 <a id="nestedatt--condition--all_of"></a>
 ### Nested Schema for `condition.all_of`

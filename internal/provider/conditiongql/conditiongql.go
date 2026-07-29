@@ -12,13 +12,16 @@ const Selection = "expressions{ structure_id field_address operation value } exp
 type Condition struct {
 	Expressions []Expression `json:"expressions"`
 	// ExpressionsStructure references expressions by structure_id: the outer
-	// list is ORed, each inner list ANDed. The API returns the inner elements
-	// untyped, as numbers or strings, hence any.
+	// list is ORed, each inner list ANDed.
 	ExpressionsStructure [][]any `json:"expressions_structure"`
 }
 
 type Expression struct {
-	StructureId  string  `json:"structure_id"`
+	// StructureId is untyped for the same reason the elements of
+	// ExpressionsStructure are: both sides of that reference come back as a
+	// number or a string depending on how the condition was written, and a
+	// concrete Go type would fail the whole read on the other one.
+	StructureId  any     `json:"structure_id"`
 	FieldAddress string  `json:"field_address"`
 	Operation    string  `json:"operation"`
 	Value        *string `json:"value"`

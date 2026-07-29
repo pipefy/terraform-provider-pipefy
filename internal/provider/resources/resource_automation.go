@@ -235,7 +235,12 @@ func (m *AutomationModel) apply(a *automationData, diags *diag.Diagnostics) {
 	m.SchedulerCron = automationCronToModel(a.SchedulerCron)
 	m.SearchFor = automationSearchForToModel(a.SearchFor)
 	m.ResponseSchema = automationNormalizeJSON(a.ResponseSchema)
-	m.Condition = conditionschema.FromPayload(a.Condition, diags)
+	cond, err := conditionschema.FromPayload(a.Condition)
+	if err != nil {
+		diags.AddError("automation condition API inconsistency", err.Error())
+		return
+	}
+	m.Condition = cond
 }
 
 // addAutomationOptionalInputs adds the optional inputs shared by Create and

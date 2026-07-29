@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/conditiongql"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/conditionschema"
@@ -134,6 +133,17 @@ func payload(t *testing.T, raw string) *conditiongql.Condition {
 	return &p
 }
 
+// fromPayload fails the test on an error, for the cases that expect a payload
+// the provider can reconstruct.
+func fromPayload(t *testing.T, p *conditiongql.Condition) *conditionschema.Condition {
+	t.Helper()
+	c, err := conditionschema.FromPayload(p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	return c
+}
+
 func TestFromPayloadNoCondition(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -144,18 +154,13 @@ func TestFromPayloadNoCondition(t *testing.T) {
 		{"groups pruned server-side", `{"expressions":[{"structure_id":"0","field_address":"1001","operation":"equals"}],"expressions_structure":[]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var diags diag.Diagnostics
-			if got := conditionschema.FromPayload(payload(t, tc.raw), &diags); got != nil {
+			if got := fromPayload(t, payload(t, tc.raw)); got != nil {
 				t.Fatalf("FromPayload() = %#v, want nil", got)
-			}
-			if diags.HasError() {
-				t.Fatalf("unexpected diagnostics: %v", diags)
 			}
 		})
 	}
 
-	var diags diag.Diagnostics
-	if got := conditionschema.FromPayload(nil, &diags); got != nil {
+	if got := fromPayload(t, nil); got != nil {
 		t.Fatalf("FromPayload(nil) = %#v, want nil", got)
 	}
 }
@@ -204,6 +209,17 @@ func TestFromPayload(t *testing.T) {
 			}},
 		},
 		{
+			name: "within a group, the group's own order wins, and a numeric structure_id is accepted",
+			raw: `{"expressions":[` +
+				`{"structure_id":0,"field_address":"1001","operation":"equals","value":"Other"},` +
+				`{"structure_id":1,"field_address":"2001","operation":"equals","value":"High"}` +
+				`],"expressions_structure":[["1","0"]]}`,
+			want: &conditionschema.Condition{AllOf: []conditionschema.Comparison{
+				comparison("2001", "equals", "High"),
+				comparison("1001", "equals", "Other"),
+			}},
+		},
+		{
 			name: "a blank value normalizes to null",
 			raw: `{"expressions":[` +
 				`{"structure_id":"0","field_address":"1001","operation":"present","value":""},` +
@@ -216,11 +232,7 @@ func TestFromPayload(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var diags diag.Diagnostics
-			got := conditionschema.FromPayload(payload(t, tc.raw), &diags)
-			if diags.HasError() {
-				t.Fatalf("unexpected diagnostics: %v", diags)
-			}
+			got := fromPayload(t, payload(t, tc.raw))
 			if gotShape, wantShape := describe(got), describe(tc.want); gotShape != wantShape {
 				t.Fatalf("FromPayload() mismatch\n got: %s\nwant: %s", gotShape, wantShape)
 			}
@@ -228,16 +240,45 @@ func TestFromPayload(t *testing.T) {
 	}
 }
 
-// TestFromPayloadOrphanStructureId covers a structure group referencing an id
-// no expression carries. The API enforces the bijection, so a response like this
-// is broken and gets reported rather than papered over.
-func TestFromPayloadOrphanStructureId(t *testing.T) {
-	var diags diag.Diagnostics
-	conditionschema.FromPayload(payload(t, `{"expressions":[`+
-		`{"structure_id":"0","field_address":"1001","operation":"equals","value":"Other"}`+
-		`],"expressions_structure":[["0"],["7"]]}`), &diags)
-	if !diags.HasError() {
-		t.Fatal("expected a diagnostic for the unmatched structure_id")
+// TestFromPayloadUnreconstructableShapes covers payloads no condition can
+// express: a structure group referencing an id no expression carries, and an
+// empty group. The API enforces the bijection, so a response like either is
+// broken and gets reported rather than papered over.
+func TestFromPayloadUnreconstructableShapes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{
+			name: "orphan structure_id",
+			raw: `{"expressions":[` +
+				`{"structure_id":"0","field_address":"1001","operation":"equals","value":"Other"}` +
+				`],"expressions_structure":[["0"],["7"]]}`,
+		},
+		{
+			name: "empty group",
+			raw: `{"expressions":[` +
+				`{"structure_id":"0","field_address":"1001","operation":"equals","value":"Other"}` +
+				`],"expressions_structure":[["0"],[]]}`,
+		},
+		{
+			// Reported rather than truncated onto the expression it would round
+			// down to.
+			name: "fractional structure element",
+			raw: `{"expressions":[` +
+				`{"structure_id":1,"field_address":"1001","operation":"equals","value":"Other"}` +
+				`],"expressions_structure":[[1.5]]}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := conditionschema.FromPayload(payload(t, tc.raw))
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if got != nil {
+				t.Fatalf("FromPayload() = %#v, want nil alongside the error", got)
+			}
+		})
 	}
 }
 
@@ -262,11 +303,7 @@ func TestRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var diags diag.Diagnostics
-		got := conditionschema.FromPayload(payload(t, string(raw)), &diags)
-		if diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
+		got := fromPayload(t, payload(t, string(raw)))
 		if gotShape, wantShape := describe(got), describe(cond); gotShape != wantShape {
 			t.Fatalf("round trip mismatch\n got: %s\nwant: %s", gotShape, wantShape)
 		}

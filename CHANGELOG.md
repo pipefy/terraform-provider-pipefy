@@ -11,7 +11,7 @@ BREAKING CHANGES:
   ```
 
   A later `apply` re-sends `event_params` and `action_params` from config because both are write-only; this is expected and non-destructive.
-* `resource/pipefy_field_condition`: a comparison `value` can no longer be a blank string, and a `value` read back as `""` now normalizes to null. Value-less operations such as `present` and `blank` return `""` rather than null for conditions created outside Terraform, so importing one used to diff on every plan. The two rules go together: without the plan-time rejection, a configured `""` could never settle against the normalized read. A configuration comparing against an empty string, `operation = "equals"` with `value = ""`, applied cleanly before and now fails validation.
+* `resource/pipefy_automation`, `resource/pipefy_field_condition`: a comparison `value` can no longer be a blank string, and a `value` read back as `""` now normalizes to null. Value-less operations such as `present` and `blank` return `""` rather than null for conditions created outside Terraform, so importing one used to diff on every plan. The two rules go together: without the plan-time rejection, a configured `""` could never settle against the normalized read. A configuration comparing against an empty string, `operation = "equals"` with `value = ""`, applied cleanly before and now fails validation. The normalization also reaches the write path, since a null `value` is sent as an omitted key rather than as `""`: a condition already carrying `value: ""` on an operation that does take a value loses that empty string the next time anything else on the resource changes. Earlier versions read it back as `""` and re-sent it verbatim.
 
 FEATURES:
 

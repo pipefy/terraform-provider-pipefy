@@ -42,9 +42,8 @@ resource "pipefy_automation" "example_ai" {
     trigger_field_ids = [pipefy_field.title.internal_id]
   }
 
-  # Conditions that gate the automation. all_of ANDs its comparisons together;
-  # use any_of instead to OR them, with a nested all_of on an entry that needs
-  # AND inside the OR.
+  # Gates the automation: all_of runs it only when every comparison holds.
+  # Use any_of instead when any one comparison is enough.
   condition = {
     all_of = [{
       field     = pipefy_field.title.internal_id

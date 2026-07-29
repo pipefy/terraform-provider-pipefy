@@ -329,11 +329,16 @@ func applyFieldConditionToModel(data *FieldConditionModel, fc *fieldconditiongql
 		data.PhaseId = types.StringValue(fc.Phase.Id)
 	}
 
-	// condition is Required here, so it must never settle to null.
-	data.Condition = conditionschema.FromPayload(fc.Condition, diags)
-	if data.Condition == nil {
-		data.Condition = &conditionschema.Condition{}
+	cond, err := conditionschema.FromPayload(fc.Condition)
+	if err != nil {
+		diags.AddError("field condition API inconsistency", err.Error())
+		return
 	}
+	// condition is Required here, so it must never settle to null.
+	if cond == nil {
+		cond = &conditionschema.Condition{}
+	}
+	data.Condition = cond
 
 	data.Actions = actionsFromFieldCondition(fc.Actions, diags)
 }
