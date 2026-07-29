@@ -24,6 +24,7 @@ func TestConditionAnyOfMinSize(t *testing.T) {
 		{"unknown is allowed", types.ListUnknown(types.StringType), false},
 		{"two elements", mustStringList(t, "a", "b"), false},
 		{"single element", mustStringList(t, "a"), true},
+		{"empty list", mustStringList(t), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resp := &validator.ListResponse{}

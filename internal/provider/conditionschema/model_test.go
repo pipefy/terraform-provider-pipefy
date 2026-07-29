@@ -5,6 +5,8 @@ package conditionschema_test
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -33,6 +35,43 @@ func inputJSON(t *testing.T, c *conditionschema.Condition) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// describe renders a condition with its all_of/any_of nesting visible. Read
+// assertions need this rather than the Input() form: flattening is exactly what
+// erases the difference between all_of=[x,y] and a lone any_of entry nesting
+// the same two comparisons, so comparing wire payloads would pass on a shape
+// the canonicalization is supposed to rule out.
+func describe(c *conditionschema.Condition) string {
+	switch {
+	case c == nil:
+		return "nil"
+	case c.AllOf != nil:
+		return "all_of[" + describeComparisons(c.AllOf) + "]"
+	case c.AnyOf == nil:
+		return "empty"
+	}
+	entries := make([]string, len(c.AnyOf))
+	for i, e := range c.AnyOf {
+		if e.AllOf != nil {
+			entries[i] = "all_of[" + describeComparisons(e.AllOf) + "]"
+			continue
+		}
+		entries[i] = describeComparison(conditionschema.Comparison{Field: e.Field, Operation: e.Operation, Value: e.Value})
+	}
+	return "any_of[" + strings.Join(entries, " ") + "]"
+}
+
+func describeComparisons(cs []conditionschema.Comparison) string {
+	parts := make([]string, len(cs))
+	for i, c := range cs {
+		parts[i] = describeComparison(c)
+	}
+	return strings.Join(parts, " ")
+}
+
+func describeComparison(c conditionschema.Comparison) string {
+	return fmt.Sprintf("(%s %s %s)", c.Field, c.Operation, c.Value)
 }
 
 func TestInput(t *testing.T) {
@@ -183,8 +222,8 @@ func TestFromPayload(t *testing.T) {
 			if diags.HasError() {
 				t.Fatalf("unexpected diagnostics: %v", diags)
 			}
-			if gotJSON, wantJSON := inputJSON(t, got), inputJSON(t, tc.want); gotJSON != wantJSON {
-				t.Fatalf("FromPayload() mismatch\n got: %s\nwant: %s", gotJSON, wantJSON)
+			if gotShape, wantShape := describe(got), describe(tc.want); gotShape != wantShape {
+				t.Fatalf("FromPayload() mismatch\n got: %s\nwant: %s", gotShape, wantShape)
 			}
 		})
 	}
@@ -204,8 +243,9 @@ func TestFromPayloadOrphanStructureId(t *testing.T) {
 }
 
 // TestRoundTrip walks a condition through Input() and back through FromPayload
-// to confirm the canonical shapes are stable: what the provider writes is what
-// it reads back, so a settled resource stays settled.
+// to confirm the canonical shapes are stable: FromPayload(Input(c)) has to
+// reproduce c itself, nesting included, which is what keeps a settled resource
+// settled instead of replanning on every refresh.
 func TestRoundTrip(t *testing.T) {
 	for _, cond := range []*conditionschema.Condition{
 		{AllOf: []conditionschema.Comparison{comparison("1001", "equals", "Other")}},
@@ -230,8 +270,8 @@ func TestRoundTrip(t *testing.T) {
 		if diags.HasError() {
 			t.Fatalf("unexpected diagnostics: %v", diags)
 		}
-		if gotJSON, wantJSON := inputJSON(t, got), inputJSON(t, cond); gotJSON != wantJSON {
-			t.Fatalf("round trip mismatch\n got: %s\nwant: %s", gotJSON, wantJSON)
+		if gotShape, wantShape := describe(got), describe(cond); gotShape != wantShape {
+			t.Fatalf("round trip mismatch\n got: %s\nwant: %s", gotShape, wantShape)
 		}
 	}
 }

@@ -1032,9 +1032,10 @@ func TestUnit_AutomationResource_ConditionRoundTripDriftAndClear(t *testing.T) {
 				},
 			},
 			{
-				// Drift injected in the wire form, including structure ids the
-				// provider would never assign, to check Read reconstructs from
-				// whatever the server reports rather than from state.
+				// Drift injected in the wire form. ExpectNonEmptyPlan only
+				// asserts that the refresh noticed something; what Read
+				// reconstructs from a server-shaped payload is pinned by
+				// TestUnit_AutomationResource_ConditionReadsServerShape.
 				PreConfig: func() {
 					st.Condition = json.RawMessage(`{"expressions":[{"field_address":"427453916","operation":"equals","value":"CHANGED","structure_id":"5"}],"expressions_structure":[["5"]]}`)
 				},
@@ -1053,6 +1054,68 @@ func TestUnit_AutomationResource_ConditionRoundTripDriftAndClear(t *testing.T) {
 	if !strings.Contains(string(st.Condition), `"expressions":[]`) {
 		t.Fatalf("expected clear step to send an empty condition, got: %s", st.Condition)
 	}
+}
+
+// TestUnit_AutomationResource_ConditionReadsServerShape reads back a condition
+// in the shape the server can legitimately report for the same configuration:
+// structure ids the provider never assigned, and a value of "" on a
+// value-less comparison, which is what the API returns for conditions created
+// outside Terraform. Read has to reconstruct the same all_of and normalize the
+// "" to null, leaving the plan empty; either failure shows up here as a diff
+// the configuration cannot settle.
+func TestUnit_AutomationResource_ConditionReadsServerShape(t *testing.T) {
+	st := &automationState{}
+	srv := newAutomationServer(st)
+	defer srv.Close()
+
+	config := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "Value-less condition"
+		event_id       = "field_updated"
+		action_id      = "move_single_card"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+		active         = true
+
+		condition = {
+			all_of = [
+				{ field = "427453916", operation = "equals", value = "a" },
+				{ field = "427453917", operation = "present" },
+			]
+		}
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config},
+			{
+				PreConfig: func() {
+					st.Condition = json.RawMessage(`{"expressions":[` +
+						`{"field_address":"427453916","operation":"equals","structure_id":"31","value":"a"},` +
+						`{"field_address":"427453917","operation":"present","structure_id":"32","value":""}` +
+						`],"expressions_structure":[["31","32"]]}`)
+				},
+				Config: config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("condition").AtMapKey("all_of"), knownvalue.ListSizeExact(2)),
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("condition").AtMapKey("all_of").AtSliceIndex(1).AtMapKey("value"), knownvalue.Null()),
+				},
+			},
+		},
+	})
 }
 
 // TestUnit_AutomationResource_ConditionAnyOf covers the OR shape: an any_of
@@ -1164,6 +1227,13 @@ func TestUnit_AutomationResource_ConditionRejectsUnusableShapes(t *testing.T) {
 			{
 				Config:      with(`all_of = []`),
 				ExpectError: regexp.MustCompile(`(?i)at least 1`),
+			},
+			{
+				// An empty list counts as set for ExactlyOneOf, so without its
+				// own check this reaches the API as a condition-clearing
+				// payload and then reads back as null: a permanent diff.
+				Config:      with(`any_of = []`),
+				ExpectError: regexp.MustCompile(`(?i)Invalid any_of`),
 			},
 			{
 				Config: with(`

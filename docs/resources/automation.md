@@ -146,7 +146,7 @@ resource "pipefy_automation" "daily_move" {
 Optional:
 
 - `all_of` (Attributes List) Comparisons that must all hold. (see [below for nested schema](#nestedatt--condition--all_of))
-- `any_of` (Attributes List) Comparisons or nested all_of groups where at least one must hold. (see [below for nested schema](#nestedatt--condition--any_of))
+- `any_of` (Attributes List) Comparisons or nested all_of groups where at least one must hold. Takes at least 2 entries; a single entry is all_of. (see [below for nested schema](#nestedatt--condition--any_of))
 
 <a id="nestedatt--condition--all_of"></a>
 ### Nested Schema for `condition.all_of`
@@ -166,8 +166,8 @@ Optional:
 
 Optional:
 
-- `all_of` (Attributes List) A nested group of comparisons that must all hold, ORed against this entry's any_of siblings. (see [below for nested schema](#nestedatt--condition--any_of--all_of))
-- `field` (String) The internal_id of the field this entry compares. Omit when this entry is a nested all_of group instead.
+- `all_of` (Attributes List) A nested group of comparisons that must all hold, ORed against this entry's any_of siblings. Takes at least 2 comparisons; for a single one, set field, operation and value on the entry itself. (see [below for nested schema](#nestedatt--condition--any_of--all_of))
+- `field` (String) The internal_id of the field this entry compares, or a dotted path to a field reached through a connection. Omit when this entry is a nested all_of group instead.
 - `operation` (String) The comparison operator (for example equals, not_equals, present, blank). Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).
 - `value` (String) The value compared against. Omit for operators that take no value, such as present and blank.
 

@@ -10,11 +10,14 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// ConditionAnyOfMinSize returns a validator.List that rejects a single-element
-// any_of. any_of=[x] flattens to the same wire group as all_of=[x], so Read
-// cannot tell them apart and always reconstructs a lone group as all_of;
-// allowing any_of=[x] in configuration would produce a permanent diff after the
-// first apply.
+// ConditionAnyOfMinSize returns a validator.List that rejects an any_of with
+// fewer than two entries, neither of which survives a round trip. any_of=[x]
+// flattens to the same wire group as all_of=[x], so Read cannot tell them apart
+// and always reconstructs a lone group as all_of. any_of=[] flattens to the
+// payload that clears the condition, which reads back as no condition at all.
+// Either one would produce a permanent diff after the first apply. An empty
+// list needs its own check: ExactlyOneOf counts it as set, so it satisfies the
+// exclusivity rule between all_of and any_of.
 func ConditionAnyOfMinSize() validator.List { return conditionAnyOfMinSizeValidator{} }
 
 type conditionAnyOfMinSizeValidator struct{}
@@ -31,7 +34,14 @@ func (v conditionAnyOfMinSizeValidator) ValidateList(_ context.Context, req vali
 	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
 		return
 	}
-	if len(req.ConfigValue.Elements()) == 1 {
+	switch len(req.ConfigValue.Elements()) {
+	case 0:
+		resp.Diagnostics.AddAttributeError(
+			req.Path,
+			"Invalid any_of",
+			"any_of is empty, which describes no condition at all; give it at least 2 entries, or drop the condition",
+		)
+	case 1:
 		resp.Diagnostics.AddAttributeError(
 			req.Path,
 			"Invalid any_of",
