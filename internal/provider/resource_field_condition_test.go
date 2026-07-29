@@ -441,8 +441,8 @@ func fieldConditionMixedAnyOfBody(name string) string {
 // itself a nested all_of of two comparisons, alongside a second, plain
 // any_of entry. It verifies the provider sends sequential structure_ids to the
 // API in group-then-comparison order, and that the response reconstructs into
-// all_of/any_of matching the original nesting — not just the same shape, but
-// the same comparisons in the same slots.
+// all_of/any_of matching the original nesting: not just the same shape, but the
+// same comparisons in the same slots.
 func TestUnit_FieldConditionResource_MixedAnyOf(t *testing.T) {
 	st := &fieldConditionState{}
 	var sentCondition map[string]any

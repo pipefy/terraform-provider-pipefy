@@ -153,6 +153,13 @@ func comparisonGroupsFromPayload(p *conditiongql.Condition, diags *diag.Diagnost
 
 	groups := make([][]Comparison, len(p.ExpressionsStructure))
 	for gi, ids := range p.ExpressionsStructure {
+		if len(ids) == 0 {
+			diags.AddError(
+				"condition API inconsistency",
+				fmt.Sprintf("expressions_structure group %d is empty, which no condition can express", gi),
+			)
+			continue
+		}
 		comparisons := make([]Comparison, 0, len(ids))
 		for _, rawID := range ids {
 			key := stringifyStructureElem(rawID)
