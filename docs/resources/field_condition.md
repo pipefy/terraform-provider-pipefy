@@ -87,7 +87,7 @@ resource "pipefy_field_condition" "hide_priority" {
 ### Required
 
 - `actions` (Attributes List) What happens to each phase field when the condition holds. One entry per target field. (see [below for nested schema](#nestedatt--actions))
-- `condition` (Attributes) The criteria that must hold for the actions to run. all_of ANDs its comparisons together; any_of ORs its entries together. Exactly one of all_of or any_of must be set. (see [below for nested schema](#nestedatt--condition))
+- `condition` (Attributes) The criteria that must hold for the actions to run. (see [below for nested schema](#nestedatt--condition))
 - `name` (String) Name that describes what this condition does
 - `phase_id` (String) The ID of the phase the condition belongs to. Changing it forces a new field condition.
 

@@ -11,15 +11,11 @@ import (
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/validators"
 )
 
-// Description states the grammar every condition attribute shares. Each
-// resource combines it with its own wording about how the attribute is managed.
-const Description = "all_of ANDs its comparisons together; any_of ORs its entries together. Exactly one of all_of or any_of must be set."
-
 const operationDescription = "The comparison operator (for example equals, not_equals, present, blank). Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference)."
 
 const valueDescription = "The value compared against. Omit for operators that take no value, such as present and blank."
 
-// Attributes returns the all_of/any_of pair that makes up a condition. Callers
+// Attributes returns the all_of/any_of pair a condition is built from. Callers
 // wrap it in a SingleNestedAttribute of their own, so each resource keeps
 // control of whether its condition is required and how it documents it.
 func Attributes() map[string]schema.Attribute {
@@ -71,9 +67,8 @@ func Attributes() map[string]schema.Attribute {
 	}
 }
 
-// ComparisonAttributes is the attribute set for a plain comparison: a top-level
-// all_of entry, or a comparison nested inside an any_of entry's own all_of
-// group. Both require field and operation.
+// ComparisonAttributes is shared by a top-level all_of entry and a comparison
+// nested inside an any_of entry's own all_of group.
 func ComparisonAttributes() map[string]schema.Attribute {
 	return map[string]schema.Attribute{
 		"field": schema.StringAttribute{

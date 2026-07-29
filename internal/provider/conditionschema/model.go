@@ -1,11 +1,9 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-// Package conditionschema models the Pipefy condition grammar shared by every
-// resource that carries one. The schema attributes, the flattening into the
-// wire's expressions plus expressions_structure, and the canonicalization back
-// into all_of/any_of live here so pipefy_automation and pipefy_field_condition
-// cannot drift.
+// Package conditionschema models the condition that pipefy_automation and
+// pipefy_field_condition share: the schema attributes, and the mapping between
+// them and the wire form.
 package conditionschema
 
 import (
@@ -41,10 +39,9 @@ type AnyOfEntry struct {
 	AllOf     []Comparison `tfsdk:"all_of"`
 }
 
-// Input flattens all_of/any_of into the wire ConditionInput shape: a flat
-// expressions list plus expressions_structure, assigning fresh sequential
-// structure_ids in flattening order. The ids are sent as strings, which is
-// what reads return, so a mutation echo round-trips unchanged.
+// Input builds the wire ConditionInput. The structure ids go out as strings
+// because reads return them as strings, which keeps a mutation echo
+// round-trippable.
 func (c *Condition) Input() map[string]any {
 	groups := c.comparisonGroups()
 
@@ -77,10 +74,9 @@ func (c *Condition) Input() map[string]any {
 	}
 }
 
-// EmptyInput is the ConditionInput that clears a condition. The API accepts it
-// on both create and update, while an explicit null condition errors, so a
-// resource that manages its condition in full sends this when the block is
-// absent from configuration.
+// EmptyInput clears a condition. The API accepts it on create and update, while
+// an explicit null condition errors, so this is what a resource managing its
+// condition in full sends for an absent block.
 func EmptyInput() map[string]any {
 	return map[string]any{
 		"expressions":           []map[string]any{},
@@ -88,10 +84,6 @@ func EmptyInput() map[string]any {
 	}
 }
 
-// comparisonGroups expands all_of/any_of into the ordered list of AND-groups
-// the wire format expects: a single group for all_of, or one group per any_of
-// entry (that entry's all_of if set, otherwise a one-comparison group built
-// from its own field/operation/value).
 func (c *Condition) comparisonGroups() [][]Comparison {
 	if len(c.AllOf) > 0 {
 		return [][]Comparison{c.AllOf}
@@ -111,20 +103,16 @@ func (c *Condition) comparisonGroups() [][]Comparison {
 	return groups
 }
 
-// FromPayload reconstructs all_of/any_of from the API's flat expressions plus
-// expressions_structure, canonicalizing deterministically so Read never has to
-// guess between two configurations that flatten identically: a single group is
-// always all_of; multiple groups are always any_of, and within any_of a
-// single-comparison group is a plain entry while a multi-comparison group is a
-// nested all_of. Without this rule, all_of=[x] and any_of=[x] (or a nested
-// all_of=[x] inside an any_of entry) are indistinguishable on the wire, and
-// reconstructing the "wrong" legal shape would produce a permanent diff. The
-// ConditionAnyOfMinSize and ConditionComparisonOrGroup validators reject the
-// shapes this cannot reproduce.
+// FromPayload rebuilds the condition from the wire form. Several distinct
+// configurations flatten to the same payload, so it picks one shape per payload
+// and always the same one: a lone group is all_of, and within a multi-group
+// any_of a one-comparison group is a plain entry. The validators reject the
+// configurations this cannot reproduce, which is what stops the choice from
+// showing up as a permanent diff.
 //
-// A payload carrying no condition at all maps to nil. Callers whose condition
-// attribute is optional store that as a null block; callers whose attribute is
-// required substitute an empty one.
+// No condition at all maps to nil. A resource whose condition is optional
+// stores that as a null block; one whose condition is required substitutes an
+// empty condition.
 func FromPayload(p *conditiongql.Condition, diags *diag.Diagnostics) *Condition {
 	if p == nil || len(p.Expressions) == 0 || len(p.ExpressionsStructure) == 0 {
 		return nil
@@ -151,12 +139,8 @@ func FromPayload(p *conditiongql.Condition, diags *diag.Diagnostics) *Condition 
 	return &Condition{AnyOf: anyOf}
 }
 
-// comparisonGroupsFromPayload reconstructs AND-groups of comparisons from the
-// flat expressions plus expressions_structure. Outer order follows
-// expressions_structure; inner (within-group) order follows each inner array.
-// A structure_id referenced by a group with no matching expression indicates an
-// inconsistency in the API response rather than a configuration error, so it is
-// reported as a diagnostic rather than silently dropped.
+// comparisonGroupsFromPayload orders groups by expressions_structure, and each
+// group's comparisons by that group's own array.
 func comparisonGroupsFromPayload(p *conditiongql.Condition, diags *diag.Diagnostics) [][]Comparison {
 	byID := make(map[string]Comparison, len(p.Expressions))
 	for _, e := range p.Expressions {
@@ -187,11 +171,10 @@ func comparisonGroupsFromPayload(p *conditiongql.Condition, diags *diag.Diagnost
 	return groups
 }
 
-// comparisonValue maps a read-back expression value to state. A blank value is
-// normalized to null: operations that take no value, such as present and
-// blank, come back as "" rather than null for conditions the UI created, and
-// keeping that "" would diff forever against a configuration that omits value.
-// The schema rejects a blank value on the way in, so nothing legitimate is lost.
+// comparisonValue normalizes a blank value to null. Operations that take no
+// value, present and blank, come back as "" rather than null for conditions
+// created outside Terraform, and keeping the "" would diff forever. The schema
+// rejects a blank value on the way in, so nothing legitimate is lost.
 func comparisonValue(v *string) types.String {
 	if v == nil || strings.TrimSpace(*v) == "" {
 		return types.StringNull()
@@ -199,9 +182,6 @@ func comparisonValue(v *string) types.String {
 	return types.StringValue(*v)
 }
 
-// stringifyStructureElem normalizes an expressions_structure element (which the
-// API returns untyped, as a number or a string) to the same string form used to
-// key expressions by structure_id.
 func stringifyStructureElem(v any) string {
 	switch n := v.(type) {
 	case string:

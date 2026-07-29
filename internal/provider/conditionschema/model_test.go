@@ -28,7 +28,7 @@ func comparison(field, operation, value string) conditionschema.Comparison {
 }
 
 // inputJSON marshals an Input() payload so a test can assert the whole wire
-// shape at once, key order included (Go sorts map keys).
+// shape at once, key order included.
 func inputJSON(t *testing.T, c *conditionschema.Condition) string {
 	t.Helper()
 	b, err := json.Marshal(c.Input())
@@ -38,11 +38,9 @@ func inputJSON(t *testing.T, c *conditionschema.Condition) string {
 	return string(b)
 }
 
-// describe renders a condition with its all_of/any_of nesting visible. Read
-// assertions need this rather than the Input() form: flattening is exactly what
-// erases the difference between all_of=[x,y] and a lone any_of entry nesting
-// the same two comparisons, so comparing wire payloads would pass on a shape
-// the canonicalization is supposed to rule out.
+// describe keeps the all_of/any_of nesting visible. Read assertions need it
+// rather than the Input() form, which flattens away the difference between
+// all_of=[x,y] and a lone any_of entry nesting the same two comparisons.
 func describe(c *conditionschema.Condition) string {
 	switch {
 	case c == nil:
@@ -231,8 +229,8 @@ func TestFromPayload(t *testing.T) {
 }
 
 // TestFromPayloadOrphanStructureId covers a structure group referencing an id
-// no expression carries. The API enforces the bijection, so this is a broken
-// response rather than bad configuration: it is reported, not papered over.
+// no expression carries. The API enforces the bijection, so a response like this
+// is broken and gets reported rather than papered over.
 func TestFromPayloadOrphanStructureId(t *testing.T) {
 	var diags diag.Diagnostics
 	conditionschema.FromPayload(payload(t, `{"expressions":[`+
@@ -243,10 +241,8 @@ func TestFromPayloadOrphanStructureId(t *testing.T) {
 	}
 }
 
-// TestRoundTrip walks a condition through Input() and back through FromPayload
-// to confirm the canonical shapes are stable: FromPayload(Input(c)) has to
-// reproduce c itself, nesting included, which is what keeps a settled resource
-// settled instead of replanning on every refresh.
+// TestRoundTrip requires FromPayload(Input(c)) to reproduce c itself, nesting
+// included. That is what keeps a settled resource settled.
 func TestRoundTrip(t *testing.T) {
 	for _, cond := range []*conditionschema.Condition{
 		{AllOf: []conditionschema.Comparison{comparison("1001", "equals", "Other")}},

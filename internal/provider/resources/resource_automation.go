@@ -359,7 +359,7 @@ func (r *AutomationResource) Schema(ctx context.Context, req resource.SchemaRequ
 			"action_params": schema.StringAttribute{Optional: true, Description: "The parameters of the action for the automation, as a JSON string. Write-only: not read back from the API, so drift is not detected and removing it does not clear it on the server."},
 			"condition": schema.SingleNestedAttribute{
 				Optional:    true,
-				Description: "Condition that gates the automation. " + conditionschema.Description + " Managed in full: the configured comparisons are authoritative, and omitting the block clears the condition on the server.",
+				Description: "Condition that gates the automation. Managed in full: the configured comparisons are authoritative, and omitting the block clears the condition on the server.",
 				Attributes:  conditionschema.Attributes(),
 			},
 			"active": schema.BoolAttribute{Required: true, Description: "Whether the automation is active."},

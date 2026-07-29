@@ -65,7 +65,7 @@ func (r *FieldConditionResource) Schema(ctx context.Context, req resource.Schema
 			"name": schema.StringAttribute{Required: true, Description: "Name that describes what this condition does"},
 			"condition": schema.SingleNestedAttribute{
 				Required:    true,
-				Description: "The criteria that must hold for the actions to run. " + conditionschema.Description,
+				Description: "The criteria that must hold for the actions to run.",
 				Attributes:  conditionschema.Attributes(),
 			},
 			"actions": schema.ListNestedAttribute{
@@ -329,9 +329,7 @@ func applyFieldConditionToModel(data *FieldConditionModel, fc *fieldconditiongql
 		data.PhaseId = types.StringValue(fc.Phase.Id)
 	}
 
-	// condition is Required here, so it must never settle to null: a payload
-	// carrying no condition at all (or one the server pruned down to nothing)
-	// maps to an empty block rather than a missing one.
+	// condition is Required here, so it must never settle to null.
 	data.Condition = conditionschema.FromPayload(fc.Condition, diags)
 	if data.Condition == nil {
 		data.Condition = &conditionschema.Condition{}

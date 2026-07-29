@@ -129,7 +129,7 @@ resource "pipefy_automation" "daily_move" {
 ### Optional
 
 - `action_params` (String) The parameters of the action for the automation, as a JSON string. Write-only: not read back from the API, so drift is not detected and removing it does not clear it on the server.
-- `condition` (Attributes) Condition that gates the automation. all_of ANDs its comparisons together; any_of ORs its entries together. Exactly one of all_of or any_of must be set. Managed in full: the configured comparisons are authoritative, and omitting the block clears the condition on the server. (see [below for nested schema](#nestedatt--condition))
+- `condition` (Attributes) Condition that gates the automation. Managed in full: the configured comparisons are authoritative, and omitting the block clears the condition on the server. (see [below for nested schema](#nestedatt--condition))
 - `event_params` (Attributes) Parameters of the event the automation listens to. Which subfields apply depends on event_id; see the API reference (https://developers.pipefy.com/reference/automation-creation). Write-only: not read back from the API, so drift is not detected and removing the block does not clear it on the server. (see [below for nested schema](#nestedatt--event_params))
 - `response_schema` (String) JSON response schema for the automation, as a JSON string. Compared semantically, so formatting and key order do not cause a diff.
 - `scheduler_cron` (Attributes) Cron schedule for time-based (scheduler) triggers. Fields use standard crontab syntax. Required while event_id is "scheduler". (see [below for nested schema](#nestedatt--scheduler_cron))

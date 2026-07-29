@@ -10,14 +10,12 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// ConditionAnyOfMinSize returns a validator.List that rejects an any_of with
-// fewer than two entries, neither of which survives a round trip. any_of=[x]
-// flattens to the same wire group as all_of=[x], so Read cannot tell them apart
-// and always reconstructs a lone group as all_of. any_of=[] flattens to the
-// payload that clears the condition, which reads back as no condition at all.
-// Either one would produce a permanent diff after the first apply. An empty
-// list needs its own check: ExactlyOneOf counts it as set, so it satisfies the
-// exclusivity rule between all_of and any_of.
+// ConditionAnyOfMinSize rejects an any_of with fewer than two entries, since
+// neither size survives a round trip: any_of=[x] flattens to the same wire group
+// as all_of=[x] and comes back as all_of, and any_of=[] flattens to the payload
+// that clears the condition and comes back as nothing. The empty case needs
+// checking here rather than through a size validator on the attribute, because
+// ExactlyOneOf already counts an empty list as set.
 func ConditionAnyOfMinSize() validator.List { return conditionAnyOfMinSizeValidator{} }
 
 type conditionAnyOfMinSizeValidator struct{}
@@ -50,12 +48,10 @@ func (v conditionAnyOfMinSizeValidator) ValidateList(_ context.Context, req vali
 	}
 }
 
-// ConditionComparisonOrGroup returns a validator.Object for an any_of entry: it
-// must be either a comparison (field + operation, optionally value) or a nested
-// group (all_of with at least two comparisons), never both and never neither. A
-// single-comparison all_of is rejected for the same reason as a single-entry
-// any_of: it flattens to a group Read cannot distinguish from an inlined
-// comparison, which would produce a permanent diff.
+// ConditionComparisonOrGroup requires an any_of entry to be either a comparison
+// or a nested all_of group, never both and never neither. It rejects a
+// single-comparison all_of for the same reason as a single-entry any_of: the
+// nesting is invisible on the wire, so it would come back inlined.
 func ConditionComparisonOrGroup() validator.Object {
 	return conditionComparisonOrGroupValidator{}
 }
@@ -81,11 +77,9 @@ func (v conditionComparisonOrGroupValidator) ValidateObject(_ context.Context, r
 	allOf, _ := attrs["all_of"].(types.List)
 
 	// An unknown value is a reference to another resource's not-yet-computed
-	// attribute (for example field = pipefy_field.x.internal_id before that
-	// field is created), not an absent one. Only a null value means the
-	// configuration genuinely omitted the attribute. Defer the whole check
-	// until every discriminating attribute is known, the same way HexColor/URL/
-	// SLADuration let individually unknown values through rather than guess.
+	// attribute, not an absent one, and only a null means the configuration
+	// omitted it. Terraform re-runs config validation on the apply walk with
+	// values resolved, so deferring loses nothing but the earlier error.
 	if field.IsUnknown() || operation.IsUnknown() || value.IsUnknown() || allOf.IsUnknown() {
 		return
 	}

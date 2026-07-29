@@ -1032,9 +1032,8 @@ func TestUnit_AutomationResource_ConditionRoundTripDriftAndClear(t *testing.T) {
 				},
 			},
 			{
-				// Drift injected in the wire form. ExpectNonEmptyPlan only
-				// asserts that the refresh noticed something; what Read
-				// reconstructs from a server-shaped payload is pinned by
+				// ExpectNonEmptyPlan only asserts the refresh noticed something.
+				// What Read reconstructs is pinned by
 				// TestUnit_AutomationResource_ConditionReadsServerShape.
 				PreConfig: func() {
 					st.Condition = json.RawMessage(`{"expressions":[{"field_address":"427453916","operation":"equals","value":"CHANGED","structure_id":"5"}],"expressions_structure":[["5"]]}`)
@@ -1057,12 +1056,9 @@ func TestUnit_AutomationResource_ConditionRoundTripDriftAndClear(t *testing.T) {
 }
 
 // TestUnit_AutomationResource_ConditionReadsServerShape reads back a condition
-// in the shape the server can legitimately report for the same configuration:
-// structure ids the provider never assigned, and a value of "" on a
-// value-less comparison, which is what the API returns for conditions created
-// outside Terraform. Read has to reconstruct the same all_of and normalize the
-// "" to null, leaving the plan empty; either failure shows up here as a diff
-// the configuration cannot settle.
+// the way the server can report it for an unchanged configuration: structure ids
+// the provider never assigned, and a "" value on a value-less comparison. Both
+// have to settle into the same all_of with an empty plan.
 func TestUnit_AutomationResource_ConditionReadsServerShape(t *testing.T) {
 	st := &automationState{}
 	srv := newAutomationServer(st)
@@ -1118,11 +1114,10 @@ func TestUnit_AutomationResource_ConditionReadsServerShape(t *testing.T) {
 	})
 }
 
-// TestUnit_AutomationResource_ConditionAnyOf covers the OR shape: an any_of
-// entry that is itself a nested all_of of two comparisons, ORed against a
-// plain entry. The mock echoes back what the provider sent, so this exercises
-// the full round trip: flattening into expressions plus expressions_structure
-// on write, and canonicalizing that flat form back into any_of on read.
+// TestUnit_AutomationResource_ConditionAnyOf covers the OR shape: a nested
+// all_of of two comparisons, ORed against a plain entry. The mock echoes what
+// the provider sent, so the write flattening and the read canonicalization are
+// both under test.
 func TestUnit_AutomationResource_ConditionAnyOf(t *testing.T) {
 	st := &automationState{}
 	srv := newAutomationServer(st)
@@ -1186,10 +1181,9 @@ func TestUnit_AutomationResource_ConditionAnyOf(t *testing.T) {
 	}
 }
 
-// TestUnit_AutomationResource_ConditionRejectsUnusableShapes covers the shapes
-// rejected at plan time: an empty condition, both branches at once, and the two
-// shapes Read cannot tell apart from a simpler equivalent (a single-entry
-// any_of, and an any_of entry wrapping a lone comparison in all_of).
+// TestUnit_AutomationResource_ConditionRejectsUnusableShapes covers what plan
+// time rejects: an empty condition, both branches at once, and the shapes that
+// come back as something simpler than they went in.
 func TestUnit_AutomationResource_ConditionRejectsUnusableShapes(t *testing.T) {
 	st := &automationState{}
 	srv := newAutomationServer(st)
@@ -1229,9 +1223,8 @@ func TestUnit_AutomationResource_ConditionRejectsUnusableShapes(t *testing.T) {
 				ExpectError: regexp.MustCompile(`(?i)at least 1`),
 			},
 			{
-				// An empty list counts as set for ExactlyOneOf, so without its
-				// own check this reaches the API as a condition-clearing
-				// payload and then reads back as null: a permanent diff.
+				// Counts as set for ExactlyOneOf, so it would otherwise reach
+				// the API as a condition-clearing payload.
 				Config:      with(`any_of = []`),
 				ExpectError: regexp.MustCompile(`(?i)Invalid any_of`),
 			},
