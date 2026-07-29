@@ -1,6 +1,11 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
+// Package conditionschema models the Pipefy condition grammar shared by every
+// resource that carries one. The schema attributes, the flattening into the
+// wire's expressions plus expressions_structure, and the canonicalization back
+// into all_of/any_of live here so pipefy_automation and pipefy_field_condition
+// cannot drift.
 package conditionschema
 
 import (
@@ -10,17 +15,16 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/pipefy/terraform-provider-pipefy/internal/provider/conditiongql"
 )
 
-// Condition is the typed condition a resource embeds in its model: all_of ANDs
-// its comparisons, any_of ORs its entries. Exactly one of the two is set,
-// which the schema's ExactlyOneOf enforces.
+// Condition holds exactly one of all_of or any_of, which the schema's
+// ExactlyOneOf enforces.
 type Condition struct {
 	AllOf []Comparison `tfsdk:"all_of"`
 	AnyOf []AnyOfEntry `tfsdk:"any_of"`
 }
 
-// Comparison is a single test against one field.
 type Comparison struct {
 	Field     types.String `tfsdk:"field"`
 	Operation types.String `tfsdk:"operation"`
@@ -121,7 +125,7 @@ func (c *Condition) comparisonGroups() [][]Comparison {
 // A payload carrying no condition at all maps to nil. Callers whose condition
 // attribute is optional store that as a null block; callers whose attribute is
 // required substitute an empty one.
-func FromPayload(p *Payload, diags *diag.Diagnostics) *Condition {
+func FromPayload(p *conditiongql.Condition, diags *diag.Diagnostics) *Condition {
 	if p == nil || len(p.Expressions) == 0 || len(p.ExpressionsStructure) == 0 {
 		return nil
 	}
@@ -153,7 +157,7 @@ func FromPayload(p *Payload, diags *diag.Diagnostics) *Condition {
 // A structure_id referenced by a group with no matching expression indicates an
 // inconsistency in the API response rather than a configuration error, so it is
 // reported as a diagnostic rather than silently dropped.
-func comparisonGroupsFromPayload(p *Payload, diags *diag.Diagnostics) [][]Comparison {
+func comparisonGroupsFromPayload(p *conditiongql.Condition, diags *diag.Diagnostics) [][]Comparison {
 	byID := make(map[string]Comparison, len(p.Expressions))
 	for _, e := range p.Expressions {
 		byID[e.StructureId] = Comparison{

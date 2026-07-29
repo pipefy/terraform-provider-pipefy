@@ -11,6 +11,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/pipefy/terraform-provider-pipefy/internal/provider/conditiongql"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/conditionschema"
 )
 
@@ -126,9 +127,9 @@ func TestEmptyInput(t *testing.T) {
 	}
 }
 
-func payload(t *testing.T, raw string) *conditionschema.Payload {
+func payload(t *testing.T, raw string) *conditiongql.Condition {
 	t.Helper()
-	var p conditionschema.Payload
+	var p conditiongql.Condition
 	if err := json.Unmarshal([]byte(raw), &p); err != nil {
 		t.Fatal(err)
 	}

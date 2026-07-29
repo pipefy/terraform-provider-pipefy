@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
+	"github.com/pipefy/terraform-provider-pipefy/internal/provider/conditiongql"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/conditionschema"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/validators"
 )
@@ -116,7 +117,7 @@ const automationSelection = "id name active event_id action_id " +
 	"event_repo{ id } action_repo_v2{ ... on Pipe{ id } ... on Table{ id } } " +
 	"scheduler_frequency schedulerCron{ minute hour dayOfMonth month dayOfWeek } " +
 	"searchFor{ field id operation value } responseSchema " +
-	"condition{ " + conditionschema.Selection + " }"
+	"condition{ " + conditiongql.Selection + " }"
 
 type automationRepoRef struct {
 	Id string `json:"id"`
@@ -149,7 +150,7 @@ type automationData struct {
 	SchedulerCron      *automationCron             `json:"schedulerCron"`
 	SearchFor          []automationSearchCondition `json:"searchFor"`
 	ResponseSchema     json.RawMessage             `json:"responseSchema"`
-	Condition          *conditionschema.Payload    `json:"condition"`
+	Condition          *conditiongql.Condition     `json:"condition"`
 }
 
 // automationOptionalString maps a nullable API string to state: a null becomes
