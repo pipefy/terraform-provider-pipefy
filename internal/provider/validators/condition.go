@@ -10,12 +10,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// ConditionAnyOfMinSize rejects an any_of with fewer than two entries, since
-// neither size survives a round trip: any_of=[x] flattens to the same wire group
-// as all_of=[x] and comes back as all_of, and any_of=[] flattens to the payload
-// that clears the condition and comes back as nothing. The empty case needs
-// checking here rather than through a size validator on the attribute, because
-// ExactlyOneOf already counts an empty list as set.
 func ConditionAnyOfMinSize() validator.List { return conditionAnyOfMinSizeValidator{} }
 
 type conditionAnyOfMinSizeValidator struct{}
@@ -48,10 +42,6 @@ func (v conditionAnyOfMinSizeValidator) ValidateList(_ context.Context, req vali
 	}
 }
 
-// ConditionComparisonOrGroup requires an any_of entry to be either a comparison
-// or a nested all_of group, never both and never neither. It rejects a
-// single-comparison all_of for the same reason as a single-entry any_of: the
-// nesting is invisible on the wire, so it would come back inlined.
 func ConditionComparisonOrGroup() validator.Object {
 	return conditionComparisonOrGroupValidator{}
 }
@@ -76,10 +66,6 @@ func (v conditionComparisonOrGroupValidator) ValidateObject(_ context.Context, r
 	value, _ := attrs["value"].(types.String)
 	allOf, _ := attrs["all_of"].(types.List)
 
-	// An unknown value is a reference to another resource's not-yet-computed
-	// attribute, not an absent one, and only a null means the configuration
-	// omitted it. Terraform re-runs config validation on the apply walk with
-	// values resolved, so deferring loses nothing but the earlier error.
 	if field.IsUnknown() || operation.IsUnknown() || value.IsUnknown() || allOf.IsUnknown() {
 		return
 	}

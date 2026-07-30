@@ -15,9 +15,6 @@ const operationDescription = "The comparison operator (for example equals, not_e
 
 const valueDescription = "The value compared against. Omit for operators that take no value, such as present and blank."
 
-// Attributes returns the all_of/any_of pair a condition is built from. Callers
-// wrap it in a SingleNestedAttribute of their own, so each resource keeps
-// control of whether its condition is required and how it documents it.
 func Attributes() map[string]schema.Attribute {
 	return map[string]schema.Attribute{
 		"all_of": schema.ListNestedAttribute{

@@ -16,8 +16,6 @@ import (
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/conditiongql"
 )
 
-// Condition holds exactly one of all_of or any_of, which the schema's
-// ExactlyOneOf enforces.
 type Condition struct {
 	AllOf []Comparison `tfsdk:"all_of"`
 	AnyOf []AnyOfEntry `tfsdk:"any_of"`
@@ -29,9 +27,6 @@ type Comparison struct {
 	Value     types.String `tfsdk:"value"`
 }
 
-// AnyOfEntry is a sum type: either a comparison (field + operation, optionally
-// value) or a nested all_of group, never both. The ConditionComparisonOrGroup
-// validator enforces that exclusivity.
 type AnyOfEntry struct {
 	Field     types.String `tfsdk:"field"`
 	Operation types.String `tfsdk:"operation"`
@@ -39,9 +34,6 @@ type AnyOfEntry struct {
 	AllOf     []Comparison `tfsdk:"all_of"`
 }
 
-// Input builds the wire ConditionInput. The structure ids go out as strings
-// because reads return them as strings, which keeps a mutation echo
-// round-trippable.
 func (c *Condition) Input() map[string]any {
 	groups := c.comparisonGroups()
 
@@ -74,9 +66,6 @@ func (c *Condition) Input() map[string]any {
 	}
 }
 
-// EmptyInput clears a condition. The API accepts it on create and update, while
-// an explicit null condition errors, so this is what a resource managing its
-// condition in full sends for an absent block.
 func EmptyInput() map[string]any {
 	return map[string]any{
 		"expressions":           []map[string]any{},
@@ -103,19 +92,6 @@ func (c *Condition) comparisonGroups() [][]Comparison {
 	return groups
 }
 
-// FromPayload rebuilds the condition from the wire form. Several distinct
-// configurations flatten to the same payload, so it picks one shape per payload
-// and always the same one: a lone group is all_of, and within a multi-group
-// any_of a one-comparison group is a plain entry. The validators reject the
-// configurations this cannot reproduce, which is what stops the choice from
-// showing up as a permanent diff.
-//
-// No condition at all maps to nil. A resource whose condition is optional
-// stores that as a null block; one whose condition is required substitutes an
-// empty condition.
-//
-// A payload no condition can express yields an error and no condition, so a
-// caller cannot mistake a half-built result for a whole one.
 func FromPayload(p *conditiongql.Condition) (*Condition, error) {
 	if p == nil || len(p.Expressions) == 0 || len(p.ExpressionsStructure) == 0 {
 		return nil, nil
@@ -174,10 +150,6 @@ func comparisonGroupsFromPayload(p *conditiongql.Condition) ([][]Comparison, err
 	return groups, nil
 }
 
-// comparisonValue normalizes a blank value to null. Operations that take no
-// value, present and blank, come back as "" rather than null for conditions
-// created outside Terraform, and keeping the "" would diff forever. The schema
-// rejects a blank value on the way in, so nothing legitimate is lost.
 func comparisonValue(v *string) types.String {
 	if v == nil || strings.TrimSpace(*v) == "" {
 		return types.StringNull()
@@ -190,9 +162,6 @@ func stringifyStructureElem(v any) string {
 	case string:
 		return n
 	case float64:
-		// A fractional id is not one the server assigned. Truncating it would
-		// land on a real expression, so keep it distinct and let the caller
-		// report it as unmatched.
 		if n != math.Trunc(n) {
 			return strconv.FormatFloat(n, 'f', -1, 64)
 		}

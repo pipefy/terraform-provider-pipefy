@@ -26,8 +26,6 @@ func comparison(field, operation, value string) conditionschema.Comparison {
 	return c
 }
 
-// inputJSON marshals an Input() payload so a test can assert the whole wire
-// shape at once, key order included.
 func inputJSON(t *testing.T, c *conditionschema.Condition) string {
 	t.Helper()
 	b, err := json.Marshal(c.Input())
@@ -37,9 +35,6 @@ func inputJSON(t *testing.T, c *conditionschema.Condition) string {
 	return string(b)
 }
 
-// describe keeps the all_of/any_of nesting visible. Read assertions need it
-// rather than the Input() form, which flattens away the difference between
-// all_of=[x,y] and a lone any_of entry nesting the same two comparisons.
 func describe(c *conditionschema.Condition) string {
 	switch {
 	case c == nil:
@@ -133,8 +128,6 @@ func payload(t *testing.T, raw string) *conditiongql.Condition {
 	return &p
 }
 
-// fromPayload fails the test on an error, for the cases that expect a payload
-// the provider can reconstruct.
 func fromPayload(t *testing.T, p *conditiongql.Condition) *conditionschema.Condition {
 	t.Helper()
 	c, err := conditionschema.FromPayload(p)
@@ -240,10 +233,6 @@ func TestFromPayload(t *testing.T) {
 	}
 }
 
-// TestFromPayloadUnreconstructableShapes covers payloads no condition can
-// express: a structure group referencing an id no expression carries, and an
-// empty group. The API enforces the bijection, so a response like either is
-// broken and gets reported rather than papered over.
 func TestFromPayloadUnreconstructableShapes(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -282,8 +271,6 @@ func TestFromPayloadUnreconstructableShapes(t *testing.T) {
 	}
 }
 
-// TestRoundTrip requires FromPayload(Input(c)) to reproduce c itself, nesting
-// included. That is what keeps a settled resource settled.
 func TestRoundTrip(t *testing.T) {
 	for _, cond := range []*conditionschema.Condition{
 		{AllOf: []conditionschema.Comparison{comparison("1001", "equals", "Other")}},
