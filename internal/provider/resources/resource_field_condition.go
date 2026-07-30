@@ -277,7 +277,7 @@ func (r *FieldConditionResource) lockPhaseRepo(ctx context.Context, phaseID, err
 
 // resolvePhaseRepoID fetches the repo_id owning phaseID. found is false when
 // the phase query resolves but returns no phase or a zero repo_id (the phase
-// no longer exists) — a distinct, expected condition from a query error.
+// no longer exists), a distinct and expected condition from a query error.
 func (r *FieldConditionResource) resolvePhaseRepoID(ctx context.Context, phaseID string) (repoID string, found bool, err error) {
 	query := "query GetPhaseRepoId_tf($id:ID!){ phase(id:$id){ repo_id } }"
 	var out struct {
