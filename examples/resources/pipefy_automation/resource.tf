@@ -42,15 +42,14 @@ resource "pipefy_automation" "example_ai" {
     trigger_field_ids = [pipefy_field.title.internal_id]
   }
 
-  # conditions to trigger the automation
+  # Gates the automation: all_of runs it only when every comparison holds.
+  # Use any_of instead when any one comparison is enough.
   condition = {
-    expressions = [{
-      structure_id  = "0"
-      field_address = pipefy_field.title.internal_id
-      operation     = "equals"
-      value         = "translate"
+    all_of = [{
+      field     = pipefy_field.title.internal_id
+      operation = "equals"
+      value     = "translate"
     }]
-    expressions_structure = [["0"]]
   }
 
   # Optional JSON schema describing the automation's structured response.

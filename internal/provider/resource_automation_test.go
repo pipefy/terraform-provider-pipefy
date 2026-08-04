@@ -1004,11 +1004,10 @@ func TestUnit_AutomationResource_ConditionRoundTripDriftAndClear(t *testing.T) {
 	}
 	`
 	withCond := strings.ReplaceAll(base, "CONDITION", `condition = {
-			expressions = [
-				{ field_address = "427453916", operation = "equals", value = "a", structure_id = "5" },
-				{ field_address = "427453917", operation = "equals", value = "b", structure_id = "7" },
+			all_of = [
+				{ field = "427453916", operation = "equals", value = "a" },
+				{ field = "427453917", operation = "equals", value = "b" },
 			]
-			expressions_structure = [["5", "7"]]
 		}`)
 	cleared := strings.ReplaceAll(base, "CONDITION", ``)
 
@@ -1021,9 +1020,9 @@ func TestUnit_AutomationResource_ConditionRoundTripDriftAndClear(t *testing.T) {
 			{
 				Config: withCond,
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("condition").AtMapKey("expressions").AtSliceIndex(0).AtMapKey("structure_id"), knownvalue.StringExact("5")),
-					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("condition").AtMapKey("expressions").AtSliceIndex(1).AtMapKey("structure_id"), knownvalue.StringExact("7")),
-					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("condition").AtMapKey("expressions_structure").AtSliceIndex(0).AtSliceIndex(1), knownvalue.StringExact("7")),
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("condition").AtMapKey("all_of").AtSliceIndex(0).AtMapKey("field"), knownvalue.StringExact("427453916")),
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("condition").AtMapKey("all_of").AtSliceIndex(1).AtMapKey("value"), knownvalue.StringExact("b")),
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("condition").AtMapKey("any_of"), knownvalue.Null()),
 				},
 			},
 			{
@@ -1033,6 +1032,9 @@ func TestUnit_AutomationResource_ConditionRoundTripDriftAndClear(t *testing.T) {
 				},
 			},
 			{
+				// ExpectNonEmptyPlan only asserts the refresh noticed something.
+				// What Read reconstructs is pinned by
+				// TestUnit_AutomationResource_ConditionReadsServerShape.
 				PreConfig: func() {
 					st.Condition = json.RawMessage(`{"expressions":[{"field_address":"427453916","operation":"equals","value":"CHANGED","structure_id":"5"}],"expressions_structure":[["5"]]}`)
 				},
@@ -1053,7 +1055,11 @@ func TestUnit_AutomationResource_ConditionRoundTripDriftAndClear(t *testing.T) {
 	}
 }
 
-func TestUnit_AutomationResource_ConditionRejectsEmptyExpressions(t *testing.T) {
+// TestUnit_AutomationResource_ConditionReadsServerShape reads back a condition
+// the way the server can report it for an unchanged configuration: structure ids
+// the provider never assigned, and a "" value on a value-less comparison. Both
+// have to settle into the same all_of with an empty plan.
+func TestUnit_AutomationResource_ConditionReadsServerShape(t *testing.T) {
 	st := &automationState{}
 	srv := newAutomationServer(st)
 	defer srv.Close()
@@ -1065,7 +1071,7 @@ func TestUnit_AutomationResource_ConditionRejectsEmptyExpressions(t *testing.T) 
 	}
 
 	resource "pipefy_automation" "test" {
-		name           = "Empty condition"
+		name           = "Value-less condition"
 		event_id       = "field_updated"
 		action_id      = "move_single_card"
 		event_repo_id  = "306729113"
@@ -1073,8 +1079,74 @@ func TestUnit_AutomationResource_ConditionRejectsEmptyExpressions(t *testing.T) 
 		active         = true
 
 		condition = {
-			expressions           = []
-			expressions_structure = []
+			all_of = [
+				{ field = "427453916", operation = "equals", value = "a" },
+				{ field = "427453917", operation = "present" },
+			]
+		}
+	}
+	`
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config},
+			{
+				PreConfig: func() {
+					st.Condition = json.RawMessage(`{"expressions":[` +
+						`{"field_address":"427453916","operation":"equals","structure_id":"31","value":"a"},` +
+						`{"field_address":"427453917","operation":"present","structure_id":"32","value":""}` +
+						`],"expressions_structure":[["31","32"]]}`)
+				},
+				Config: config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("condition").AtMapKey("all_of"), knownvalue.ListSizeExact(2)),
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("condition").AtMapKey("all_of").AtSliceIndex(1).AtMapKey("value"), knownvalue.Null()),
+				},
+			},
+		},
+	})
+}
+
+// TestUnit_AutomationResource_ConditionAnyOf covers the OR shape: a nested
+// all_of of two comparisons, ORed against a plain entry. The mock echoes what
+// the provider sent, so the write flattening and the read canonicalization are
+// both under test.
+func TestUnit_AutomationResource_ConditionAnyOf(t *testing.T) {
+	st := &automationState{}
+	srv := newAutomationServer(st)
+	defer srv.Close()
+
+	config := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "Field updated with any_of condition"
+		event_id       = "field_updated"
+		action_id      = "move_single_card"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+		active         = true
+
+		condition = {
+			any_of = [
+				{
+					all_of = [
+						{ field = "427453916", operation = "equals", value = "a" },
+						{ field = "427453917", operation = "equals", value = "b" },
+					]
+				},
+				{ field = "427453918", operation = "present" },
+			]
 		}
 	}
 	`
@@ -1086,14 +1158,117 @@ func TestUnit_AutomationResource_ConditionRejectsEmptyExpressions(t *testing.T) 
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config:      config,
-				ExpectError: regexp.MustCompile(`(?i)at least 1 element`),
+				Config: config,
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("condition").AtMapKey("any_of").AtSliceIndex(0).AtMapKey("all_of").AtSliceIndex(1).AtMapKey("field"), knownvalue.StringExact("427453917")),
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("condition").AtMapKey("any_of").AtSliceIndex(1).AtMapKey("field"), knownvalue.StringExact("427453918")),
+					// present takes no value, so it stays null rather than "".
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("condition").AtMapKey("any_of").AtSliceIndex(1).AtMapKey("value"), knownvalue.Null()),
+					statecheck.ExpectKnownValue("pipefy_automation.test", tfjsonpath.New("condition").AtMapKey("all_of"), knownvalue.Null()),
+				},
+			},
+			{
+				Config: config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+			},
+		},
+	})
+
+	if !strings.Contains(string(st.Condition), `"expressions_structure":[["0","1"],["2"]]`) {
+		t.Fatalf("expected the nested all_of and the plain entry to flatten into two groups, got: %s", st.Condition)
+	}
+}
+
+// TestUnit_AutomationResource_ConditionRejectsUnusableShapes covers what plan
+// time rejects: an empty condition, both branches at once, and the shapes that
+// come back as something simpler than they went in.
+func TestUnit_AutomationResource_ConditionRejectsUnusableShapes(t *testing.T) {
+	st := &automationState{}
+	srv := newAutomationServer(st)
+	defer srv.Close()
+
+	base := `
+	provider "pipefy" {
+		endpoint = "` + srv.URL + `"
+		token    = "testtoken"
+	}
+
+	resource "pipefy_automation" "test" {
+		name           = "Unusable condition"
+		event_id       = "field_updated"
+		action_id      = "move_single_card"
+		event_repo_id  = "306729113"
+		action_repo_id = "306729113"
+		active         = true
+
+		condition = {CONDITION}
+	}
+	`
+	with := func(condition string) string { return strings.ReplaceAll(base, "CONDITION", condition) }
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      with(``),
+				ExpectError: regexp.MustCompile(`(?i)and only one`),
+			},
+			{
+				Config:      with(`all_of = []`),
+				ExpectError: regexp.MustCompile(`(?i)at least 1`),
+			},
+			{
+				// Counts as set for ExactlyOneOf, so it would otherwise reach
+				// the API as a condition-clearing payload.
+				Config:      with(`any_of = []`),
+				ExpectError: regexp.MustCompile(`(?i)Invalid any_of`),
+			},
+			{
+				Config: with(`
+			all_of = [{ field = "427453916", operation = "equals" }]
+			any_of = [
+				{ field = "427453917", operation = "equals" },
+				{ field = "427453918", operation = "present" },
+			]`),
+				ExpectError: regexp.MustCompile(`(?i)and only one`),
+			},
+			{
+				Config:      with(`any_of = [{ field = "427453916", operation = "equals" }]`),
+				ExpectError: regexp.MustCompile(`(?i)Invalid any_of`),
+			},
+			{
+				Config: with(`
+			any_of = [
+				{ all_of = [{ field = "427453916", operation = "equals" }] },
+				{ field = "427453918", operation = "present" },
+			]`),
+				ExpectError: regexp.MustCompile(`(?i)at least 2|redundant`),
+			},
+			{
+				Config: with(`
+			any_of = [
+				{
+					field     = "427453916"
+					operation = "equals"
+					all_of = [
+						{ field = "427453917", operation = "equals" },
+						{ field = "427453918", operation = "present" },
+					]
+				},
+				{ field = "427453919", operation = "present" },
+			]`),
+				ExpectError: regexp.MustCompile(`(?i)Invalid any_of entry`),
 			},
 		},
 	})
 }
 
-func TestUnit_AutomationResource_ConditionRejectsBlankExpressionFields(t *testing.T) {
+func TestUnit_AutomationResource_ConditionRejectsBlankComparisonFields(t *testing.T) {
 	st := &automationState{}
 	srv := newAutomationServer(st)
 	defer srv.Close()
@@ -1113,14 +1288,15 @@ func TestUnit_AutomationResource_ConditionRejectsBlankExpressionFields(t *testin
 		active         = true
 
 		condition = {
-			expressions           = [EXPRESSION]
-			expressions_structure = [["0"]]
+			all_of = [COMPARISON]
 		}
 	}
 	`
-	blankFieldAddress := strings.ReplaceAll(config, "EXPRESSION", `{ field_address = "", operation = "equals", structure_id = "0" }`)
-	blankOperation := strings.ReplaceAll(config, "EXPRESSION", `{ field_address = "427453916", operation = "  ", structure_id = "0" }`)
-	blankStructureId := strings.ReplaceAll(config, "EXPRESSION", `{ field_address = "427453916", operation = "equals", structure_id = "" }`)
+	blankField := strings.ReplaceAll(config, "COMPARISON", `{ field = "", operation = "equals" }`)
+	blankOperation := strings.ReplaceAll(config, "COMPARISON", `{ field = "427453916", operation = "  " }`)
+	// A blank value is rejected rather than sent, because Read normalizes the
+	// "" the API returns for value-less operations back to null.
+	blankValue := strings.ReplaceAll(config, "COMPARISON", `{ field = "427453916", operation = "equals", value = "" }`)
 
 	resource.UnitTest(t, resource.TestCase{
 		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
@@ -1129,7 +1305,7 @@ func TestUnit_AutomationResource_ConditionRejectsBlankExpressionFields(t *testin
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config:      blankFieldAddress,
+				Config:      blankField,
 				ExpectError: regexp.MustCompile(`(?i)non-empty|blank`),
 			},
 			{
@@ -1137,7 +1313,7 @@ func TestUnit_AutomationResource_ConditionRejectsBlankExpressionFields(t *testin
 				ExpectError: regexp.MustCompile(`(?i)non-empty|blank`),
 			},
 			{
-				Config:      blankStructureId,
+				Config:      blankValue,
 				ExpectError: regexp.MustCompile(`(?i)non-empty|blank`),
 			},
 		},

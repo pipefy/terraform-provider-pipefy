@@ -87,7 +87,7 @@ resource "pipefy_field_condition" "hide_priority" {
 ### Required
 
 - `actions` (Attributes List) What happens to each phase field when the condition holds. One entry per target field. (see [below for nested schema](#nestedatt--actions))
-- `condition` (Attributes) The criteria that must hold for the actions to run. all_of ANDs its comparisons together; any_of ORs its entries together. Exactly one of all_of or any_of must be set. (see [below for nested schema](#nestedatt--condition))
+- `condition` (Attributes) The criteria that must hold for the actions to run. (see [below for nested schema](#nestedatt--condition))
 - `name` (String) Name that describes what this condition does
 - `phase_id` (String) The ID of the phase the condition belongs to. Changing it forces a new field condition.
 
@@ -113,15 +113,15 @@ Optional:
 
 Optional:
 
-- `all_of` (Attributes List) Comparisons that must all hold. (see [below for nested schema](#nestedatt--condition--all_of))
-- `any_of` (Attributes List) Comparisons or nested all_of groups where at least one must hold. (see [below for nested schema](#nestedatt--condition--any_of))
+- `all_of` (Attributes List) Comparisons that must all hold. Exactly one of all_of or any_of must be set. (see [below for nested schema](#nestedatt--condition--all_of))
+- `any_of` (Attributes List) Comparisons or nested all_of groups where at least one must hold. Exactly one of all_of or any_of must be set. Takes at least 2 entries; a single entry is all_of. (see [below for nested schema](#nestedatt--condition--any_of))
 
 <a id="nestedatt--condition--all_of"></a>
 ### Nested Schema for `condition.all_of`
 
 Required:
 
-- `field` (String) The internal_id of the field this comparison evaluates.
+- `field` (String) The internal_id of the field this comparison evaluates. A dotted path addresses a field reached through a connection.
 - `operation` (String) The comparison operator (for example equals, not_equals, present, blank). Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).
 
 Optional:
@@ -134,8 +134,8 @@ Optional:
 
 Optional:
 
-- `all_of` (Attributes List) A nested group of comparisons that must all hold, ORed against this entry's any_of siblings. (see [below for nested schema](#nestedatt--condition--any_of--all_of))
-- `field` (String) The internal_id of the field this entry compares. Omit when this entry is a nested all_of group instead.
+- `all_of` (Attributes List) A nested group of comparisons that must all hold, ORed against this entry's any_of siblings. Takes at least 2 comparisons; for a single one, set field, operation and value on the entry itself. (see [below for nested schema](#nestedatt--condition--any_of--all_of))
+- `field` (String) The internal_id of the field this entry compares, or a dotted path to a field reached through a connection. Omit when this entry is a nested all_of group instead.
 - `operation` (String) The comparison operator (for example equals, not_equals, present, blank). Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).
 - `value` (String) The value compared against. Omit for operators that take no value, such as present and blank.
 
@@ -144,7 +144,7 @@ Optional:
 
 Required:
 
-- `field` (String) The internal_id of the field this comparison evaluates.
+- `field` (String) The internal_id of the field this comparison evaluates. A dotted path addresses a field reached through a connection.
 - `operation` (String) The comparison operator (for example equals, not_equals, present, blank). Supported values are defined by Pipefy; see the API reference (https://developers.pipefy.com/reference).
 
 Optional:
