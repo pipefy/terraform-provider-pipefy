@@ -5,26 +5,14 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/aiagentgql"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
+	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 )
-
-const createAIAgentMutation = "mutation CreateAiAgent_tf($input:CreateAgentInput!){ " +
-	"createAiAgent(input:$input){ agent{ uuid } } }"
-const updateAIAgentMutation = "mutation UpdateAiAgent_tf($input:UpdateAgentInput!){ " +
-	"updateAiAgent(input:$input){ agent{ uuid } } }"
-const updateAIAgentStatusMutation = "mutation UpdateAiAgentStatus_tf($input:UpdateAgentStatusInput!){ " +
-	"updateAiAgentStatus(input:$input){ success } }"
-const getAIAgentQuery = "query GetAiAgent_tf($uuid:ID!){ aiAgent(uuid:$uuid){ " +
-	aiagentgql.Selection + " } }"
-const deleteAIAgentMutation = "mutation DeleteAiAgent_tf($input:DeleteAgentInput!){ " +
-	"deleteAiAgent(input:$input){ success errors } }"
 
 var _ resource.Resource = &AiAgentResource{}
 var _ resource.ResourceWithImportState = &AiAgentResource{}
@@ -32,7 +20,7 @@ var _ resource.ResourceWithValidateConfig = &AiAgentResource{}
 var _ resource.ResourceWithModifyPlan = &AiAgentResource{}
 
 type AiAgentResource struct {
-	api *client.ApiClient
+	api *pipefy.Client
 }
 
 func NewAiAgentResource() resource.Resource {
@@ -55,10 +43,10 @@ func (r *AiAgentResource) Configure(
 	if req.ProviderData == nil {
 		return
 	}
-	api, ok := req.ProviderData.(*client.ApiClient)
+	api, ok := req.ProviderData.(*pipefy.Client)
 	if !ok {
 		resp.Diagnostics.AddError(
-			"Unexpected provider data", fmt.Sprintf("expected *ApiClient, got %T", req.ProviderData),
+			"Unexpected provider data", fmt.Sprintf("expected *pipefy.Client, got %T", req.ProviderData),
 		)
 		return
 	}
@@ -74,7 +62,7 @@ func (r *AiAgentResource) Create(
 	if !ok {
 		return
 	}
-	repoUUID, err := resolvePipeUUID(ctx, r.api, model.PipeID.ValueString())
+	repoUUID, err := r.api.Pipes.UUID(ctx, model.PipeID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("create AI agent failed", err.Error())
 		return
@@ -113,23 +101,11 @@ func (r *AiAgentResource) createAgent(
 	model *AiAgentModel,
 	repoUUID string,
 ) error {
-	var output struct {
-		CreateAIAgent struct {
-			Agent struct {
-				UUID string `json:"uuid"`
-			} `json:"agent"`
-		} `json:"createAiAgent"`
-	}
-	variables := map[string]any{"input": map[string]any{
-		"agent": model.graphQLInput(repoUUID),
-	}}
-	if err := r.api.DoGraphQL(ctx, createAIAgentMutation, variables, &output); err != nil {
+	uuid, err := r.api.AiAgents.Create(ctx, model.graphQLInput(repoUUID))
+	if err != nil {
 		return err
 	}
-	if output.CreateAIAgent.Agent.UUID == "" {
-		return fmt.Errorf("createAiAgent returned an empty agent UUID")
-	}
-	model.ID = types.StringValue(output.CreateAIAgent.Agent.UUID)
+	model.ID = types.StringValue(uuid)
 	return nil
 }
 
@@ -225,7 +201,7 @@ func (r *AiAgentResource) Update(
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	repoUUID, err := resolvePipeUUID(ctx, r.api, plan.PipeID.ValueString())
+	repoUUID, err := r.api.Pipes.UUID(ctx, plan.PipeID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("update AI agent failed", err.Error())
 		return
@@ -292,9 +268,9 @@ func (r *AiAgentResource) refreshStateAfterPartialUpdate(
 func (r *AiAgentResource) verifyPipeOwnsAgent(
 	ctx context.Context,
 	pipeID string,
-	agent aiagentgql.Agent,
+	agent pipefy.Agent,
 ) error {
-	repoUUID, err := resolvePipeUUID(ctx, r.api, pipeID)
+	repoUUID, err := r.api.Pipes.UUID(ctx, pipeID)
 	if err != nil {
 		return err
 	}
@@ -312,56 +288,27 @@ func (r *AiAgentResource) updateAgent(
 	model AiAgentModel,
 	repoUUID string,
 ) error {
-	var output struct {
-		UpdateAIAgent struct {
-			Agent struct {
-				UUID string `json:"uuid"`
-			} `json:"agent"`
-		} `json:"updateAiAgent"`
-	}
-	variables := map[string]any{"input": map[string]any{
-		"uuid": model.ID.ValueString(), "agent": model.graphQLInput(repoUUID),
-	}}
-	if err := r.api.DoGraphQL(ctx, updateAIAgentMutation, variables, &output); err != nil {
-		return err
-	}
-	if output.UpdateAIAgent.Agent.UUID == "" {
-		return fmt.Errorf("updateAiAgent returned an empty agent UUID")
-	}
-	return nil
+	return r.api.AiAgents.Update(ctx, model.ID.ValueString(), model.graphQLInput(repoUUID))
 }
 
 func (r *AiAgentResource) updateStatus(ctx context.Context, id string, active bool) error {
-	var output struct {
-		UpdateAIAgentStatus struct {
-			Success bool `json:"success"`
-		} `json:"updateAiAgentStatus"`
-	}
-	variables := map[string]any{"input": map[string]any{"uuid": id, "active": active}}
-	if err := r.api.DoGraphQL(ctx, updateAIAgentStatusMutation, variables, &output); err != nil {
-		return err
-	}
-	if !output.UpdateAIAgentStatus.Success {
-		return fmt.Errorf("updateAiAgentStatus returned success=false for agent %q", id)
-	}
-	return nil
+	return r.api.AiAgents.UpdateStatus(ctx, id, active)
 }
 
+// fetchAgent maps ErrNotFound to a nil agent, which is the contract its five
+// call sites are written against.
 func (r *AiAgentResource) fetchAgent(
 	ctx context.Context,
 	id string,
-) (*aiagentgql.Agent, error) {
-	var output struct {
-		AIAgent *aiagentgql.Agent `json:"aiAgent"`
+) (*pipefy.Agent, error) {
+	agent, err := r.api.AiAgents.Get(ctx, id)
+	if errors.Is(err, pipefy.ErrNotFound) {
+		return nil, nil
 	}
-	err := r.api.DoGraphQL(ctx, getAIAgentQuery, map[string]any{"uuid": id}, &output)
 	if err != nil {
-		if isNotFoundError(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
-	return output.AIAgent, nil
+	return &agent, nil
 }
 
 func (r *AiAgentResource) Delete(
@@ -380,30 +327,7 @@ func (r *AiAgentResource) Delete(
 }
 
 func (r *AiAgentResource) deleteAgent(ctx context.Context, id string) error {
-	var output struct {
-		DeleteAIAgent struct {
-			Success bool     `json:"success"`
-			Errors  []string `json:"errors"`
-		} `json:"deleteAiAgent"`
-	}
-	variables := map[string]any{"input": map[string]any{"uuid": id}}
-	err := r.api.DoGraphQL(ctx, deleteAIAgentMutation, variables, &output)
-	if err != nil && isNotFoundError(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if output.DeleteAIAgent.Success {
-		return nil
-	}
-	if isNotFoundMessage(strings.Join(output.DeleteAIAgent.Errors, "; ")) {
-		return nil
-	}
-	return fmt.Errorf(
-		"deleteAiAgent returned success=false for agent %q: %s",
-		id, strings.Join(output.DeleteAIAgent.Errors, "; "),
-	)
+	return r.api.AiAgents.Delete(ctx, id)
 }
 
 func (r *AiAgentResource) ImportState(
@@ -425,25 +349,4 @@ func (r *AiAgentResource) ImportState(
 
 func isConfiguredBool(value types.Bool) bool {
 	return !value.IsNull() && !value.IsUnknown()
-}
-
-func isNotFoundError(err error) bool {
-	return err != nil && isNotFoundMessage(err.Error())
-}
-
-func isNotFoundMessage(message string) bool {
-	lower := strings.ToLower(message)
-	if strings.Contains(lower, "record_not_found") {
-		return true
-	}
-	if strings.Contains(lower, "token") ||
-		strings.Contains(lower, "permission") ||
-		strings.Contains(lower, "unauthorized") ||
-		strings.Contains(lower, "forbidden") {
-		return false
-	}
-	return strings.Contains(lower, "not found") ||
-		strings.Contains(lower, "does not exist") ||
-		strings.Contains(lower, "couldn't find") ||
-		strings.Contains(lower, "could not find")
 }

@@ -4,13 +4,16 @@
 package provider_test
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	frameworkprovider "github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 	providerpkg "github.com/pipefy/terraform-provider-pipefy/internal/provider"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
 )
 
 func TestProvider_Metadata_TypeName(t *testing.T) {
@@ -22,7 +25,19 @@ func TestProvider_Metadata_TypeName(t *testing.T) {
 	}
 }
 
+// TestProvider_Configure_SetsTraceID checks the trace-id through its observable
+// effect, the traceparent header, rather than through the transport struct: after
+// Configure the provider hands out an SDK client, and the transport it wraps is
+// not part of that surface.
 func TestProvider_Configure_SetsTraceID(t *testing.T) {
+	var traceparent string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		traceparent = r.Header.Get("traceparent")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":{"pipe":null}}`)
+	}))
+	defer srv.Close()
+
 	prov := providerpkg.New("test")()
 	ctx := t.Context()
 
@@ -30,7 +45,7 @@ func TestProvider_Configure_SetsTraceID(t *testing.T) {
 	prov.Schema(ctx, frameworkprovider.SchemaRequest{}, schemaResp)
 
 	raw := tftypes.NewValue(schemaResp.Schema.Type().TerraformType(ctx), map[string]tftypes.Value{
-		"endpoint":      tftypes.NewValue(tftypes.String, nil),
+		"endpoint":      tftypes.NewValue(tftypes.String, srv.URL),
 		"token":         tftypes.NewValue(tftypes.String, nil),
 		"client_id":     tftypes.NewValue(tftypes.String, nil),
 		"client_secret": tftypes.NewValue(tftypes.String, nil),
@@ -46,12 +61,15 @@ func TestProvider_Configure_SetsTraceID(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
 	}
-	api, ok := resp.ResourceData.(*client.ApiClient)
+	api, ok := resp.ResourceData.(*pipefy.Client)
 	if !ok {
-		t.Fatalf("ResourceData = %T, want *client.ApiClient", resp.ResourceData)
+		t.Fatalf("ResourceData = %T, want *pipefy.Client", resp.ResourceData)
 	}
-	if api.TraceID == "" {
-		t.Fatalf("expected Configure to set a trace-id, got empty")
+	// The pipe comes back null, so this returns ErrNotFound. The request still
+	// went out, which is all this asserts.
+	_, _ = api.Pipes.Get(ctx, "301")
+	if traceparent == "" {
+		t.Fatal("expected Configure to set a trace-id, got no traceparent header")
 	}
 }
 

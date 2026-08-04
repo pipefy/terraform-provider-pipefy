@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/conditiongql"
+	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 )
 
 type Condition struct {
@@ -92,7 +92,7 @@ func (c *Condition) comparisonGroups() [][]Comparison {
 	return groups
 }
 
-func FromPayload(p *conditiongql.Condition) (*Condition, error) {
+func FromPayload(p *pipefy.Condition) (*Condition, error) {
 	if p == nil || len(p.Expressions) == 0 || len(p.ExpressionsStructure) == 0 {
 		return nil, nil
 	}
@@ -121,10 +121,10 @@ func FromPayload(p *conditiongql.Condition) (*Condition, error) {
 	return &Condition{AnyOf: anyOf}, nil
 }
 
-func comparisonGroupsFromPayload(p *conditiongql.Condition) ([][]Comparison, error) {
+func comparisonGroupsFromPayload(p *pipefy.Condition) ([][]Comparison, error) {
 	byID := make(map[string]Comparison, len(p.Expressions))
 	for _, e := range p.Expressions {
-		byID[stringifyStructureElem(e.StructureId)] = Comparison{
+		byID[stringifyStructureElem(e.StructureID)] = Comparison{
 			Field:     types.StringValue(e.FieldAddress),
 			Operation: types.StringValue(e.Operation),
 			Value:     comparisonValue(e.Value),

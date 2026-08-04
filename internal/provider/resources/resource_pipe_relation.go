@@ -5,6 +5,7 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -17,8 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/piperelationgql"
+	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 )
 
 var _ resource.Resource = &PipeRelationResource{}
@@ -27,7 +27,7 @@ var _ resource.ResourceWithValidateConfig = &PipeRelationResource{}
 
 func NewPipeRelationResource() resource.Resource { return &PipeRelationResource{} }
 
-type PipeRelationResource struct{ api *client.ApiClient }
+type PipeRelationResource struct{ api *pipefy.Client }
 
 type pipeRelationFieldMapModel struct {
 	FieldId   types.String `tfsdk:"field_id"`
@@ -136,9 +136,9 @@ func (r *PipeRelationResource) Configure(ctx context.Context, req resource.Confi
 	if req.ProviderData == nil {
 		return
 	}
-	api, ok := req.ProviderData.(*client.ApiClient)
+	api, ok := req.ProviderData.(*pipefy.Client)
 	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *ApiClient, got %T", req.ProviderData))
+		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *pipefy.Client, got %T", req.ProviderData))
 		return
 	}
 	r.api = api
@@ -195,11 +195,11 @@ func (m *PipeRelationModel) writeInput() map[string]any {
 	return in
 }
 
-func fieldMapsToModel(maps []piperelationgql.FieldMap) []pipeRelationFieldMapModel {
+func fieldMapsToModel(maps []pipefy.FieldMap) []pipeRelationFieldMapModel {
 	out := make([]pipeRelationFieldMapModel, len(maps))
 	for i, fm := range maps {
 		out[i] = pipeRelationFieldMapModel{
-			FieldId:   types.StringValue(fm.FieldId),
+			FieldId:   types.StringValue(fm.FieldID),
 			InputMode: types.StringValue(fm.InputMode),
 			Value:     types.StringValue(fm.Value),
 		}
@@ -214,8 +214,8 @@ func boolOr(p *bool, current types.Bool) types.Bool {
 	return types.BoolValue(*p)
 }
 
-func (m *PipeRelationModel) apply(rel piperelationgql.Relation) {
-	m.Id = types.StringValue(rel.Id)
+func (m *PipeRelationModel) apply(rel pipefy.PipeRelation) {
+	m.Id = types.StringValue(rel.ID)
 	m.Name = types.StringValue(rel.Name)
 	m.CanCreateNewItems = boolOr(rel.CanCreateNewItems, m.CanCreateNewItems)
 	m.CanConnectExistingItems = boolOr(rel.CanConnectExistingItems, m.CanConnectExistingItems)
@@ -225,11 +225,11 @@ func (m *PipeRelationModel) apply(rel piperelationgql.Relation) {
 	m.ChildMustExistToFinishParent = boolOr(rel.ChildMustExistToFinishParent, m.ChildMustExistToFinishParent)
 	m.ChildMustExistToMoveParent = boolOr(rel.ChildMustExistToMoveParent, m.ChildMustExistToMoveParent)
 	m.AutoFillFieldEnabled = boolOr(rel.AutoFillFieldEnabled, m.AutoFillFieldEnabled)
-	if rel.Parent != nil && rel.Parent.Id != "" {
-		m.ParentId = types.StringValue(rel.Parent.Id)
+	if rel.Parent != nil && rel.Parent.ID != "" {
+		m.ParentId = types.StringValue(rel.Parent.ID)
 	}
-	if rel.Child != nil && rel.Child.Id != "" {
-		m.ChildId = types.StringValue(rel.Child.Id)
+	if rel.Child != nil && rel.Child.ID != "" {
+		m.ChildId = types.StringValue(rel.Child.ID)
 	}
 	m.OwnFieldMaps = fieldMapsToModel(rel.OwnFieldMaps)
 }
@@ -245,19 +245,12 @@ func (r *PipeRelationResource) Create(ctx context.Context, req resource.CreateRe
 	input["parentId"] = data.ParentId.ValueString()
 	input["childId"] = data.ChildId.ValueString()
 
-	mutation := "mutation CreatePipeRelation_tf($input:CreatePipeRelationInput!){ createPipeRelation(input:$input){ pipeRelation{ id } } }"
-	var out struct {
-		CreatePipeRelation struct {
-			PipeRelation struct {
-				Id string `json:"id"`
-			} `json:"pipeRelation"`
-		} `json:"createPipeRelation"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, map[string]any{"input": input}, &out); err != nil {
+	id, err := r.api.PipeRelations.Create(ctx, input)
+	if err != nil {
 		resp.Diagnostics.AddError("create pipe relation failed", err.Error())
 		return
 	}
-	data.Id = types.StringValue(out.CreatePipeRelation.PipeRelation.Id)
+	data.Id = types.StringValue(id)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -271,23 +264,13 @@ func (r *PipeRelationResource) Read(ctx context.Context, req resource.ReadReques
 		return
 	}
 
-	query := "query GetPipeRelations_tf($pipeId:ID!){ pipe(id:$pipeId){ childrenRelations{ " + piperelationgql.Selection + " } } }"
-	var out struct {
-		Pipe *struct {
-			ChildrenRelations []piperelationgql.Relation `json:"childrenRelations"`
-		} `json:"pipe"`
+	rel, err := r.api.PipeRelations.Get(ctx, data.ParentId.ValueString(), data.Id.ValueString())
+	if errors.Is(err, pipefy.ErrNotFound) {
+		resp.State.RemoveResource(ctx)
+		return
 	}
-	if err := r.api.DoGraphQL(ctx, query, map[string]any{"pipeId": data.ParentId.ValueString()}, &out); err != nil {
+	if err != nil {
 		resp.Diagnostics.AddError("read pipe relation failed", err.Error())
-		return
-	}
-	if out.Pipe == nil {
-		resp.State.RemoveResource(ctx)
-		return
-	}
-	rel, ok := piperelationgql.FindByID(out.Pipe.ChildrenRelations, data.Id.ValueString())
-	if !ok {
-		resp.State.RemoveResource(ctx)
 		return
 	}
 	data.apply(rel)
@@ -304,15 +287,7 @@ func (r *PipeRelationResource) Update(ctx context.Context, req resource.UpdateRe
 	input := data.writeInput()
 	input["id"] = data.Id.ValueString()
 
-	mutation := "mutation UpdatePipeRelation_tf($input:UpdatePipeRelationInput!){ updatePipeRelation(input:$input){ pipeRelation{ id } } }"
-	var out struct {
-		UpdatePipeRelation struct {
-			PipeRelation struct {
-				Id string `json:"id"`
-			} `json:"pipeRelation"`
-		} `json:"updatePipeRelation"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, map[string]any{"input": input}, &out); err != nil {
+	if err := r.api.PipeRelations.Update(ctx, input); err != nil {
 		resp.Diagnostics.AddError("update pipe relation failed", err.Error())
 		return
 	}
@@ -325,13 +300,7 @@ func (r *PipeRelationResource) Delete(ctx context.Context, req resource.DeleteRe
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation DeletePipeRelation_tf($id:ID!){ deletePipeRelation(input:{ id:$id }){ success } }"
-	var out struct {
-		DeletePipeRelation struct {
-			Success bool `json:"success"`
-		} `json:"deletePipeRelation"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, map[string]any{"id": data.Id.ValueString()}, &out); err != nil {
+	if err := r.api.PipeRelations.Delete(ctx, data.Id.ValueString()); err != nil {
 		resp.Diagnostics.AddError("delete pipe relation failed", err.Error())
 		return
 	}

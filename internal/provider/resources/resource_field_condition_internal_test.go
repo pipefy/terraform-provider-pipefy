@@ -7,8 +7,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/conditiongql"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/fieldconditiongql"
+	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 )
 
 // TestApplyFieldConditionToModelCondition covers what a field condition's
@@ -17,23 +16,23 @@ import (
 // missing one, and a payload no condition can express has to fail the read
 // instead of leaving a half-built condition in state.
 func TestApplyFieldConditionToModelCondition(t *testing.T) {
-	base := func() *fieldconditiongql.FieldCondition {
-		return &fieldconditiongql.FieldCondition{
-			Id:    "fc_1",
+	base := func() *pipefy.FieldCondition {
+		return &pipefy.FieldCondition{
+			ID:    "fc_1",
 			Name:  "rule",
-			Phase: &fieldconditiongql.Phase{Id: "phase_1"},
-			Actions: []fieldconditiongql.Action{
-				{ActionId: "show", PhaseField: &fieldconditiongql.PhaseField{InternalId: "1002"}, WhenEvaluator: boolValue(true)},
+			Phase: &pipefy.FieldConditionPhase{ID: "phase_1"},
+			Actions: []pipefy.FieldConditionAction{
+				{ActionID: "show", PhaseField: &pipefy.FieldConditionPhaseField{InternalID: "1002"}, WhenEvaluator: boolValue(true)},
 			},
 		}
 	}
 
 	t.Run("no condition becomes an empty one", func(t *testing.T) {
-		for name, fc := range map[string]*fieldconditiongql.FieldCondition{
+		for name, fc := range map[string]*pipefy.FieldCondition{
 			"null condition": base(),
-			"no expressions": func() *fieldconditiongql.FieldCondition {
+			"no expressions": func() *pipefy.FieldCondition {
 				f := base()
-				f.Condition = &conditiongql.Condition{}
+				f.Condition = &pipefy.Condition{}
 				return f
 			}(),
 		} {
@@ -56,8 +55,8 @@ func TestApplyFieldConditionToModelCondition(t *testing.T) {
 
 	t.Run("an unreconstructable condition fails the read", func(t *testing.T) {
 		fc := base()
-		fc.Condition = &conditiongql.Condition{
-			Expressions:          []conditiongql.Expression{{StructureId: "0", FieldAddress: "1001", Operation: "equals"}},
+		fc.Condition = &pipefy.Condition{
+			Expressions:          []pipefy.ConditionExpression{{StructureID: "0", FieldAddress: "1001", Operation: "equals"}},
 			ExpressionsStructure: [][]any{{"7"}},
 		}
 		var data FieldConditionModel

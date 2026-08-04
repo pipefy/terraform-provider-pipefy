@@ -6,6 +6,7 @@ package resources
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -19,9 +20,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
+	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/validators"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/webhookgql"
 )
 
 var _ resource.Resource = &WebhookResource{}
@@ -29,7 +29,7 @@ var _ resource.ResourceWithImportState = &WebhookResource{}
 
 func NewWebhookResource() resource.Resource { return &WebhookResource{} }
 
-type WebhookResource struct{ api *client.ApiClient }
+type WebhookResource struct{ api *pipefy.Client }
 
 type WebhookModel struct {
 	Id      types.String         `tfsdk:"id"`
@@ -82,9 +82,9 @@ func (r *WebhookResource) Configure(ctx context.Context, req resource.ConfigureR
 	if req.ProviderData == nil {
 		return
 	}
-	api, ok := req.ProviderData.(*client.ApiClient)
+	api, ok := req.ProviderData.(*pipefy.Client)
 	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *ApiClient, got %T", req.ProviderData))
+		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *pipefy.Client, got %T", req.ProviderData))
 		return
 	}
 	r.api = api
@@ -114,18 +114,12 @@ func (r *WebhookResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	mutation := "mutation CreateWebhook_tf($input:CreateWebhookInput!){ createWebhook(input:$input){ webhook{ " + webhookgql.Selection + " } } }"
-	vars := map[string]any{"input": input}
-	var out struct {
-		CreateWebhook struct {
-			Webhook webhookgql.Webhook `json:"webhook"`
-		} `json:"createWebhook"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
+	webhook, err := r.api.Webhooks.Create(ctx, input)
+	if err != nil {
 		resp.Diagnostics.AddError("create webhook failed", err.Error())
 		return
 	}
-	data.Id = types.StringValue(out.CreateWebhook.Webhook.Id)
+	data.Id = types.StringValue(webhook.ID)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -139,29 +133,17 @@ func (r *WebhookResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	query := "query GetPipeWebhooks_tf($pipeId:ID!){ pipe(id:$pipeId){ webhooks{ " + webhookgql.Selection + " } } }"
-	vars := map[string]any{"pipeId": data.PipeId.ValueString()}
-	var out struct {
-		Pipe *struct {
-			Webhooks []webhookgql.Webhook `json:"webhooks"`
-		} `json:"pipe"`
+	w, err := r.api.Webhooks.Get(ctx, data.PipeId.ValueString(), data.Id.ValueString())
+	if errors.Is(err, pipefy.ErrNotFound) {
+		resp.State.RemoveResource(ctx)
+		return
 	}
-	if err := r.api.DoGraphQL(ctx, query, vars, &out); err != nil {
+	if err != nil {
 		resp.Diagnostics.AddError("read webhook failed", err.Error())
 		return
 	}
-	if out.Pipe == nil {
-		resp.State.RemoveResource(ctx)
-		return
-	}
-
-	w, ok := webhookgql.FindByID(out.Pipe.Webhooks, data.Id.ValueString())
-	if !ok {
-		resp.State.RemoveResource(ctx)
-		return
-	}
 	data.Name = types.StringValue(w.Name)
-	data.Url = types.StringValue(w.Url)
+	data.Url = types.StringValue(w.URL)
 	actions, d := types.ListValueFrom(ctx, types.StringType, w.Actions)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
@@ -223,16 +205,7 @@ func (r *WebhookResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	mutation := "mutation UpdateWebhook_tf($input:UpdateWebhookInput!){ updateWebhook(input:$input){ webhook{ id } } }"
-	vars := map[string]any{"input": input}
-	var out struct {
-		UpdateWebhook struct {
-			Webhook struct {
-				Id string `json:"id"`
-			} `json:"webhook"`
-		} `json:"updateWebhook"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
+	if err := r.api.Webhooks.Update(ctx, input); err != nil {
 		resp.Diagnostics.AddError("update webhook failed", err.Error())
 		return
 	}
@@ -245,14 +218,7 @@ func (r *WebhookResource) Delete(ctx context.Context, req resource.DeleteRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation DeleteWebhook_tf($id:ID!){ deleteWebhook(input:{ id:$id }){ success } }"
-	vars := map[string]any{"id": data.Id.ValueString()}
-	var out struct {
-		DeleteWebhook struct {
-			Success bool `json:"success"`
-		} `json:"deleteWebhook"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
+	if err := r.api.Webhooks.Delete(ctx, data.Id.ValueString()); err != nil {
 		resp.Diagnostics.AddError("delete webhook failed", err.Error())
 		return
 	}

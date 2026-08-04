@@ -6,6 +6,7 @@ package resources
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -18,8 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/conditiongql"
+	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/conditionschema"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/validators"
 )
@@ -30,7 +30,7 @@ var _ resource.ResourceWithValidateConfig = &AutomationResource{}
 
 func NewAutomationResource() resource.Resource { return &AutomationResource{} }
 
-type AutomationResource struct{ api *client.ApiClient }
+type AutomationResource struct{ api *pipefy.Client }
 
 type automationCronModel struct {
 	Minute     types.String `tfsdk:"minute"`
@@ -73,13 +73,7 @@ type AutomationModel struct {
 	ResponseSchema     jsontypes.Normalized             `tfsdk:"response_schema"`
 }
 
-type automationErrorDetail struct {
-	ObjectName string   `json:"object_name"`
-	ObjectKey  string   `json:"object_key"`
-	Messages   []string `json:"messages"`
-}
-
-func formatAutomationErrorDetails(details []automationErrorDetail) string {
+func formatAutomationErrorDetails(details []pipefy.ErrorDetail) string {
 	lines := make([]string, len(details))
 	for i, d := range details {
 		label := d.ObjectName
@@ -98,59 +92,21 @@ func formatAutomationErrorDetails(details []automationErrorDetail) string {
 	return strings.Join(lines, "\n")
 }
 
-func automationError(automationPresent bool, details []automationErrorDetail, err error) string {
-	if automationPresent {
-		return ""
+// automationError renders a failed automation mutation. The order matches what
+// the API can return at once: printable error_details win, then the transport
+// error that may have accompanied them, then the no-information fallback.
+func automationError(err error) string {
+	var validationErr *pipefy.ValidationError
+	if errors.As(err, &validationErr) {
+		if detail := formatAutomationErrorDetails(validationErr.Details); detail != "" {
+			return detail
+		}
+		if wrapped := errors.Unwrap(validationErr); wrapped != nil {
+			return wrapped.Error()
+		}
+		return pipefy.ErrNoAutomation.Error()
 	}
-	if detail := formatAutomationErrorDetails(details); detail != "" {
-		return detail
-	}
-	if err != nil {
-		return err.Error()
-	}
-	return "the API returned no automation and no error_details"
-}
-
-// automationSelection is the field set read back for an automation. Read uses it
-// to refresh state so out-of-band changes are detected.
-const automationSelection = "id name active event_id action_id " +
-	"event_repo{ id } action_repo_v2{ ... on Pipe{ id } ... on Table{ id } } " +
-	"scheduler_frequency schedulerCron{ minute hour dayOfMonth month dayOfWeek } " +
-	"searchFor{ field id operation value } responseSchema " +
-	"condition{ " + conditiongql.Selection + " }"
-
-type automationRepoRef struct {
-	Id string `json:"id"`
-}
-
-type automationCron struct {
-	Minute     *string `json:"minute"`
-	Hour       *string `json:"hour"`
-	DayOfMonth *string `json:"dayOfMonth"`
-	Month      *string `json:"month"`
-	DayOfWeek  *string `json:"dayOfWeek"`
-}
-
-type automationSearchCondition struct {
-	Field     string  `json:"field"`
-	Id        string  `json:"id"`
-	Operation string  `json:"operation"`
-	Value     *string `json:"value"`
-}
-
-type automationData struct {
-	Id                 string                      `json:"id"`
-	Name               string                      `json:"name"`
-	Active             *bool                       `json:"active"`
-	EventId            string                      `json:"event_id"`
-	ActionId           string                      `json:"action_id"`
-	EventRepo          *automationRepoRef          `json:"event_repo"`
-	ActionRepoV2       *automationRepoRef          `json:"action_repo_v2"`
-	SchedulerFrequency *string                     `json:"scheduler_frequency"`
-	SchedulerCron      *automationCron             `json:"schedulerCron"`
-	SearchFor          []automationSearchCondition `json:"searchFor"`
-	ResponseSchema     json.RawMessage             `json:"responseSchema"`
-	Condition          *conditiongql.Condition     `json:"condition"`
+	return err.Error()
 }
 
 // automationOptionalString maps a nullable API string to state: a null becomes
@@ -166,7 +122,7 @@ func automationOptionalString(p *string) types.String {
 // automationCronToModel maps the API's cron back to the nested block. A
 // non-scheduler automation returns an all-null cron object, which maps to no
 // block so it matches an unset config.
-func automationCronToModel(c *automationCron) *automationCronModel {
+func automationCronToModel(c *pipefy.AutomationCron) *automationCronModel {
 	if c == nil || (c.Minute == nil && c.Hour == nil && c.DayOfMonth == nil && c.Month == nil && c.DayOfWeek == nil) {
 		return nil
 	}
@@ -188,7 +144,7 @@ func automationCronToModel(c *automationCron) *automationCronModel {
 // automationSearchForToModel maps the API's search conditions back to state. An
 // empty (or absent) list maps to no value so it matches an unset block, matching
 // how a condition with no expressions settles.
-func automationSearchForToModel(cs []automationSearchCondition) []automationSearchConditionModel {
+func automationSearchForToModel(cs []pipefy.AutomationSearchCondition) []automationSearchConditionModel {
 	if len(cs) == 0 {
 		return nil
 	}
@@ -196,7 +152,7 @@ func automationSearchForToModel(cs []automationSearchCondition) []automationSear
 	for i, c := range cs {
 		conds[i] = automationSearchConditionModel{
 			Field:     types.StringValue(c.Field),
-			Id:        types.StringValue(c.Id),
+			Id:        types.StringValue(c.ID),
 			Operation: types.StringValue(c.Operation),
 			Value:     automationOptionalString(c.Value),
 		}
@@ -217,19 +173,19 @@ func automationNormalizeJSON(raw json.RawMessage) jsontypes.Normalized {
 // maps to no value (null) when the automation carries none, so an unset config
 // settles cleanly. action_params and event_params are not read back, so drift
 // in them is not detected.
-func (m *AutomationModel) apply(a *automationData, diags *diag.Diagnostics) {
-	m.Id = types.StringValue(a.Id)
+func (m *AutomationModel) apply(a *pipefy.Automation, diags *diag.Diagnostics) {
+	m.Id = types.StringValue(a.ID)
 	m.Name = types.StringValue(a.Name)
 	if a.Active != nil {
 		m.Active = types.BoolValue(*a.Active)
 	}
-	m.EventId = types.StringValue(a.EventId)
-	m.ActionId = types.StringValue(a.ActionId)
-	if a.EventRepo != nil && a.EventRepo.Id != "" {
-		m.EventRepoId = types.StringValue(a.EventRepo.Id)
+	m.EventId = types.StringValue(a.EventID)
+	m.ActionId = types.StringValue(a.ActionID)
+	if a.EventRepo != nil && a.EventRepo.ID != "" {
+		m.EventRepoId = types.StringValue(a.EventRepo.ID)
 	}
-	if a.ActionRepoV2 != nil && a.ActionRepoV2.Id != "" {
-		m.ActionRepoId = types.StringValue(a.ActionRepoV2.Id)
+	if a.ActionRepoV2 != nil && a.ActionRepoV2.ID != "" {
+		m.ActionRepoId = types.StringValue(a.ActionRepoV2.ID)
 	}
 	m.SchedulerFrequency = automationOptionalString(a.SchedulerFrequency)
 	m.SchedulerCron = automationCronToModel(a.SchedulerCron)
@@ -437,9 +393,9 @@ func (r *AutomationResource) Configure(ctx context.Context, req resource.Configu
 	if req.ProviderData == nil {
 		return
 	}
-	api, ok := req.ProviderData.(*client.ApiClient)
+	api, ok := req.ProviderData.(*pipefy.Client)
 	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *ApiClient, got %T", req.ProviderData))
+		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *pipefy.Client, got %T", req.ProviderData))
 		return
 	}
 	r.api = api
@@ -452,7 +408,6 @@ func (r *AutomationResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
-	mutation := "mutation CreateAutomation_tf($input:CreateAutomationInput!){ createAutomation(input:$input){ automation{ id name action_id event_id active } error_details{ object_name object_key messages } } }"
 	input := map[string]any{
 		"name":           data.Name.ValueString(),
 		"action_id":      data.ActionId.ValueString(),
@@ -464,26 +419,12 @@ func (r *AutomationResource) Create(ctx context.Context, req resource.CreateRequ
 	if !addAutomationOptionalInputs(input, &data, &resp.Diagnostics) {
 		return
 	}
-	vars := map[string]any{"input": input}
-
-	var out struct {
-		CreateAutomation struct {
-			Automation *struct {
-				Id       string `json:"id"`
-				Name     string `json:"name"`
-				ActionId string `json:"action_id"`
-				EventId  string `json:"event_id"`
-				Active   bool   `json:"active"`
-			} `json:"automation"`
-			ErrorDetails []automationErrorDetail `json:"error_details"`
-		} `json:"createAutomation"`
-	}
-	err := r.api.DoGraphQL(ctx, mutation, vars, &out)
-	if detail := automationError(out.CreateAutomation.Automation != nil, out.CreateAutomation.ErrorDetails, err); detail != "" {
-		resp.Diagnostics.AddError("create automation failed", detail)
+	created, err := r.api.Automations.Create(ctx, input)
+	if err != nil {
+		resp.Diagnostics.AddError("create automation failed", automationError(err))
 		return
 	}
-	data.Id = types.StringValue(out.CreateAutomation.Automation.Id)
+	data.Id = types.StringValue(created.ID)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -497,20 +438,16 @@ func (r *AutomationResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 
-	query := "query GetAutomation_tf($id:ID!){ automation(id:$id){ " + automationSelection + " } }"
-	vars := map[string]any{"id": data.Id.ValueString()}
-	var out struct {
-		Automation *automationData `json:"automation"`
-	}
-	if err := r.api.DoGraphQL(ctx, query, vars, &out); err != nil {
-		resp.Diagnostics.AddError("read automation failed", err.Error())
-		return
-	}
-	if out.Automation == nil {
+	automation, err := r.api.Automations.Get(ctx, data.Id.ValueString())
+	if errors.Is(err, pipefy.ErrNotFound) {
 		resp.State.RemoveResource(ctx)
 		return
 	}
-	data.apply(out.Automation, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("read automation failed", err.Error())
+		return
+	}
+	data.apply(&automation, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -530,7 +467,6 @@ func (r *AutomationResource) Update(ctx context.Context, req resource.UpdateRequ
 		return
 	}
 
-	mutation := "mutation UpdateAutomation_tf($input:UpdateAutomationInput!){ updateAutomation(input:$input){ automation{ id } error_details{ object_name object_key messages } } }"
 	input := map[string]any{
 		"id":             data.Id.ValueString(),
 		"name":           data.Name.ValueString(),
@@ -545,18 +481,8 @@ func (r *AutomationResource) Update(ctx context.Context, req resource.UpdateRequ
 	}
 	updateResponseSchemaInput(input, data.ResponseSchema)
 
-	vars := map[string]any{"input": input}
-	var out struct {
-		UpdateAutomation struct {
-			Automation *struct {
-				Id string `json:"id"`
-			} `json:"automation"`
-			ErrorDetails []automationErrorDetail `json:"error_details"`
-		} `json:"updateAutomation"`
-	}
-	err := r.api.DoGraphQL(ctx, mutation, vars, &out)
-	if detail := automationError(out.UpdateAutomation.Automation != nil, out.UpdateAutomation.ErrorDetails, err); detail != "" {
-		resp.Diagnostics.AddError("update automation failed", detail)
+	if err := r.api.Automations.Update(ctx, input); err != nil {
+		resp.Diagnostics.AddError("update automation failed", automationError(err))
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -568,14 +494,7 @@ func (r *AutomationResource) Delete(ctx context.Context, req resource.DeleteRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation DeleteAutomation_tf($id:ID!){ deleteAutomation(input:{id:$id}){ success } }"
-	vars := map[string]any{"id": data.Id.ValueString()}
-	var out struct {
-		DeleteAutomation struct {
-			Success bool `json:"success"`
-		} `json:"deleteAutomation"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
+	if err := r.api.Automations.Delete(ctx, data.Id.ValueString()); err != nil {
 		resp.Diagnostics.AddError("delete automation failed", err.Error())
 		return
 	}

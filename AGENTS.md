@@ -42,18 +42,24 @@ The `docs/` directory is generated. Run `make generate` after any schema change;
 ## Project layout
 
 ```
+internal/pipefy/           # API layer: every GraphQL document, one service per entity, typed errors
+internal/locks/            # Mutex helpers for serializing API mutations the API cannot take concurrently
 internal/provider/
   provider.go              # Provider config, auth, resource/data-source registration
-  resources/               # pipe, phase, field, automation, label, pipe_relation, webhook, ai_agent
+  resources/               # pipe, phase, field, automation, label, pipe_relation, webhook, ai_agent, field_condition, table, table_field
   datasources/             # pipefy_pipe, pipefy_phase
-  client/api_client.go     # Pipefy GraphQL HTTP client
-  locks/                   # Mutex helpers for serializing API mutations
-  aiagentgql/              # Shared GraphQL selection/structs for AI agents
+  client/api_client.go     # Pipefy GraphQL HTTP transport
+  conditionschema/         # Terraform-side model for the shared condition block
+  validators/              # Reusable attribute validators
 examples/                  # Example .tf per resource and data source (feeds the docs)
 docs/                      # Generated reference docs (do not edit by hand)
-tools/                     # tfplugindocs tooling for `make generate`
+tools/                     # tfplugindocs tooling for `make generate`, plus dumpdocs
 main.go                    # Provider entrypoint
 ```
+
+`internal/pipefy` is the API layer and imports no Terraform packages, so it is testable against
+`httptest` with no Terraform harness. Resources hold schema, plan and state handling, and
+diagnostics, and call the SDK for everything else.
 
 ## Conventions
 
@@ -65,11 +71,12 @@ main.go                    # Provider entrypoint
 
 ## How to add a resource
 
-1. Implement schema, `Create`, `Read`, `Update`, `Delete`, and `ImportState` in `internal/provider/resources/resource_<name>.go`.
-2. Add its constructor to the `Resources()` list in `internal/provider/provider.go`.
-3. Add `examples/resources/pipefy_<name>/resource.tf` and `import.sh`.
-4. Add an acceptance test `internal/provider/resource_<name>_test.go`.
-5. Run `make generate` to refresh `docs/`, then `make testacc` to verify.
+1. Add the entity to the SDK in `internal/pipefy/<name>.go`: the GraphQL documents, wire structs, input structs, and a service with typed methods. Register the service in `New` in `internal/pipefy/client.go`, add each document to `sdkDocuments` in `internal/pipefy/documents_test.go`, and cover the methods with `httptest` tests. Nothing in this package imports `terraform-plugin-framework`.
+2. Implement schema, `Create`, `Read`, `Update`, `Delete`, and `ImportState` in `internal/provider/resources/resource_<name>.go`, calling the SDK. Resources hold no GraphQL. `Read` calls `resp.State.RemoveResource` when the SDK returns `pipefy.ErrNotFound`.
+3. Add its constructor to the `Resources()` list in `internal/provider/provider.go`.
+4. Add `examples/resources/pipefy_<name>/resource.tf` and `import.sh`.
+5. Add an acceptance test `internal/provider/resource_<name>_test.go`.
+6. Run `make generate` to refresh `docs/`, then `make testacc` to verify.
 
 ## Testing
 

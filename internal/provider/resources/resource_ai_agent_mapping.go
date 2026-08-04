@@ -10,7 +10,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/aiagentgql"
+	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 )
 
 func ensureActionReferenceIDs(model *AiAgentModel) error {
@@ -187,7 +187,7 @@ func stringSetValues(values types.Set) []string {
 	return result
 }
 
-func (model *AiAgentModel) applyGraphQL(agent aiagentgql.Agent) {
+func (model *AiAgentModel) applyGraphQL(agent pipefy.Agent) {
 	model.ID = types.StringValue(agent.UUID)
 	model.Name = types.StringValue(agent.Name)
 	model.Instruction = types.StringValue(agent.Instruction)
@@ -196,7 +196,7 @@ func (model *AiAgentModel) applyGraphQL(agent aiagentgql.Agent) {
 	model.Behaviors = behaviorsToModel(agent.Behaviors)
 }
 
-func behaviorsToModel(behaviors []aiagentgql.Behavior) []AiAgentBehaviorModel {
+func behaviorsToModel(behaviors []pipefy.Behavior) []AiAgentBehaviorModel {
 	result := make([]AiAgentBehaviorModel, len(behaviors))
 	for index, behavior := range behaviors {
 		actions := actionsToModel(behavior.ActionParams.AIBehaviorParams.Actions)
@@ -213,7 +213,7 @@ func behaviorsToModel(behaviors []aiagentgql.Behavior) []AiAgentBehaviorModel {
 	return result
 }
 
-func actionsToModel(actions []aiagentgql.Action) []AiAgentActionModel {
+func actionsToModel(actions []pipefy.Action) []AiAgentActionModel {
 	result := make([]AiAgentActionModel, len(actions))
 	for index, action := range actions {
 		result[index] = AiAgentActionModel{
@@ -227,7 +227,7 @@ func actionsToModel(actions []aiagentgql.Action) []AiAgentActionModel {
 	return result
 }
 
-func fieldsToModel(fields []aiagentgql.Field) []AiAgentFieldModel {
+func fieldsToModel(fields []pipefy.AgentField) []AiAgentFieldModel {
 	if len(fields) == 0 {
 		return nil
 	}
@@ -250,7 +250,7 @@ func emptyAPIStringAsNull(value *string) types.String {
 	return types.StringValue(*value)
 }
 
-func eventParamsToModel(params aiagentgql.EventParams) *AiAgentEventParamsModel {
+func eventParamsToModel(params pipefy.AgentEventParams) *AiAgentEventParamsModel {
 	if params.ToPhaseID == nil && len(params.TriggerFieldIDs) == 0 {
 		return nil
 	}

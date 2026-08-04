@@ -5,6 +5,7 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -16,8 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/tablegql"
+	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 )
 
 var _ resource.Resource = &TableResource{}
@@ -25,7 +25,7 @@ var _ resource.ResourceWithImportState = &TableResource{}
 
 func NewTableResource() resource.Resource { return &TableResource{} }
 
-type TableResource struct{ api *client.ApiClient }
+type TableResource struct{ api *pipefy.Client }
 
 type TableModel struct {
 	Id             types.String `tfsdk:"id"`
@@ -65,8 +65,8 @@ func (r *TableResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 			"authorization": schema.StringAttribute{
 				Optional:      true,
 				Computed:      true,
-				Description:   "Access level required to view and edit the table's records: " + strings.Join(tablegql.AuthorizationValues, ", ") + ".",
-				Validators:    []validator.String{stringvalidator.OneOf(tablegql.AuthorizationValues...)},
+				Description:   "Access level required to view and edit the table's records: " + strings.Join(pipefy.AuthorizationValues, ", ") + ".",
+				Validators:    []validator.String{stringvalidator.OneOf(pipefy.AuthorizationValues...)},
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"color": schema.StringAttribute{
@@ -89,17 +89,17 @@ func (r *TableResource) Configure(ctx context.Context, req resource.ConfigureReq
 	if req.ProviderData == nil {
 		return
 	}
-	api, ok := req.ProviderData.(*client.ApiClient)
+	api, ok := req.ProviderData.(*pipefy.Client)
 	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *ApiClient, got %T", req.ProviderData))
+		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *pipefy.Client, got %T", req.ProviderData))
 		return
 	}
 	r.api = api
 }
 
-func (m *TableModel) apply(p tablegql.Payload, onlyUnknown bool) {
+func (m *TableModel) apply(p pipefy.Table, onlyUnknown bool) {
 	if !onlyUnknown || m.Id.IsUnknown() {
-		m.Id = types.StringValue(p.Id)
+		m.Id = types.StringValue(p.ID)
 	}
 	if !onlyUnknown || m.Name.IsUnknown() {
 		m.Name = types.StringValue(p.Name)
@@ -118,25 +118,14 @@ func (m *TableModel) apply(p tablegql.Payload, onlyUnknown bool) {
 	}
 }
 
-func (m *TableModel) addVars(vars map[string]any) {
-	if hasValue(m.Description) {
-		vars["description"] = m.Description.ValueString()
-	}
-	if hasValue(m.Authorization) {
-		vars["authorization"] = m.Authorization.ValueString()
-	}
-	if hasValue(m.Color) {
-		vars["color"] = m.Color.ValueString()
-	}
-	if hasValue(m.Icon) {
-		vars["icon"] = m.Icon.ValueString()
+func (m *TableModel) writes() pipefy.TableWrites {
+	return pipefy.TableWrites{
+		Description:   optionalString(m.Description),
+		Authorization: optionalString(m.Authorization),
+		Color:         optionalString(m.Color),
+		Icon:          optionalString(m.Icon),
 	}
 }
-
-const createTableMutation = "mutation CreateTable_tf($name:String!,$orgId:ID!,$authorization:TableAuthorization," +
-	"$description:String,$color:Colors,$icon:String){ createTable(input:{ name:$name, organization_id:$orgId, " +
-	"authorization:$authorization, description:$description, color:$color, icon:$icon }){ table{ " +
-	tablegql.Selection + " } } }"
 
 func (r *TableResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data TableModel
@@ -145,22 +134,16 @@ func (r *TableResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	vars := map[string]any{
-		"name":  data.Name.ValueString(),
-		"orgId": data.OrganizationId.ValueString(),
-	}
-	data.addVars(vars)
-
-	var out struct {
-		CreateTable struct {
-			Table tablegql.Payload `json:"table"`
-		} `json:"createTable"`
-	}
-	if err := r.api.DoGraphQL(ctx, createTableMutation, vars, &out); err != nil {
+	table, err := r.api.Tables.Create(ctx, pipefy.CreateTableInput{
+		Name:           data.Name.ValueString(),
+		OrganizationID: data.OrganizationId.ValueString(),
+		TableWrites:    data.writes(),
+	})
+	if err != nil {
 		resp.Diagnostics.AddError("create table failed", err.Error())
 		return
 	}
-	data.apply(out.CreateTable.Table, true)
+	data.apply(table, true)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -174,34 +157,21 @@ func (r *TableResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	query := "query GetTable_tf($id:ID!){ table(id:$id){ " + tablegql.Selection + " organization { id } } }"
-	var out struct {
-		Table *struct {
-			tablegql.Payload
-			Organization *struct {
-				Id string `json:"id"`
-			} `json:"organization"`
-		} `json:"table"`
-	}
-	if err := r.api.DoGraphQL(ctx, query, map[string]any{"id": data.Id.ValueString()}, &out); err != nil {
-		resp.Diagnostics.AddError("read table failed", err.Error())
-		return
-	}
-	if out.Table == nil {
+	table, err := r.api.Tables.Get(ctx, data.Id.ValueString())
+	if errors.Is(err, pipefy.ErrNotFound) {
 		resp.State.RemoveResource(ctx)
 		return
 	}
-	data.apply(out.Table.Payload, false)
-	if out.Table.Organization != nil {
-		data.OrganizationId = types.StringValue(out.Table.Organization.Id)
+	if err != nil {
+		resp.Diagnostics.AddError("read table failed", err.Error())
+		return
+	}
+	data.apply(table, false)
+	if table.OrganizationID != "" {
+		data.OrganizationId = types.StringValue(table.OrganizationID)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
-
-const updateTableMutation = "mutation UpdateTable_tf($id:ID!,$name:String,$authorization:TableAuthorization," +
-	"$description:String,$color:Colors,$icon:String){ updateTable(input:{ id:$id, name:$name, " +
-	"authorization:$authorization, description:$description, color:$color, icon:$icon }){ table{ " +
-	tablegql.Selection + " } } }"
 
 func (r *TableResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var data TableModel
@@ -209,19 +179,16 @@ func (r *TableResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	vars := map[string]any{"id": data.Id.ValueString(), "name": data.Name.ValueString()}
-	data.addVars(vars)
-
-	var out struct {
-		UpdateTable struct {
-			Table tablegql.Payload `json:"table"`
-		} `json:"updateTable"`
-	}
-	if err := r.api.DoGraphQL(ctx, updateTableMutation, vars, &out); err != nil {
+	table, err := r.api.Tables.Update(ctx, pipefy.UpdateTableInput{
+		ID:          data.Id.ValueString(),
+		Name:        data.Name.ValueString(),
+		TableWrites: data.writes(),
+	})
+	if err != nil {
 		resp.Diagnostics.AddError("update table failed", err.Error())
 		return
 	}
-	data.apply(out.UpdateTable.Table, true)
+	data.apply(table, true)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -231,13 +198,7 @@ func (r *TableResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation DeleteTable_tf($id:ID!){ deleteTable(input:{id:$id}){ success } }"
-	var out struct {
-		DeleteTable struct {
-			Success bool `json:"success"`
-		} `json:"deleteTable"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, map[string]any{"id": data.Id.ValueString()}, &out); err != nil {
+	if err := r.api.Tables.Delete(ctx, data.Id.ValueString()); err != nil {
 		resp.Diagnostics.AddError("delete table failed", err.Error())
 		return
 	}
