@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -68,8 +67,6 @@ func (m *PhaseModel) fillUnknowns(p pipefy.Phase) {
 		m.CanReceiveCardDirectlyFromDraft = types.BoolPointerValue(p.CanReceiveCardDirectlyFromDraft)
 	}
 }
-
-func hasValue(v attr.Value) bool { return !v.IsNull() && !v.IsUnknown() }
 
 func (m *PhaseModel) writes() pipefy.PhaseWrites {
 	return pipefy.PhaseWrites{
@@ -190,9 +187,8 @@ func (r *PhaseResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// The mutation's success flag is deliberately ignored, matching what this
-	// resource has always done. Only the pipe resource's cleanup of seeded
-	// phases treats a false as a failure.
+	// The mutation's success flag is deliberately ignored here. Only the pipe
+	// resource's cleanup of seeded phases treats a false as a failure.
 	if _, err := r.api.Phases.Delete(ctx, data.Id.ValueString()); err != nil {
 		resp.Diagnostics.AddError("delete phase failed", err.Error())
 		return

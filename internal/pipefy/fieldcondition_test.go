@@ -57,7 +57,10 @@ func TestFieldConditionsGetMissingIsNotFound(t *testing.T) {
 	}
 }
 
-func TestFieldConditionsCreateNilPayloadIsNotFound(t *testing.T) {
+// A write that comes back without its object must not report ErrNotFound: a
+// resource maps that to removing itself from state, which would discard a
+// condition the API may well have created.
+func TestFieldConditionsCreateNilPayloadIsNoFieldCondition(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		q := capture(t, r).Query
 		if strings.Contains(q, "GetPhaseRepoId_tf") {
@@ -68,8 +71,30 @@ func TestFieldConditionsCreateNilPayloadIsNotFound(t *testing.T) {
 	})
 
 	_, err := c.FieldConditions.Create(t.Context(), "900", map[string]any{"name": "X"})
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("err = %v, want ErrNotFound", err)
+	if !errors.Is(err, ErrNoFieldCondition) {
+		t.Fatalf("err = %v, want ErrNoFieldCondition", err)
+	}
+	if errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, must not match ErrNotFound", err)
+	}
+}
+
+func TestFieldConditionsUpdateNilPayloadIsNoFieldCondition(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		q := capture(t, r).Query
+		if strings.Contains(q, "GetPhaseRepoId_tf") {
+			respondJSON(w, `{"data":{"phase":{"repo_id":302825965}}}`)
+			return
+		}
+		respondJSON(w, `{"data":{"updateFieldCondition":{"fieldCondition":null}}}`)
+	})
+
+	_, err := c.FieldConditions.Update(t.Context(), "900", map[string]any{"id": "fc1"})
+	if !errors.Is(err, ErrNoFieldCondition) {
+		t.Fatalf("err = %v, want ErrNoFieldCondition", err)
+	}
+	if errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, must not match ErrNotFound", err)
 	}
 }
 

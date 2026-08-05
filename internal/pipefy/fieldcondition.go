@@ -25,6 +25,11 @@ const updateFieldConditionMutation = "mutation UpdateFieldCondition_tf($input:Up
 
 const deleteFieldConditionMutation = "mutation DeleteFieldCondition_tf($id:ID!){ deleteFieldCondition(input:{id:$id}){ success } }"
 
+// ErrNoFieldCondition reports a mutation that returned no field condition. It is
+// distinct from ErrNotFound because a caller maps that one to removing the
+// resource from state, which is the wrong answer for a write that failed.
+var ErrNoFieldCondition = errors.New("the API returned no field condition")
+
 // FieldCondition is show/hide logic for a phase form.
 type FieldCondition struct {
 	ID        string                 `json:"id"`
@@ -57,8 +62,8 @@ type FieldConditionPhaseField struct {
 type FieldConditionService struct{ c *Client }
 
 // lockPhaseRepo serializes on the repo owning phaseID. A nil phase and a zero
-// repo id both render as errPhaseRepoIDUnresolved here, matching what the
-// resource did.
+// repo id both render as errPhaseRepoIDUnresolved, so a caller cannot tell them
+// apart.
 func (s *FieldConditionService) lockPhaseRepo(ctx context.Context, phaseID string) (func(), error) {
 	repoID, err := s.c.phaseRepoID(ctx, phaseID)
 	if errors.Is(err, errPhaseUnresolved) {
@@ -92,7 +97,7 @@ func (s *FieldConditionService) Create(ctx context.Context, phaseID string, inpu
 		return FieldCondition{}, err
 	}
 	if out.CreateFieldCondition.FieldCondition == nil {
-		return FieldCondition{}, ErrNotFound
+		return FieldCondition{}, ErrNoFieldCondition
 	}
 	return *out.CreateFieldCondition.FieldCondition, nil
 }
@@ -129,7 +134,7 @@ func (s *FieldConditionService) Update(ctx context.Context, phaseID string, inpu
 		return FieldCondition{}, err
 	}
 	if out.UpdateFieldCondition.FieldCondition == nil {
-		return FieldCondition{}, ErrNotFound
+		return FieldCondition{}, ErrNoFieldCondition
 	}
 	return *out.UpdateFieldCondition.FieldCondition, nil
 }

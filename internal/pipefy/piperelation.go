@@ -55,9 +55,9 @@ type PipeRelation struct {
 // PipeRelationService reads and writes connections between repos.
 type PipeRelationService struct{ c *Client }
 
-// Create makes a relation and returns its id. The mutation selects only the id.
-// The input stays a map because typing it is a redesign with real judgment about
-// which keys are optional, and that belongs in its own change.
+// Create makes a relation and returns its id. The mutation selects only the id,
+// and the input stays a map: which of its keys the API treats as optional is not
+// settled.
 //
 // There is no lock: the API accepts concurrent creates for one repo.
 func (s *PipeRelationService) Create(ctx context.Context, input map[string]any) (string, error) {

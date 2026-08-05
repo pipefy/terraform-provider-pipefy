@@ -153,8 +153,8 @@ func TestTableFieldsDeleteSerializesPerTable(t *testing.T) {
 	}
 }
 
-// Update does not serialize, unlike Create and Delete. That asymmetry is what
-// the provider does today, so it is pinned rather than tidied.
+// Update does not serialize, unlike Create and Delete. The asymmetry is
+// deliberate, so it is pinned here rather than left to be tidied away.
 func TestTableFieldsUpdateDoesNotSerialize(t *testing.T) {
 	peak := peakConcurrency(t, `{"data":{"updateTableField":{"table_field":{"id":"slug"}}}}`, func(c *Client) {
 		_, _ = c.TableFields.Update(t.Context(), UpdateTableFieldInput{TableID: "tbl1", ID: "slug"})

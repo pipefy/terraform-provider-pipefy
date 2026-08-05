@@ -19,9 +19,8 @@ var graphQLDocument = regexp.MustCompile(`\b(?:query|mutation)\s+[A-Za-z0-9]+_tf
 
 // TestNoGraphQLOutsideSDK fails when a GraphQL document appears anywhere but
 // internal/pipefy. Every operation living in one package is what lets the API
-// layer be exercised without a Terraform harness, and it is easy to undo by
-// accident: writing a query straight into a resource is the shape the provider
-// had before, and nothing else in the build would object.
+// layer be exercised without a Terraform harness, and nothing else in the build
+// objects to a query written straight into a resource.
 //
 // depguard covers the other direction, stopping the SDK from importing
 // Terraform. This covers this one.

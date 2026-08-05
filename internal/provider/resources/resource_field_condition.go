@@ -119,7 +119,7 @@ func (r *FieldConditionResource) Create(ctx context.Context, req resource.Create
 	input["actions"] = data.actionsInput()
 
 	fc, err := r.api.FieldConditions.Create(ctx, data.PhaseId.ValueString(), input)
-	if errors.Is(err, pipefy.ErrNotFound) {
+	if errors.Is(err, pipefy.ErrNoFieldCondition) {
 		resp.Diagnostics.AddError("create field condition failed", "the API returned no field condition")
 		return
 	}
@@ -176,7 +176,7 @@ func (r *FieldConditionResource) Update(ctx context.Context, req resource.Update
 	input["actions"] = data.actionsInput()
 
 	fc, err := r.api.FieldConditions.Update(ctx, data.PhaseId.ValueString(), input)
-	if errors.Is(err, pipefy.ErrNotFound) {
+	if errors.Is(err, pipefy.ErrNoFieldCondition) {
 		resp.Diagnostics.AddError("update field condition failed", "the API returned no field condition")
 		return
 	}

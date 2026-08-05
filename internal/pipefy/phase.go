@@ -137,8 +137,7 @@ func (s *PhaseService) Update(ctx context.Context, in UpdatePhaseInput) (Phase, 
 // about it: the phase resource's Delete ignores it, while the pipe resource's
 // cleanup of the phases createPipe seeds treats a false as a failure.
 //
-// It takes no lock, matching what the provider does today: only creates
-// serialize.
+// It takes no lock. Only phase creates serialize.
 func (s *PhaseService) Delete(ctx context.Context, id string) (bool, error) {
 	var out struct {
 		DeletePhase struct {

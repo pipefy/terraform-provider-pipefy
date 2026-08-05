@@ -3,7 +3,10 @@
 
 package resources
 
-import "github.com/hashicorp/terraform-plugin-framework/types"
+import (
+	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+)
 
 // The optional* helpers turn a Terraform attribute into the pointer the SDK's
 // input structs take: nil when the attribute has no concrete value, so an
@@ -41,3 +44,5 @@ func optionalFloat64(v types.Float64) *float64 {
 	f := v.ValueFloat64()
 	return &f
 }
+
+func hasValue(v attr.Value) bool { return !v.IsNull() && !v.IsUnknown() }

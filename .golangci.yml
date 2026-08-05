@@ -29,18 +29,23 @@ linters:
 linters-settings:
   depguard:
     rules:
-      # internal/pipefy is the API layer. It must stay free of Terraform types so
-      # it is testable with httptest and no Terraform harness. It may import the
-      # transport it wraps and the lock registry, nothing else from the provider.
-      sdk-stays-clean:
+      # internal/pipefy is the API layer. It must stay free of Terraform so it is
+      # testable with httptest and no Terraform harness. The prefix covers the
+      # whole plugin surface, not just the framework, and applies to its tests
+      # too: they have no reason to reach for the acceptance-test harness.
+      sdk-holds-no-terraform:
         files:
           - "**/internal/pipefy/**"
         deny:
-          - pkg: github.com/hashicorp/terraform-plugin-framework
+          - pkg: github.com/hashicorp/terraform-plugin-
             desc: the SDK must stay free of Terraform types
-          - pkg: github.com/pipefy/terraform-provider-pipefy/internal/provider/resources
-            desc: the SDK must not depend on the Terraform layer
-          - pkg: github.com/pipefy/terraform-provider-pipefy/internal/provider/datasources
-            desc: the SDK must not depend on the Terraform layer
-          - pkg: github.com/pipefy/terraform-provider-pipefy/internal/provider/conditionschema
+      # The SDK depends on internal/locks and nothing else in this module. Its
+      # tests are the one exception: the httptest helper wires up the real
+      # transport, which lives under internal/provider.
+      sdk-holds-no-provider-imports:
+        files:
+          - "**/internal/pipefy/**"
+          - "!$test"
+        deny:
+          - pkg: github.com/pipefy/terraform-provider-pipefy/internal/provider
             desc: the SDK must not depend on the Terraform layer

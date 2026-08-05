@@ -189,7 +189,7 @@ func (r *TableFieldResource) Update(ctx context.Context, req resource.UpdateRequ
 		TableFieldWrites: writes,
 	}
 	// Label is sent on a null-check alone, not the usual hasValue: an unknown
-	// label still goes out. Kept as it was.
+	// label still goes out.
 	if !data.Label.IsNull() {
 		label := data.Label.ValueString()
 		in.Label = &label

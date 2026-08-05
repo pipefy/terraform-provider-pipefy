@@ -81,14 +81,13 @@ type CreatedAutomation struct {
 // AutomationService reads and writes automations.
 type AutomationService struct{ c *Client }
 
-// Create makes an automation. The input stays a map because the resource builds
-// it across roughly 120 lines of Terraform-value handling; typing it is a
-// separate change.
+// Create makes an automation. The input stays a map because the resource
+// assembles it from Terraform values.
 //
-// The three outcomes are ordered the way the resource ordered them: an
-// automation in the payload wins even when the response also carried a top-level
-// error, then error_details, then the transport error. Reordering these would
-// change which diagnostic a user sees.
+// The three outcomes are ordered deliberately: an automation in the payload wins
+// even when the response also carried a top-level error, then error_details,
+// then the transport error. Reordering these would change which diagnostic a
+// user sees.
 func (s *AutomationService) Create(ctx context.Context, input map[string]any) (CreatedAutomation, error) {
 	var out struct {
 		CreateAutomation struct {

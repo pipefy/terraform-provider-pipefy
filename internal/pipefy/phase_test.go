@@ -110,8 +110,8 @@ func TestPhasesCreateSerializesPerPipe(t *testing.T) {
 	}
 }
 
-// Deletes do not take the lock their creates take. That asymmetry is what the
-// provider does today, so it is pinned rather than tidied.
+// Deletes do not take the lock their creates take. The asymmetry is deliberate,
+// so it is pinned here rather than left to be tidied away.
 func TestPhasesDeleteDoesNotSerialize(t *testing.T) {
 	var mu sync.Mutex
 	inFlight, peak := 0, 0
