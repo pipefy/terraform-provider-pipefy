@@ -5,19 +5,21 @@ package datasources
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	dsschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
+	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 )
 
 var _ datasource.DataSource = &PhaseDataSource{}
 
 func NewPhaseDataSource() datasource.DataSource { return &PhaseDataSource{} }
 
-type PhaseDataSource struct{ api *client.ApiClient }
+type PhaseDataSource struct{ api *pipefy.Client }
 
 type PhaseDataSourceModel struct {
 	Id     types.String `tfsdk:"id"`
@@ -44,9 +46,9 @@ func (d *PhaseDataSource) Configure(ctx context.Context, req datasource.Configur
 	if req.ProviderData == nil {
 		return
 	}
-	api, ok := req.ProviderData.(*client.ApiClient)
+	api, ok := req.ProviderData.(*pipefy.Client)
 	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *ApiClient, got %T", req.ProviderData))
+		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *pipefy.Client, got %T", req.ProviderData))
 		return
 	}
 	d.api = api
@@ -63,29 +65,20 @@ func (d *PhaseDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 		return
 	}
 
-	query := "query GetPhaseName_tf($id:ID!){ phase(id:$id){ id name } }"
-	vars := map[string]any{"id": data.Id.ValueString()}
-	var out struct {
-		Phase *struct {
-			Id   string `json:"id"`
-			Name string `json:"name"`
-			Pipe *struct {
-				Id string `json:"id"`
-			} `json:"pipe"`
-		} `json:"phase"`
-	}
-	if err := d.api.DoGraphQL(ctx, query, vars, &out); err != nil {
-		resp.Diagnostics.AddError("read phase failed", err.Error())
-		return
-	}
-	if out.Phase == nil {
+	phase, err := d.api.Phases.Get(ctx, data.Id.ValueString())
+	if errors.Is(err, pipefy.ErrNotFound) {
 		resp.Diagnostics.AddError("phase not found", fmt.Sprintf("phase with id %s not found", data.Id.ValueString()))
 		return
 	}
+	if err != nil {
+		resp.Diagnostics.AddError("read phase failed", err.Error())
+		return
+	}
 
-	data.Name = types.StringValue(out.Phase.Name)
-	if out.Phase.Pipe != nil {
-		data.PipeId = types.StringValue(out.Phase.Pipe.Id)
+	data.Name = types.StringValue(phase.Name)
+	// repo_id is the id of the pipe owning the phase. Phase has no pipe field.
+	if phase.RepoID != 0 {
+		data.PipeId = types.StringValue(strconv.FormatInt(phase.RepoID, 10))
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)

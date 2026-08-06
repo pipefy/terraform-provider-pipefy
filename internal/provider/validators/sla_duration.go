@@ -9,7 +9,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/pipegql"
+	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 )
 
 func SLADuration() validator.Object { return slaDurationValidator{} }
@@ -35,10 +35,10 @@ func (v slaDurationValidator) ValidateObject(_ context.Context, req validator.Ob
 		return
 	}
 	unit := unitVal.ValueString()
-	if _, known := pipegql.UnitNameToSeconds(unit); !known {
+	if _, known := pipefy.UnitNameToSeconds(unit); !known {
 		return
 	}
-	if t := timeVal.ValueInt64(); !pipegql.ValidDuration(unit, t) {
+	if t := timeVal.ValueInt64(); !pipefy.ValidDuration(unit, t) {
 		resp.Diagnostics.AddAttributeError(
 			req.Path,
 			"Invalid SLA duration",

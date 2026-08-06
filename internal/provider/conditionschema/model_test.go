@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/conditiongql"
+	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/conditionschema"
 )
 
@@ -119,16 +119,16 @@ func TestEmptyInput(t *testing.T) {
 	}
 }
 
-func payload(t *testing.T, raw string) *conditiongql.Condition {
+func payload(t *testing.T, raw string) *pipefy.Condition {
 	t.Helper()
-	var p conditiongql.Condition
+	var p pipefy.Condition
 	if err := json.Unmarshal([]byte(raw), &p); err != nil {
 		t.Fatal(err)
 	}
 	return &p
 }
 
-func fromPayload(t *testing.T, p *conditiongql.Condition) *conditionschema.Condition {
+func fromPayload(t *testing.T, p *pipefy.Condition) *conditionschema.Condition {
 	t.Helper()
 	c, err := conditionschema.FromPayload(p)
 	if err != nil {

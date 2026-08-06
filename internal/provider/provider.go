@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/datasources"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/resources"
@@ -137,7 +138,8 @@ func (p *PipefyProvider) Configure(ctx context.Context, req provider.ConfigureRe
 		return
 	}
 
-	api := &client.ApiClient{HTTP: httpClient, Endpoint: endpoint, Token: apiToken, Version: p.version, TraceID: client.NewTraceID()}
+	transport := &client.ApiClient{HTTP: httpClient, Endpoint: endpoint, Token: apiToken, Version: p.version, TraceID: client.NewTraceID()}
+	api := pipefy.New(transport)
 
 	resp.DataSourceData = api
 	resp.ResourceData = api

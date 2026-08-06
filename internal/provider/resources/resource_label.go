@@ -5,6 +5,7 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -15,8 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/labelgql"
+	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/validators"
 )
 
@@ -25,7 +25,7 @@ var _ resource.ResourceWithImportState = &LabelResource{}
 
 func NewLabelResource() resource.Resource { return &LabelResource{} }
 
-type LabelResource struct{ api *client.ApiClient }
+type LabelResource struct{ api *pipefy.Client }
 
 type LabelModel struct {
 	Id     types.String `tfsdk:"id"`
@@ -58,9 +58,9 @@ func (r *LabelResource) Configure(ctx context.Context, req resource.ConfigureReq
 	if req.ProviderData == nil {
 		return
 	}
-	api, ok := req.ProviderData.(*client.ApiClient)
+	api, ok := req.ProviderData.(*pipefy.Client)
 	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *ApiClient, got %T", req.ProviderData))
+		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *pipefy.Client, got %T", req.ProviderData))
 		return
 	}
 	r.api = api
@@ -73,24 +73,18 @@ func (r *LabelResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	mutation := "mutation CreateLabel_tf($pipeId:ID!,$name:String!,$color:String!){ createLabel(input:{ pipe_id:$pipeId, name:$name, color:$color }){ label{ " + labelgql.Selection + " } } }"
-	vars := map[string]any{
-		"pipeId": data.PipeId.ValueString(),
-		"name":   data.Name.ValueString(),
-		"color":  data.Color.ValueString(),
-	}
-	var out struct {
-		CreateLabel struct {
-			Label labelgql.Label `json:"label"`
-		} `json:"createLabel"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
+	label, err := r.api.Labels.Create(ctx, pipefy.CreateLabelInput{
+		PipeID: data.PipeId.ValueString(),
+		Name:   data.Name.ValueString(),
+		Color:  data.Color.ValueString(),
+	})
+	if err != nil {
 		resp.Diagnostics.AddError("create label failed", err.Error())
 		return
 	}
-	data.Id = types.StringValue(out.CreateLabel.Label.Id)
-	data.Name = types.StringValue(out.CreateLabel.Label.Name)
-	data.Color = types.StringValue(out.CreateLabel.Label.Color)
+	data.Id = types.StringValue(label.ID)
+	data.Name = types.StringValue(label.Name)
+	data.Color = types.StringValue(label.Color)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -104,29 +98,17 @@ func (r *LabelResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	query := "query GetPipeLabels_tf($pipeId:ID!){ pipe(id:$pipeId){ labels{ " + labelgql.Selection + " } } }"
-	vars := map[string]any{"pipeId": data.PipeId.ValueString()}
-	var out struct {
-		Pipe *struct {
-			Labels []labelgql.Label `json:"labels"`
-		} `json:"pipe"`
+	label, err := r.api.Labels.Get(ctx, data.PipeId.ValueString(), data.Id.ValueString())
+	if errors.Is(err, pipefy.ErrNotFound) {
+		resp.State.RemoveResource(ctx)
+		return
 	}
-	if err := r.api.DoGraphQL(ctx, query, vars, &out); err != nil {
+	if err != nil {
 		resp.Diagnostics.AddError("read label failed", err.Error())
 		return
 	}
-	if out.Pipe == nil {
-		resp.State.RemoveResource(ctx)
-		return
-	}
-
-	l, ok := labelgql.FindByID(out.Pipe.Labels, data.Id.ValueString())
-	if !ok {
-		resp.State.RemoveResource(ctx)
-		return
-	}
-	data.Name = types.StringValue(l.Name)
-	data.Color = types.StringValue(l.Color)
+	data.Name = types.StringValue(label.Name)
+	data.Color = types.StringValue(label.Color)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -137,23 +119,17 @@ func (r *LabelResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 
-	mutation := "mutation UpdateLabel_tf($id:ID!,$name:String!,$color:String!){ updateLabel(input:{ id:$id, name:$name, color:$color }){ label{ " + labelgql.Selection + " } } }"
-	vars := map[string]any{
-		"id":    data.Id.ValueString(),
-		"name":  data.Name.ValueString(),
-		"color": data.Color.ValueString(),
-	}
-	var out struct {
-		UpdateLabel struct {
-			Label labelgql.Label `json:"label"`
-		} `json:"updateLabel"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
+	label, err := r.api.Labels.Update(ctx, pipefy.UpdateLabelInput{
+		ID:    data.Id.ValueString(),
+		Name:  data.Name.ValueString(),
+		Color: data.Color.ValueString(),
+	})
+	if err != nil {
 		resp.Diagnostics.AddError("update label failed", err.Error())
 		return
 	}
-	data.Name = types.StringValue(out.UpdateLabel.Label.Name)
-	data.Color = types.StringValue(out.UpdateLabel.Label.Color)
+	data.Name = types.StringValue(label.Name)
+	data.Color = types.StringValue(label.Color)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -163,14 +139,7 @@ func (r *LabelResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation DeleteLabel_tf($id:ID!){ deleteLabel(input:{ id:$id }){ success } }"
-	vars := map[string]any{"id": data.Id.ValueString()}
-	var out struct {
-		DeleteLabel struct {
-			Success bool `json:"success"`
-		} `json:"deleteLabel"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
+	if err := r.api.Labels.Delete(ctx, data.Id.ValueString()); err != nil {
 		resp.Diagnostics.AddError("delete label failed", err.Error())
 		return
 	}

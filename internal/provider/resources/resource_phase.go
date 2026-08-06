@@ -5,10 +5,10 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -16,8 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/locks"
+	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 )
 
 var _ resource.Resource = &PhaseResource{}
@@ -25,7 +24,7 @@ var _ resource.ResourceWithImportState = &PhaseResource{}
 
 func NewPhaseResource() resource.Resource { return &PhaseResource{} }
 
-type PhaseResource struct{ api *client.ApiClient }
+type PhaseResource struct{ api *pipefy.Client }
 
 type PhaseModel struct {
 	Id                              types.String  `tfsdk:"id"`
@@ -38,24 +37,11 @@ type PhaseModel struct {
 	CanReceiveCardDirectlyFromDraft types.Bool    `tfsdk:"can_receive_card_directly_from_draft"`
 }
 
-const phaseSelection = "id name done description index lateness_time can_receive_card_directly_from_draft repo_id"
-
-type phasePayload struct {
-	Id                              string   `json:"id"`
-	Name                            string   `json:"name"`
-	Done                            bool     `json:"done"`
-	Description                     *string  `json:"description"`
-	Index                           *float64 `json:"index"`
-	LatenessTime                    *int64   `json:"lateness_time"`
-	CanReceiveCardDirectlyFromDraft *bool    `json:"can_receive_card_directly_from_draft"`
-	RepoId                          int64    `json:"repo_id"`
-}
-
-func (m *PhaseModel) setFromApi(p phasePayload) {
-	m.Id = types.StringValue(p.Id)
+func (m *PhaseModel) setFromApi(p pipefy.Phase) {
+	m.Id = types.StringValue(p.ID)
 	m.Name = types.StringValue(p.Name)
-	if p.RepoId != 0 {
-		m.PipeId = types.StringValue(strconv.FormatInt(p.RepoId, 10))
+	if p.RepoID != 0 {
+		m.PipeId = types.StringValue(strconv.FormatInt(p.RepoID, 10))
 	}
 	m.Done = types.BoolValue(p.Done)
 	m.Description = types.StringPointerValue(p.Description)
@@ -64,7 +50,7 @@ func (m *PhaseModel) setFromApi(p phasePayload) {
 	m.CanReceiveCardDirectlyFromDraft = types.BoolPointerValue(p.CanReceiveCardDirectlyFromDraft)
 }
 
-func (m *PhaseModel) fillUnknowns(p phasePayload) {
+func (m *PhaseModel) fillUnknowns(p pipefy.Phase) {
 	if m.Done.IsUnknown() {
 		m.Done = types.BoolValue(p.Done)
 	}
@@ -82,20 +68,12 @@ func (m *PhaseModel) fillUnknowns(p phasePayload) {
 	}
 }
 
-func hasValue(v attr.Value) bool { return !v.IsNull() && !v.IsUnknown() }
-
-func (m *PhaseModel) addSharedPhaseVars(vars map[string]any) {
-	if hasValue(m.Done) {
-		vars["done"] = m.Done.ValueBool()
-	}
-	if hasValue(m.Description) {
-		vars["description"] = m.Description.ValueString()
-	}
-	if hasValue(m.LatenessTime) {
-		vars["latenessTime"] = m.LatenessTime.ValueInt64()
-	}
-	if hasValue(m.CanReceiveCardDirectlyFromDraft) {
-		vars["canReceiveCardDirectlyFromDraft"] = m.CanReceiveCardDirectlyFromDraft.ValueBool()
+func (m *PhaseModel) writes() pipefy.PhaseWrites {
+	return pipefy.PhaseWrites{
+		Done:                            optionalBool(m.Done),
+		Description:                     optionalString(m.Description),
+		LatenessTime:                    optionalInt64(m.LatenessTime),
+		CanReceiveCardDirectlyFromDraft: optionalBool(m.CanReceiveCardDirectlyFromDraft),
 	}
 }
 
@@ -130,9 +108,9 @@ func (r *PhaseResource) Configure(ctx context.Context, req resource.ConfigureReq
 	if req.ProviderData == nil {
 		return
 	}
-	api, ok := req.ProviderData.(*client.ApiClient)
+	api, ok := req.ProviderData.(*pipefy.Client)
 	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *ApiClient, got %T", req.ProviderData))
+		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *pipefy.Client, got %T", req.ProviderData))
 		return
 	}
 	r.api = api
@@ -145,28 +123,18 @@ func (r *PhaseResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	// Pipefy rejects concurrent phase creates for the same pipe; serialize per pipe.
-	unlock := locks.LockRepo(data.PipeId.ValueString())
-	defer unlock()
-
-	mutation := "mutation CreatePhase_tf($pipeId:ID!,$name:String!,$done:Boolean,$description:String,$index:Float,$latenessTime:Int,$canReceiveCardDirectlyFromDraft:Boolean){ createPhase(input:{ pipe_id:$pipeId, name:$name, done:$done, description:$description, index:$index, lateness_time:$latenessTime, can_receive_card_directly_from_draft:$canReceiveCardDirectlyFromDraft }){ phase{ " + phaseSelection + " } } }"
-	vars := map[string]any{"pipeId": data.PipeId.ValueString(), "name": data.Name.ValueString()}
-	data.addSharedPhaseVars(vars)
-	if hasValue(data.Index) {
-		vars["index"] = data.Index.ValueFloat64()
-	}
-	var out struct {
-		CreatePhase struct {
-			Phase phasePayload `json:"phase"`
-		} `json:"createPhase"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
+	phase, err := r.api.Phases.Create(ctx, pipefy.CreatePhaseInput{
+		PipeID:      data.PipeId.ValueString(),
+		Name:        data.Name.ValueString(),
+		Index:       optionalFloat64(data.Index),
+		PhaseWrites: data.writes(),
+	})
+	if err != nil {
 		resp.Diagnostics.AddError("create phase failed", err.Error())
 		return
 	}
-	phase := out.CreatePhase.Phase
 
-	data.Id = types.StringValue(phase.Id)
+	data.Id = types.StringValue(phase.ID)
 	data.fillUnknowns(phase)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -181,20 +149,16 @@ func (r *PhaseResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	query := "query GetPhase_tf($id:ID!){ phase(id:$id){ " + phaseSelection + " } }"
-	vars := map[string]any{"id": data.Id.ValueString()}
-	var out struct {
-		Phase *phasePayload `json:"phase"`
-	}
-	if err := r.api.DoGraphQL(ctx, query, vars, &out); err != nil {
-		resp.Diagnostics.AddError("read phase failed", err.Error())
-		return
-	}
-	if out.Phase == nil {
+	phase, err := r.api.Phases.Get(ctx, data.Id.ValueString())
+	if errors.Is(err, pipefy.ErrNotFound) {
 		resp.State.RemoveResource(ctx)
 		return
 	}
-	data.setFromApi(*out.Phase)
+	if err != nil {
+		resp.Diagnostics.AddError("read phase failed", err.Error())
+		return
+	}
+	data.setFromApi(phase)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -204,19 +168,16 @@ func (r *PhaseResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation UpdatePhase_tf($id:ID!,$name:String!,$done:Boolean,$description:String,$latenessTime:Int,$canReceiveCardDirectlyFromDraft:Boolean){ updatePhase(input:{ id:$id, name:$name, done:$done, description:$description, lateness_time:$latenessTime, can_receive_card_directly_from_draft:$canReceiveCardDirectlyFromDraft }){ phase{ " + phaseSelection + " } } }"
-	vars := map[string]any{"id": data.Id.ValueString(), "name": data.Name.ValueString()}
-	data.addSharedPhaseVars(vars)
-	var out struct {
-		UpdatePhase struct {
-			Phase phasePayload `json:"phase"`
-		} `json:"updatePhase"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
+	phase, err := r.api.Phases.Update(ctx, pipefy.UpdatePhaseInput{
+		ID:          data.Id.ValueString(),
+		Name:        data.Name.ValueString(),
+		PhaseWrites: data.writes(),
+	})
+	if err != nil {
 		resp.Diagnostics.AddError("update phase failed", err.Error())
 		return
 	}
-	data.fillUnknowns(out.UpdatePhase.Phase)
+	data.fillUnknowns(phase)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -226,14 +187,9 @@ func (r *PhaseResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation DeletePhase_tf($id:ID!){ deletePhase(input:{id:$id}){ success } }"
-	vars := map[string]any{"id": data.Id.ValueString()}
-	var out struct {
-		DeletePhase struct {
-			Success bool `json:"success"`
-		} `json:"deletePhase"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
+	// The mutation's success flag is deliberately ignored here. Only the pipe
+	// resource's cleanup of seeded phases treats a false as a failure.
+	if _, err := r.api.Phases.Delete(ctx, data.Id.ValueString()); err != nil {
 		resp.Diagnostics.AddError("delete phase failed", err.Error())
 		return
 	}

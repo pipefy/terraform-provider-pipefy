@@ -5,6 +5,7 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -16,9 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/locks"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/tablefieldgql"
+	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 )
 
 var _ resource.Resource = &TableFieldResource{}
@@ -26,7 +25,7 @@ var _ resource.ResourceWithImportState = &TableFieldResource{}
 
 func NewTableFieldResource() resource.Resource { return &TableFieldResource{} }
 
-type TableFieldResource struct{ api *client.ApiClient }
+type TableFieldResource struct{ api *pipefy.Client }
 
 type TableFieldModel struct {
 	Id         types.String `tfsdk:"id"`
@@ -110,9 +109,9 @@ func (r *TableFieldResource) Configure(ctx context.Context, req resource.Configu
 	if req.ProviderData == nil {
 		return
 	}
-	api, ok := req.ProviderData.(*client.ApiClient)
+	api, ok := req.ProviderData.(*pipefy.Client)
 	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *ApiClient, got %T", req.ProviderData))
+		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *pipefy.Client, got %T", req.ProviderData))
 		return
 	}
 	r.api = api
@@ -125,31 +124,21 @@ func (r *TableFieldResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
-	// Table fields lock on the table's own id: unlike phase fields, a table is
-	// already a top-level repo, so there is no parent repo_id to resolve first.
-	unlock := locks.LockRepo(data.TableId.ValueString())
-	defer unlock()
-
-	mutation := "mutation CreateTableField_tf($tableId:ID!,$type:ID!,$label:String!,$required:Boolean,$options:[String],$description:String,$help:String,$minimalView:Boolean,$customValidation:String,$unique:Boolean){ createTableField(input:{ table_id:$tableId, type:$type, label:$label, required:$required, options:$options, description:$description, help:$help, minimal_view:$minimalView, custom_validation:$customValidation, unique:$unique }){ table_field{ " + tablefieldgql.Selection + " } } }"
-	vars := map[string]any{
-		"tableId": data.TableId.ValueString(),
-		"type":    data.Type.ValueString(),
-		"label":   data.Label.ValueString(),
-	}
-	addTableFieldWriteVars(ctx, data, vars, &resp.Diagnostics)
+	writes := tableFieldWrites(ctx, data, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	var out struct {
-		CreateTableField struct {
-			TableField tablefieldgql.Field `json:"table_field"`
-		} `json:"createTableField"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
+	field, err := r.api.TableFields.Create(ctx, pipefy.CreateTableFieldInput{
+		TableID:          data.TableId.ValueString(),
+		Type:             data.Type.ValueString(),
+		Label:            data.Label.ValueString(),
+		TableFieldWrites: writes,
+	})
+	if err != nil {
 		resp.Diagnostics.AddError("create table field failed", err.Error())
 		return
 	}
-	applyTableFieldToModel(ctx, &data, out.CreateTableField.TableField, &resp.Diagnostics)
+	applyTableFieldToModel(ctx, &data, field, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -167,25 +156,13 @@ func (r *TableFieldResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 
-	query := "query GetTableFields_tf($tableId:ID!){ table(id:$tableId){ table_fields{ " + tablefieldgql.Selection + " } } }"
-	vars := map[string]any{"tableId": data.TableId.ValueString()}
-	var out struct {
-		Table *struct {
-			TableFields []tablefieldgql.Field `json:"table_fields"`
-		} `json:"table"`
+	found, err := r.api.TableFields.GetByUUID(ctx, data.TableId.ValueString(), data.Uuid.ValueString())
+	if errors.Is(err, pipefy.ErrNotFound) {
+		resp.State.RemoveResource(ctx)
+		return
 	}
-	if err := r.api.DoGraphQL(ctx, query, vars, &out); err != nil {
+	if err != nil {
 		resp.Diagnostics.AddError("read table field failed", err.Error())
-		return
-	}
-	if out.Table == nil {
-		resp.State.RemoveResource(ctx)
-		return
-	}
-
-	found, ok := tablefieldgql.FindByUUID(out.Table.TableFields, data.Uuid.ValueString())
-	if !ok {
-		resp.State.RemoveResource(ctx)
 		return
 	}
 
@@ -202,28 +179,27 @@ func (r *TableFieldResource) Update(ctx context.Context, req resource.UpdateRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation UpdateTableField_tf($id:ID!,$tableId:ID!,$label:String,$required:Boolean,$options:[String],$description:String,$help:String,$minimalView:Boolean,$customValidation:String,$unique:Boolean){ updateTableField(input:{ id:$id, table_id:$tableId, label:$label, required:$required, options:$options, description:$description, help:$help, minimal_view:$minimalView, custom_validation:$customValidation, unique:$unique }){ table_field{ " + tablefieldgql.Selection + " } } }"
-	vars := map[string]any{
-		"id":      data.Id.ValueString(),
-		"tableId": data.TableId.ValueString(),
-	}
-	if !data.Label.IsNull() {
-		vars["label"] = data.Label.ValueString()
-	}
-	addTableFieldWriteVars(ctx, data, vars, &resp.Diagnostics)
+	writes := tableFieldWrites(ctx, data, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	var out struct {
-		UpdateTableField struct {
-			TableField tablefieldgql.Field `json:"table_field"`
-		} `json:"updateTableField"`
+	in := pipefy.UpdateTableFieldInput{
+		TableID:          data.TableId.ValueString(),
+		ID:               data.Id.ValueString(),
+		TableFieldWrites: writes,
 	}
-	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
+	// Label is sent on a null-check alone, not the usual hasValue: an unknown
+	// label still goes out.
+	if !data.Label.IsNull() {
+		label := data.Label.ValueString()
+		in.Label = &label
+	}
+	field, err := r.api.TableFields.Update(ctx, in)
+	if err != nil {
 		resp.Diagnostics.AddError("update table field failed", err.Error())
 		return
 	}
-	applyTableFieldToModel(ctx, &data, out.UpdateTableField.TableField, &resp.Diagnostics)
+	applyTableFieldToModel(ctx, &data, field, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -237,19 +213,7 @@ func (r *TableFieldResource) Delete(ctx context.Context, req resource.DeleteRequ
 		return
 	}
 
-	unlock := locks.LockRepo(data.TableId.ValueString())
-	defer unlock()
-
-	// Unlike deletePhaseField, deleteTableField needs only the field id and its
-	// own table_id: no pipe/uuid lookup, since a table has no parent pipe.
-	mutation := "mutation DeleteTableField_tf($id:ID!,$tableId:ID!){ deleteTableField(input:{ id:$id, table_id:$tableId }){ success } }"
-	vars := map[string]any{"id": data.Id.ValueString(), "tableId": data.TableId.ValueString()}
-	var out struct {
-		DeleteTableField struct {
-			Success bool `json:"success"`
-		} `json:"deleteTableField"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
+	if err := r.api.TableFields.Delete(ctx, data.TableId.ValueString(), data.Id.ValueString()); err != nil {
 		resp.Diagnostics.AddError("delete table field failed", err.Error())
 		return
 	}
@@ -265,40 +229,31 @@ func (r *TableFieldResource) ImportState(ctx context.Context, req resource.Impor
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("uuid"), parts[1])...)
 }
 
-// addTableFieldWriteVars sends each attribute only when it has a concrete value, so an
+// tableFieldWrites carries each attribute only when it has a concrete value, so an
 // omitted Optional+Computed attribute keeps its server value instead of being cleared.
-func addTableFieldWriteVars(ctx context.Context, data TableFieldModel, vars map[string]any, diags *diag.Diagnostics) {
-	if !data.Required.IsNull() && !data.Required.IsUnknown() {
-		vars["required"] = data.Required.ValueBool()
+func tableFieldWrites(ctx context.Context, data TableFieldModel, diags *diag.Diagnostics) pipefy.TableFieldWrites {
+	writes := pipefy.TableFieldWrites{
+		Required:         optionalBool(data.Required),
+		Description:      optionalString(data.Description),
+		Help:             optionalString(data.Help),
+		MinimalView:      optionalBool(data.MinimalView),
+		CustomValidation: optionalString(data.CustomValidation),
+		Unique:           optionalBool(data.Unique),
 	}
-	if !data.Options.IsNull() && !data.Options.IsUnknown() {
+	if hasValue(data.Options) {
 		var opts []string
 		diags.Append(data.Options.ElementsAs(ctx, &opts, false)...)
-		vars["options"] = opts
+		writes.Options = &opts
 	}
-	if !data.Description.IsNull() && !data.Description.IsUnknown() {
-		vars["description"] = data.Description.ValueString()
-	}
-	if !data.Help.IsNull() && !data.Help.IsUnknown() {
-		vars["help"] = data.Help.ValueString()
-	}
-	if !data.MinimalView.IsNull() && !data.MinimalView.IsUnknown() {
-		vars["minimalView"] = data.MinimalView.ValueBool()
-	}
-	if !data.CustomValidation.IsNull() && !data.CustomValidation.IsUnknown() {
-		vars["customValidation"] = data.CustomValidation.ValueString()
-	}
-	if !data.Unique.IsNull() && !data.Unique.IsUnknown() {
-		vars["unique"] = data.Unique.ValueBool()
-	}
+	return writes
 }
 
 // applyTableFieldToModel maps a fetched field onto the model. table_id is not in the
 // payload; it is set at create/import and left untouched here.
-func applyTableFieldToModel(ctx context.Context, data *TableFieldModel, f tablefieldgql.Field, diags *diag.Diagnostics) {
-	data.Id = types.StringValue(f.Id)
-	data.InternalId = types.StringValue(f.InternalId)
-	data.Uuid = types.StringValue(f.Uuid)
+func applyTableFieldToModel(ctx context.Context, data *TableFieldModel, f pipefy.TableField, diags *diag.Diagnostics) {
+	data.Id = types.StringValue(f.ID)
+	data.InternalId = types.StringValue(f.InternalID)
+	data.Uuid = types.StringValue(f.UUID)
 	data.Label = types.StringValue(f.Label)
 	data.Type = types.StringValue(f.Type)
 	data.Required = boolPtr(f.Required)

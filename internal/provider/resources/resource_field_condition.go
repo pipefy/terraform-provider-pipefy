@@ -5,8 +5,8 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -16,10 +16,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
+	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/conditionschema"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/fieldconditiongql"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/locks"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/validators"
 )
 
@@ -28,7 +26,7 @@ var _ resource.ResourceWithImportState = &FieldConditionResource{}
 
 func NewFieldConditionResource() resource.Resource { return &FieldConditionResource{} }
 
-type FieldConditionResource struct{ api *client.ApiClient }
+type FieldConditionResource struct{ api *pipefy.Client }
 
 type FieldConditionModel struct {
 	Id        types.String                `tfsdk:"id"`
@@ -98,9 +96,9 @@ func (r *FieldConditionResource) Configure(ctx context.Context, req resource.Con
 	if req.ProviderData == nil {
 		return
 	}
-	api, ok := req.ProviderData.(*client.ApiClient)
+	api, ok := req.ProviderData.(*pipefy.Client)
 	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *ApiClient, got %T", req.ProviderData))
+		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *pipefy.Client, got %T", req.ProviderData))
 		return
 	}
 	r.api = api
@@ -113,12 +111,6 @@ func (r *FieldConditionResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
-	unlock, ok := r.lockPhaseRepo(ctx, data.PhaseId.ValueString(), "create field condition failed", &resp.Diagnostics)
-	if !ok {
-		return
-	}
-	defer unlock()
-
 	input := map[string]any{
 		"name":    data.Name.ValueString(),
 		"phaseId": data.PhaseId.ValueString(),
@@ -126,21 +118,16 @@ func (r *FieldConditionResource) Create(ctx context.Context, req resource.Create
 	input["condition"] = data.Condition.Input()
 	input["actions"] = data.actionsInput()
 
-	mutation := "mutation CreateFieldCondition_tf($input:createFieldConditionInput!){ createFieldCondition(input:$input){ fieldCondition{ " + fieldconditiongql.Selection + " } } }"
-	var out struct {
-		CreateFieldCondition struct {
-			FieldCondition *fieldconditiongql.FieldCondition `json:"fieldCondition"`
-		} `json:"createFieldCondition"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, map[string]any{"input": input}, &out); err != nil {
-		resp.Diagnostics.AddError("create field condition failed", err.Error())
-		return
-	}
-	if out.CreateFieldCondition.FieldCondition == nil {
+	fc, err := r.api.FieldConditions.Create(ctx, data.PhaseId.ValueString(), input)
+	if errors.Is(err, pipefy.ErrNoFieldCondition) {
 		resp.Diagnostics.AddError("create field condition failed", "the API returned no field condition")
 		return
 	}
-	applyFieldConditionToModel(&data, out.CreateFieldCondition.FieldCondition, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("create field condition failed", err.Error())
+		return
+	}
+	applyFieldConditionToModel(&data, &fc, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -157,19 +144,16 @@ func (r *FieldConditionResource) Read(ctx context.Context, req resource.ReadRequ
 		return
 	}
 
-	query := "query GetFieldCondition_tf($id:ID!){ fieldCondition(id:$id){ " + fieldconditiongql.Selection + " } }"
-	var out struct {
-		FieldCondition *fieldconditiongql.FieldCondition `json:"fieldCondition"`
-	}
-	if err := r.api.DoGraphQL(ctx, query, map[string]any{"id": data.Id.ValueString()}, &out); err != nil {
-		resp.Diagnostics.AddError("read field condition failed", err.Error())
-		return
-	}
-	if out.FieldCondition == nil {
+	fc, err := r.api.FieldConditions.Get(ctx, data.Id.ValueString())
+	if errors.Is(err, pipefy.ErrNotFound) {
 		resp.State.RemoveResource(ctx)
 		return
 	}
-	applyFieldConditionToModel(&data, out.FieldCondition, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("read field condition failed", err.Error())
+		return
+	}
+	applyFieldConditionToModel(&data, &fc, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -183,12 +167,6 @@ func (r *FieldConditionResource) Update(ctx context.Context, req resource.Update
 		return
 	}
 
-	unlock, ok := r.lockPhaseRepo(ctx, data.PhaseId.ValueString(), "update field condition failed", &resp.Diagnostics)
-	if !ok {
-		return
-	}
-	defer unlock()
-
 	input := map[string]any{
 		"id":       data.Id.ValueString(),
 		"name":     data.Name.ValueString(),
@@ -197,21 +175,16 @@ func (r *FieldConditionResource) Update(ctx context.Context, req resource.Update
 	input["condition"] = data.Condition.Input()
 	input["actions"] = data.actionsInput()
 
-	mutation := "mutation UpdateFieldCondition_tf($input:UpdateFieldConditionInput!){ updateFieldCondition(input:$input){ fieldCondition{ " + fieldconditiongql.Selection + " } } }"
-	var out struct {
-		UpdateFieldCondition struct {
-			FieldCondition *fieldconditiongql.FieldCondition `json:"fieldCondition"`
-		} `json:"updateFieldCondition"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, map[string]any{"input": input}, &out); err != nil {
-		resp.Diagnostics.AddError("update field condition failed", err.Error())
-		return
-	}
-	if out.UpdateFieldCondition.FieldCondition == nil {
+	fc, err := r.api.FieldConditions.Update(ctx, data.PhaseId.ValueString(), input)
+	if errors.Is(err, pipefy.ErrNoFieldCondition) {
 		resp.Diagnostics.AddError("update field condition failed", "the API returned no field condition")
 		return
 	}
-	applyFieldConditionToModel(&data, out.UpdateFieldCondition.FieldCondition, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("update field condition failed", err.Error())
+		return
+	}
+	applyFieldConditionToModel(&data, &fc, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -225,26 +198,7 @@ func (r *FieldConditionResource) Delete(ctx context.Context, req resource.Delete
 		return
 	}
 
-	// Unlike Create/Update, a missing phase is not a hard error here: a field
-	// condition whose phase was already deleted out-of-band has nothing left
-	// to lock, and should still be removable rather than stuck in state.
-	repoID, found, err := r.resolvePhaseRepoID(ctx, data.PhaseId.ValueString())
-	if err != nil {
-		resp.Diagnostics.AddError("delete field condition failed", fmt.Sprintf("failed to fetch phase repo_id: %s", err.Error()))
-		return
-	}
-	if found {
-		unlock := locks.LockRepo(repoID)
-		defer unlock()
-	}
-
-	mutation := "mutation DeleteFieldCondition_tf($id:ID!){ deleteFieldCondition(input:{id:$id}){ success } }"
-	var out struct {
-		DeleteFieldCondition struct {
-			Success bool `json:"success"`
-		} `json:"deleteFieldCondition"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, map[string]any{"id": data.Id.ValueString()}, &out); err != nil {
+	if err := r.api.FieldConditions.Delete(ctx, data.PhaseId.ValueString(), data.Id.ValueString()); err != nil {
 		resp.Diagnostics.AddError("delete field condition failed", err.Error())
 		return
 	}
@@ -254,44 +208,6 @@ func (r *FieldConditionResource) ImportState(ctx context.Context, req resource.I
 	// The field condition id is enough; Read resolves phase_id, name, condition,
 	// and actions from the API (phase_id comes from the payload's phase.id).
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
-}
-
-// lockPhaseRepo resolves the phase's repo_id and takes the per-repo lock,
-// matching the pipefy_field serialization: the API does not accept
-// concurrent field-level mutations for the same repo. Create/Update treat a
-// missing phase as a hard error since phase_id is user-supplied and should
-// resolve; Delete calls resolvePhaseRepoID directly instead so it can
-// tolerate a missing phase.
-func (r *FieldConditionResource) lockPhaseRepo(ctx context.Context, phaseID, errSummary string, diags *diag.Diagnostics) (func(), bool) {
-	repoID, found, err := r.resolvePhaseRepoID(ctx, phaseID)
-	if err != nil {
-		diags.AddError(errSummary, fmt.Sprintf("failed to fetch phase repo_id: %s", err.Error()))
-		return nil, false
-	}
-	if !found {
-		diags.AddError(errSummary, "could not resolve valid phase repo_id from phase query")
-		return nil, false
-	}
-	return locks.LockRepo(repoID), true
-}
-
-// resolvePhaseRepoID fetches the repo_id owning phaseID. found is false when
-// the phase query resolves but returns no phase or a zero repo_id (the phase
-// no longer exists), a distinct and expected condition from a query error.
-func (r *FieldConditionResource) resolvePhaseRepoID(ctx context.Context, phaseID string) (repoID string, found bool, err error) {
-	query := "query GetPhaseRepoId_tf($id:ID!){ phase(id:$id){ repo_id } }"
-	var out struct {
-		Phase *struct {
-			RepoId int `json:"repo_id"`
-		} `json:"phase"`
-	}
-	if err := r.api.DoGraphQL(ctx, query, map[string]any{"id": phaseID}, &out); err != nil {
-		return "", false, err
-	}
-	if out.Phase == nil || out.Phase.RepoId == 0 {
-		return "", false, nil
-	}
-	return strconv.FormatInt(int64(out.Phase.RepoId), 10), true, nil
 }
 
 func (m *FieldConditionModel) actionsInput() []map[string]any {
@@ -317,16 +233,16 @@ func (m *FieldConditionModel) actionsInput() []map[string]any {
 }
 
 // applyFieldConditionToModel maps a fetched field condition onto the model.
-func applyFieldConditionToModel(data *FieldConditionModel, fc *fieldconditiongql.FieldCondition, diags *diag.Diagnostics) {
-	data.Id = types.StringValue(fc.Id)
+func applyFieldConditionToModel(data *FieldConditionModel, fc *pipefy.FieldCondition, diags *diag.Diagnostics) {
+	data.Id = types.StringValue(fc.ID)
 	data.Name = types.StringValue(fc.Name)
 	// Observed against the live API: the field condition is associated with
 	// the pipe's start-form phase regardless of the phaseId passed to
 	// createFieldCondition, so fc.Phase.Id can legitimately differ from the
 	// phase_id the config requested. This assigns whatever the API reports
 	// rather than trusting the request, since that's the actual owning phase.
-	if fc.Phase != nil && fc.Phase.Id != "" {
-		data.PhaseId = types.StringValue(fc.Phase.Id)
+	if fc.Phase != nil && fc.Phase.ID != "" {
+		data.PhaseId = types.StringValue(fc.Phase.ID)
 	}
 
 	cond, err := conditionschema.FromPayload(fc.Condition)
@@ -348,14 +264,14 @@ func applyFieldConditionToModel(data *FieldConditionModel, fc *fieldconditiongql
 // each action into when_true or when_false by its whenEvaluator flag. A wire
 // action with no whenEvaluator is the same class of inconsistency as an
 // orphan structure_id: reported rather than guessed.
-func actionsFromFieldCondition(actions []fieldconditiongql.Action, diags *diag.Diagnostics) []fieldConditionActionModel {
+func actionsFromFieldCondition(actions []pipefy.FieldConditionAction, diags *diag.Diagnostics) []fieldConditionActionModel {
 	order := make([]string, 0, len(actions))
 	byField := make(map[string]*fieldConditionActionModel, len(actions))
 
 	for _, a := range actions {
 		var fieldID string
 		if a.PhaseField != nil {
-			fieldID = a.PhaseField.InternalId
+			fieldID = a.PhaseField.InternalID
 		}
 		entry, ok := byField[fieldID]
 		if !ok {
@@ -375,9 +291,9 @@ func actionsFromFieldCondition(actions []fieldconditiongql.Action, diags *diag.D
 			continue
 		}
 		if *a.WhenEvaluator {
-			entry.WhenTrue = types.StringValue(a.ActionId)
+			entry.WhenTrue = types.StringValue(a.ActionID)
 		} else {
-			entry.WhenFalse = types.StringValue(a.ActionId)
+			entry.WhenFalse = types.StringValue(a.ActionID)
 		}
 	}
 

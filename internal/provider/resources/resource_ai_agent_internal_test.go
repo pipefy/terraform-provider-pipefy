@@ -227,18 +227,6 @@ func TestRematchNestedIdentitiesOnReorder(t *testing.T) {
 	}
 }
 
-func TestIsNotFoundMessageIgnoresAuthNoise(t *testing.T) {
-	if !isNotFoundMessage("AI agent not found") {
-		t.Fatal("expected agent not found to match")
-	}
-	if !isNotFoundMessage("record_not_found") {
-		t.Fatal("expected record_not_found to match")
-	}
-	if isNotFoundMessage("permission not found for token") {
-		t.Fatal("auth noise should not clear state")
-	}
-}
-
 type actionOption func(*AiAgentActionModel)
 
 func actionModel(actionType string, options ...actionOption) AiAgentActionModel {

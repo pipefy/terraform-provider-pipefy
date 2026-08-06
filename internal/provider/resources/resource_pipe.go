@@ -5,6 +5,7 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -17,8 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/pipegql"
+	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/validators"
 )
 
@@ -27,7 +27,7 @@ var _ resource.ResourceWithImportState = &PipeResource{}
 
 func NewPipeResource() resource.Resource { return &PipeResource{} }
 
-type PipeResource struct{ api *client.ApiClient }
+type PipeResource struct{ api *pipefy.Client }
 
 type pipePreferencesModel struct {
 	InboxEmailEnabled types.Bool `tfsdk:"inbox_email_enabled"`
@@ -52,14 +52,6 @@ type PipeModel struct {
 	SLA                       *pipeSLAModel         `tfsdk:"sla"`
 	StartFormPhaseId          types.String          `tfsdk:"start_form_phase_id"`
 }
-
-const updatePipeMutation = "mutation UpdatePipe_tf($id:ID!,$name:String,$public:Boolean,$icon:String,$color:Colors," +
-	"$onlyAdminCanRemoveCards:Boolean,$onlyAssigneesCanEditCards:Boolean," +
-	"$expirationTimeByUnit:Int,$expirationUnit:Int,$preferences:RepoPreferenceInput){ " +
-	"updatePipe(input:{ id:$id, name:$name, public:$public, icon:$icon, color:$color, " +
-	"only_admin_can_remove_cards:$onlyAdminCanRemoveCards, only_assignees_can_edit_cards:$onlyAssigneesCanEditCards, " +
-	"expiration_time_by_unit:$expirationTimeByUnit, expiration_unit:$expirationUnit, preferences:$preferences }){ pipe{ " +
-	pipegql.Selection + " } } }"
 
 func (r *PipeResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_pipe"
@@ -106,8 +98,8 @@ func (r *PipeResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 					"time": schema.Int64Attribute{Required: true, Description: "Count of units (minutes 1-59, hours 1-23, days >= 1)"},
 					"unit": schema.StringAttribute{
 						Required:    true,
-						Description: "SLA unit: " + strings.Join(pipegql.UnitNames, ", ") + ".",
-						Validators:  []validator.String{stringvalidator.OneOf(pipegql.UnitNames...)},
+						Description: "SLA unit: " + strings.Join(pipefy.UnitNames, ", ") + ".",
+						Validators:  []validator.String{stringvalidator.OneOf(pipefy.UnitNames...)},
 					},
 				},
 			},
@@ -124,17 +116,17 @@ func (r *PipeResource) Configure(ctx context.Context, req resource.ConfigureRequ
 	if req.ProviderData == nil {
 		return
 	}
-	api, ok := req.ProviderData.(*client.ApiClient)
+	api, ok := req.ProviderData.(*pipefy.Client)
 	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *ApiClient, got %T", req.ProviderData))
+		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *pipefy.Client, got %T", req.ProviderData))
 		return
 	}
 	r.api = api
 }
 
-func (m *PipeModel) apply(ctx context.Context, p pipegql.Payload, onlyUnknown bool) diag.Diagnostics {
+func (m *PipeModel) apply(ctx context.Context, p pipefy.Pipe, onlyUnknown bool) diag.Diagnostics {
 	if !onlyUnknown || m.Id.IsUnknown() {
-		m.Id = types.StringValue(p.Id)
+		m.Id = types.StringValue(p.ID)
 	}
 	if !onlyUnknown || m.Name.IsUnknown() {
 		m.Name = types.StringValue(p.Name)
@@ -156,10 +148,10 @@ func (m *PipeModel) apply(ctx context.Context, p pipegql.Payload, onlyUnknown bo
 	}
 	if onlyUnknown {
 		if m.StartFormPhaseId.IsUnknown() {
-			m.StartFormPhaseId = types.StringValue(p.StartFormPhaseId)
+			m.StartFormPhaseId = types.StringValue(p.StartFormPhaseID)
 		}
-	} else if p.StartFormPhaseId != "" {
-		m.StartFormPhaseId = types.StringValue(p.StartFormPhaseId)
+	} else if p.StartFormPhaseID != "" {
+		m.StartFormPhaseId = types.StringValue(p.StartFormPhaseID)
 	}
 	if m.Preferences != nil && p.Preferences != nil {
 		return m.Preferences.fill(ctx, p.Preferences, onlyUnknown)
@@ -167,7 +159,7 @@ func (m *PipeModel) apply(ctx context.Context, p pipegql.Payload, onlyUnknown bo
 	return nil
 }
 
-func (pm *pipePreferencesModel) fill(ctx context.Context, p *pipegql.Preferences, onlyUnknown bool) diag.Diagnostics {
+func (pm *pipePreferencesModel) fill(ctx context.Context, p *pipefy.Preferences, onlyUnknown bool) diag.Diagnostics {
 	var diags diag.Diagnostics
 	if !onlyUnknown || pm.InboxEmailEnabled.IsUnknown() {
 		pm.InboxEmailEnabled = types.BoolPointerValue(p.InboxEmailEnabled)
@@ -180,7 +172,7 @@ func (pm *pipePreferencesModel) fill(ctx context.Context, p *pipegql.Preferences
 	return diags
 }
 
-func (m *PipeModel) refreshSLA(p pipegql.Payload) {
+func (m *PipeModel) refreshSLA(p pipefy.Pipe) {
 	if m.SLA == nil {
 		return
 	}
@@ -193,30 +185,28 @@ func (m *PipeModel) refreshSLA(p pipegql.Payload) {
 	m.SLA.Unit = types.StringValue(unit)
 }
 
-func (m *PipeModel) addSettingsVars(ctx context.Context, vars map[string]any) diag.Diagnostics {
-	var diags diag.Diagnostics
-	if hasValue(m.Public) {
-		vars["public"] = m.Public.ValueBool()
-	}
-	if hasValue(m.Icon) {
-		vars["icon"] = m.Icon.ValueString()
-	}
-	if hasValue(m.Color) {
-		vars["color"] = m.Color.ValueString()
-	}
-	if hasValue(m.OnlyAdminCanRemoveCards) {
-		vars["onlyAdminCanRemoveCards"] = m.OnlyAdminCanRemoveCards.ValueBool()
-	}
-	if hasValue(m.OnlyAssigneesCanEditCards) {
-		vars["onlyAssigneesCanEditCards"] = m.OnlyAssigneesCanEditCards.ValueBool()
-	}
+// settings fills in every attribute updatePipe accepts apart from the id and
+// the name, which the two callers supply differently. hasSettings reports
+// whether anything was configured, because Create skips the update entirely
+// when nothing was.
+func (m *PipeModel) settings(ctx context.Context) (in pipefy.UpdatePipeInput, hasSettings bool, diags diag.Diagnostics) {
+	in.Public = optionalBool(m.Public)
+	in.Icon = optionalString(m.Icon)
+	in.Color = optionalString(m.Color)
+	in.OnlyAdminCanRemoveCards = optionalBool(m.OnlyAdminCanRemoveCards)
+	in.OnlyAssigneesCanEditCards = optionalBool(m.OnlyAssigneesCanEditCards)
+	hasSettings = in.Public != nil || in.Icon != nil || in.Color != nil ||
+		in.OnlyAdminCanRemoveCards != nil || in.OnlyAssigneesCanEditCards != nil
+
 	// The SLA is sent but never refreshed from the mutation response: SLADuration
 	// constrains the pair so the API stores it without normalizing to a coarser
 	// unit, so the configured values round-trip. Read re-derives it to catch drift.
 	if m.SLA != nil {
-		if secs, ok := pipegql.UnitNameToSeconds(m.SLA.Unit.ValueString()); ok {
-			vars["expirationTimeByUnit"] = m.SLA.Time.ValueInt64()
-			vars["expirationUnit"] = secs
+		if secs, ok := pipefy.UnitNameToSeconds(m.SLA.Unit.ValueString()); ok {
+			count := m.SLA.Time.ValueInt64()
+			in.ExpirationTimeByUnit = &count
+			in.ExpirationUnit = &secs
+			hasSettings = true
 		}
 	}
 	if m.Preferences != nil {
@@ -230,24 +220,23 @@ func (m *PipeModel) addSettingsVars(ctx context.Context, vars map[string]any) di
 			pref["mainTabViews"] = views
 		}
 		if len(pref) > 0 {
-			vars["preferences"] = pref
+			in.Preferences = pref
+			hasSettings = true
 		}
 	}
-	return diags
+	return in, hasSettings, diags
 }
 
+// deletePhases removes the phases createPipe seeds, so a managed pipe starts
+// empty. That is this provider choosing a shape, not the API requiring one,
+// which is why it lives here rather than in the SDK.
 func (r *PipeResource) deletePhases(ctx context.Context, ids []string) error {
-	const mutation = "mutation DeletePhase_tf($id:ID!){ deletePhase(input:{id:$id}){ success } }"
 	for _, id := range ids {
-		var del struct {
-			DeletePhase struct {
-				Success bool `json:"success"`
-			} `json:"deletePhase"`
-		}
-		if err := r.api.DoGraphQL(ctx, mutation, map[string]any{"id": id}, &del); err != nil {
+		ok, err := r.api.Phases.Delete(ctx, id)
+		if err != nil {
 			return fmt.Errorf("phase %s: %w", id, err)
 		}
-		if !del.DeletePhase.Success {
+		if !ok {
 			return fmt.Errorf("phase %s: success=false", id)
 		}
 	}
@@ -261,20 +250,15 @@ func (r *PipeResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
-	mutation := "mutation CreatePipe_tf($name:String!,$orgId:ID!){ createPipe(input:{name:$name, organization_id:$orgId}){ pipe{ id name } } }"
-	var created struct {
-		CreatePipe struct {
-			Pipe struct {
-				Id string `json:"id"`
-			} `json:"pipe"`
-		} `json:"createPipe"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, map[string]any{"name": data.Name.ValueString(), "orgId": data.OrganizationId.ValueString()}, &created); err != nil {
+	pipeID, err := r.api.Pipes.Create(ctx, pipefy.CreatePipeInput{
+		Name:           data.Name.ValueString(),
+		OrganizationID: data.OrganizationId.ValueString(),
+	})
+	if err != nil {
 		resp.Diagnostics.AddError("create pipe failed", err.Error())
 		return
 	}
-	pipeId := created.CreatePipe.Pipe.Id
-	data.Id = types.StringValue(pipeId)
+	data.Id = types.StringValue(pipeID)
 
 	seed := PipeModel{Id: data.Id, Name: data.Name, OrganizationId: data.OrganizationId}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &seed)...)
@@ -284,53 +268,35 @@ func (r *PipeResource) Create(ctx context.Context, req resource.CreateRequest, r
 
 	// createPipe seeds the pipe with three default phases. Fetch them alongside the
 	// current settings so they can be removed and the payload reused below.
-	phasesQuery := "query GetPipePhases_tf($id:ID!){ pipe(id:$id){ " + pipegql.Selection + " phases { id } } }"
-	var phasesOut struct {
-		Pipe *struct {
-			pipegql.Payload
-			Phases []struct {
-				Id string `json:"id"`
-			} `json:"phases"`
-		} `json:"pipe"`
-	}
-	if err := r.api.DoGraphQL(ctx, phasesQuery, map[string]any{"id": pipeId}, &phasesOut); err != nil {
-		resp.Diagnostics.AddError("query pipe phases failed", err.Error())
-		return
-	}
-	if phasesOut.Pipe == nil {
+	payload, phaseIDs, err := r.api.Pipes.GetWithPhaseIDs(ctx, pipeID)
+	if errors.Is(err, pipefy.ErrNotFound) {
 		resp.Diagnostics.AddError("create pipe failed", "pipe not found right after creation")
 		return
 	}
-	payload := phasesOut.Pipe.Payload
-
-	ids := make([]string, len(phasesOut.Pipe.Phases))
-	for i, phase := range phasesOut.Pipe.Phases {
-		ids[i] = phase.Id
+	if err != nil {
+		resp.Diagnostics.AddError("query pipe phases failed", err.Error())
+		return
 	}
-	if err := r.deletePhases(ctx, ids); err != nil {
+	if err := r.deletePhases(ctx, phaseIDs); err != nil {
 		resp.Diagnostics.AddError("delete phase failed", err.Error())
 		return
 	}
 
 	// createPipe accepts only name and organization. Apply every other setting
 	// the user configured with a single update.
-	settings := map[string]any{}
-	resp.Diagnostics.Append(data.addSettingsVars(ctx, settings)...)
+	settings, hasSettings, diags := data.settings(ctx)
+	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if len(settings) > 0 {
-		settings["id"] = pipeId
-		var updated struct {
-			UpdatePipe struct {
-				Pipe pipegql.Payload `json:"pipe"`
-			} `json:"updatePipe"`
-		}
-		if err := r.api.DoGraphQL(ctx, updatePipeMutation, settings, &updated); err != nil {
+	if hasSettings {
+		settings.ID = pipeID
+		updated, err := r.api.Pipes.Update(ctx, settings)
+		if err != nil {
 			resp.Diagnostics.AddError("update pipe failed", err.Error())
 			return
 		}
-		payload = updated.UpdatePipe.Pipe
+		payload = updated
 	}
 
 	resp.Diagnostics.Append(data.apply(ctx, payload, true)...)
@@ -347,28 +313,20 @@ func (r *PipeResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
-	query := "query GetPipe_tf($id:ID!){ pipe(id:$id){ " + pipegql.Selection + " organization { id } } }"
-	var out struct {
-		Pipe *struct {
-			pipegql.Payload
-			Organization *struct {
-				Id string `json:"id"`
-			} `json:"organization"`
-		} `json:"pipe"`
-	}
-	if err := r.api.DoGraphQL(ctx, query, map[string]any{"id": data.Id.ValueString()}, &out); err != nil {
-		resp.Diagnostics.AddError("read pipe failed", err.Error())
-		return
-	}
-	if out.Pipe == nil {
+	pipe, err := r.api.Pipes.Get(ctx, data.Id.ValueString())
+	if errors.Is(err, pipefy.ErrNotFound) {
 		resp.State.RemoveResource(ctx)
 		return
 	}
-	resp.Diagnostics.Append(data.apply(ctx, out.Pipe.Payload, false)...)
-	if out.Pipe.Organization != nil {
-		data.OrganizationId = types.StringValue(out.Pipe.Organization.Id)
+	if err != nil {
+		resp.Diagnostics.AddError("read pipe failed", err.Error())
+		return
 	}
-	data.refreshSLA(out.Pipe.Payload)
+	resp.Diagnostics.Append(data.apply(ctx, pipe, false)...)
+	if pipe.OrganizationID != "" {
+		data.OrganizationId = types.StringValue(pipe.OrganizationID)
+	}
+	data.refreshSLA(pipe)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -378,21 +336,21 @@ func (r *PipeResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	vars := map[string]any{"id": data.Id.ValueString(), "name": data.Name.ValueString()}
-	resp.Diagnostics.Append(data.addSettingsVars(ctx, vars)...)
+	in, _, diags := data.settings(ctx)
+	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	var out struct {
-		UpdatePipe struct {
-			Pipe pipegql.Payload `json:"pipe"`
-		} `json:"updatePipe"`
-	}
-	if err := r.api.DoGraphQL(ctx, updatePipeMutation, vars, &out); err != nil {
+	in.ID = data.Id.ValueString()
+	name := data.Name.ValueString()
+	in.Name = &name
+
+	pipe, err := r.api.Pipes.Update(ctx, in)
+	if err != nil {
 		resp.Diagnostics.AddError("update pipe failed", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(data.apply(ctx, out.UpdatePipe.Pipe, true)...)
+	resp.Diagnostics.Append(data.apply(ctx, pipe, true)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -402,13 +360,7 @@ func (r *PipeResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation DeletePipe_tf($id:ID!){ deletePipe(input:{id:$id}){ success } }"
-	var out struct {
-		DeletePipe struct {
-			Success bool `json:"success"`
-		} `json:"deletePipe"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, map[string]any{"id": data.Id.ValueString()}, &out); err != nil {
+	if err := r.api.Pipes.Delete(ctx, data.Id.ValueString()); err != nil {
 		resp.Diagnostics.AddError("delete pipe failed", err.Error())
 		return
 	}

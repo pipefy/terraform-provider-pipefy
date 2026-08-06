@@ -5,21 +5,21 @@ package datasources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	dsschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/pipegql"
+	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 )
 
 var _ datasource.DataSource = &PipeDataSource{}
 
 func NewPipeDataSource() datasource.DataSource { return &PipeDataSource{} }
 
-type PipeDataSource struct{ api *client.ApiClient }
+type PipeDataSource struct{ api *pipefy.Client }
 
 type pipeDSPreferencesModel struct {
 	InboxEmailEnabled types.Bool `tfsdk:"inbox_email_enabled"`
@@ -73,7 +73,7 @@ func (d *PipeDataSource) Schema(ctx context.Context, req datasource.SchemaReques
 				Description: "Card SLA",
 				Attributes: map[string]dsschema.Attribute{
 					"time": dsschema.Int64Attribute{Computed: true, Description: "Count of units"},
-					"unit": dsschema.StringAttribute{Computed: true, Description: "SLA unit: " + strings.Join(pipegql.UnitNames, ", ") + "."},
+					"unit": dsschema.StringAttribute{Computed: true, Description: "SLA unit: " + strings.Join(pipefy.UnitNames, ", ") + "."},
 				},
 			},
 		},
@@ -84,9 +84,9 @@ func (d *PipeDataSource) Configure(ctx context.Context, req datasource.Configure
 	if req.ProviderData == nil {
 		return
 	}
-	api, ok := req.ProviderData.(*client.ApiClient)
+	api, ok := req.ProviderData.(*pipefy.Client)
 	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *ApiClient, got %T", req.ProviderData))
+		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *pipefy.Client, got %T", req.ProviderData))
 		return
 	}
 	d.api = api
@@ -103,33 +103,24 @@ func (d *PipeDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 		return
 	}
 
-	query := "query GetPipe_tf($id:ID!){ pipe(id:$id){ " + pipegql.Selection + " organization { id } } }"
-	var out struct {
-		Pipe *struct {
-			pipegql.Payload
-			Organization *struct {
-				Id string `json:"id"`
-			} `json:"organization"`
-		} `json:"pipe"`
-	}
-	if err := d.api.DoGraphQL(ctx, query, map[string]any{"id": data.Id.ValueString()}, &out); err != nil {
-		resp.Diagnostics.AddError("read pipe failed", err.Error())
-		return
-	}
-	if out.Pipe == nil {
+	p, err := d.api.Pipes.Get(ctx, data.Id.ValueString())
+	if errors.Is(err, pipefy.ErrNotFound) {
 		resp.Diagnostics.AddError("pipe not found", fmt.Sprintf("pipe with id %s not found", data.Id.ValueString()))
 		return
 	}
+	if err != nil {
+		resp.Diagnostics.AddError("read pipe failed", err.Error())
+		return
+	}
 
-	p := out.Pipe.Payload
 	data.Name = types.StringValue(p.Name)
 	data.Public = types.BoolPointerValue(p.Public)
 	data.Icon = types.StringPointerValue(p.Icon)
 	data.Color = types.StringPointerValue(p.Color)
 	data.OnlyAdminCanRemoveCards = types.BoolPointerValue(p.OnlyAdminCanRemoveCards)
 	data.OnlyAssigneesCanEditCards = types.BoolPointerValue(p.OnlyAssigneesCanEditCards)
-	if out.Pipe.Organization != nil {
-		data.OrganizationId = types.StringValue(out.Pipe.Organization.Id)
+	if p.OrganizationID != "" {
+		data.OrganizationId = types.StringValue(p.OrganizationID)
 	}
 	if p.Preferences != nil {
 		views, diags := types.ListValueFrom(ctx, types.StringType, p.Preferences.MainTabViews)

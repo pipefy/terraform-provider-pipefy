@@ -5,8 +5,8 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -18,9 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/fieldgql"
-	"github.com/pipefy/terraform-provider-pipefy/internal/provider/locks"
+	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 )
 
 var _ resource.Resource = &FieldResource{}
@@ -28,7 +26,7 @@ var _ resource.ResourceWithImportState = &FieldResource{}
 
 func NewFieldResource() resource.Resource { return &FieldResource{} }
 
-type FieldResource struct{ api *client.ApiClient }
+type FieldResource struct{ api *pipefy.Client }
 
 type FieldModel struct {
 	Id         types.String `tfsdk:"id"`
@@ -119,9 +117,9 @@ func (r *FieldResource) Configure(ctx context.Context, req resource.ConfigureReq
 	if req.ProviderData == nil {
 		return
 	}
-	api, ok := req.ProviderData.(*client.ApiClient)
+	api, ok := req.ProviderData.(*pipefy.Client)
 	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *ApiClient, got %T", req.ProviderData))
+		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *pipefy.Client, got %T", req.ProviderData))
 		return
 	}
 	r.api = api
@@ -134,48 +132,21 @@ func (r *FieldResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	// Resolve repo_id from the phase to lock per repo
-	// pipefy api does not allow multiple field creations at the same time for the same repo
-	phaseQuery := "query GetPhaseRepoId_tf($id:ID!){ phase(id:$id){ repo_id } }"
-	phaseVars := map[string]any{"id": data.PhaseId.ValueString()}
-	var phaseOut struct {
-		Phase *struct {
-			RepoId int `json:"repo_id"`
-		} `json:"phase"`
-	}
-	if err := r.api.DoGraphQL(ctx, phaseQuery, phaseVars, &phaseOut); err != nil {
-		resp.Diagnostics.AddError("create field failed", fmt.Sprintf("failed to fetch phase repo_id: %s", err.Error()))
-		return
-	}
-	if phaseOut.Phase == nil || phaseOut.Phase.RepoId == 0 {
-		resp.Diagnostics.AddError("create field failed", "could not resolve valid phase repo_id from phase query")
-		return
-	}
-	repoIDStr := strconv.FormatInt(int64(phaseOut.Phase.RepoId), 10)
-
-	unlock := locks.LockRepo(repoIDStr)
-	defer unlock()
-
-	mutation := "mutation CreatePhaseField_tf($phaseId:ID!,$type:ID!,$label:String!,$required:Boolean,$options:[String],$description:String,$help:String,$editable:Boolean,$minimalView:Boolean,$customValidation:String,$index:Float){ createPhaseField(input:{ phase_id:$phaseId, type:$type, label:$label, required:$required, options:$options, description:$description, help:$help, editable:$editable, minimal_view:$minimalView, custom_validation:$customValidation, index:$index }){ phase_field{ " + fieldgql.Selection + " } } }"
-	vars := map[string]any{
-		"phaseId": data.PhaseId.ValueString(),
-		"type":    data.Type.ValueString(),
-		"label":   data.Label.ValueString(),
-	}
-	addFieldWriteVars(ctx, data, vars, &resp.Diagnostics)
+	writes := fieldWrites(ctx, data, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	var out struct {
-		CreatePhaseField struct {
-			PhaseField fieldgql.Field `json:"phase_field"`
-		} `json:"createPhaseField"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
+	field, err := r.api.Fields.Create(ctx, pipefy.CreateFieldInput{
+		PhaseID:     data.PhaseId.ValueString(),
+		Type:        data.Type.ValueString(),
+		Label:       data.Label.ValueString(),
+		FieldWrites: writes,
+	})
+	if err != nil {
 		resp.Diagnostics.AddError("create field failed", err.Error())
 		return
 	}
-	applyFieldToModel(ctx, &data, out.CreatePhaseField.PhaseField, &resp.Diagnostics)
+	applyFieldToModel(ctx, &data, field, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -193,26 +164,13 @@ func (r *FieldResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	// Query the phase to get the field information
-	query := "query GetPhaseFields_tf($phaseId:ID!){ phase(id:$phaseId){ fields{ " + fieldgql.Selection + " } } }"
-	vars := map[string]any{"phaseId": data.PhaseId.ValueString()}
-	var out struct {
-		Phase *struct {
-			Fields []fieldgql.Field `json:"fields"`
-		} `json:"phase"`
+	found, err := r.api.Fields.GetByUUID(ctx, data.PhaseId.ValueString(), data.Uuid.ValueString())
+	if errors.Is(err, pipefy.ErrNotFound) {
+		resp.State.RemoveResource(ctx)
+		return
 	}
-	if err := r.api.DoGraphQL(ctx, query, vars, &out); err != nil {
+	if err != nil {
 		resp.Diagnostics.AddError("read field failed", err.Error())
-		return
-	}
-	if out.Phase == nil {
-		resp.State.RemoveResource(ctx)
-		return
-	}
-
-	found, ok := fieldgql.FindByUUID(out.Phase.Fields, data.Uuid.ValueString())
-	if !ok {
-		resp.State.RemoveResource(ctx)
 		return
 	}
 
@@ -229,28 +187,27 @@ func (r *FieldResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	mutation := "mutation UpdatePhaseField_tf($id:ID!,$uuid:ID!,$label:String!,$required:Boolean,$options:[String],$description:String,$help:String,$editable:Boolean,$minimalView:Boolean,$customValidation:String,$index:Float){ updatePhaseField(input:{ id:$id, uuid:$uuid, label:$label, required:$required, options:$options, description:$description, help:$help, editable:$editable, minimal_view:$minimalView, custom_validation:$customValidation, index:$index }){ phase_field{ " + fieldgql.Selection + " } } }"
-	vars := map[string]any{
-		"id":   data.Id.ValueString(),
-		"uuid": data.Uuid.ValueString(),
-	}
-	if !data.Label.IsNull() {
-		vars["label"] = data.Label.ValueString()
-	}
-	addFieldWriteVars(ctx, data, vars, &resp.Diagnostics)
+	writes := fieldWrites(ctx, data, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	var out struct {
-		UpdatePhaseField struct {
-			PhaseField fieldgql.Field `json:"phase_field"`
-		} `json:"updatePhaseField"`
+	in := pipefy.UpdateFieldInput{
+		ID:          data.Id.ValueString(),
+		UUID:        data.Uuid.ValueString(),
+		FieldWrites: writes,
 	}
-	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
+	// Label is sent on a null-check alone, not the usual hasValue: an unknown
+	// label still goes out.
+	if !data.Label.IsNull() {
+		label := data.Label.ValueString()
+		in.Label = &label
+	}
+	field, err := r.api.Fields.Update(ctx, in)
+	if err != nil {
 		resp.Diagnostics.AddError("update field failed", err.Error())
 		return
 	}
-	applyFieldToModel(ctx, &data, out.UpdatePhaseField.PhaseField, &resp.Diagnostics)
+	applyFieldToModel(ctx, &data, field, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -264,42 +221,7 @@ func (r *FieldResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		return
 	}
 
-	// Fetch repo_id from the phase
-	phaseQuery := "query GetPhaseRepoId_tf($id:ID!){ phase(id:$id){ repo_id } }"
-	phaseVars := map[string]any{"id": data.PhaseId.ValueString()}
-	var phaseOut struct {
-		Phase *struct {
-			RepoId int `json:"repo_id"`
-		} `json:"phase"`
-	}
-	if err := r.api.DoGraphQL(ctx, phaseQuery, phaseVars, &phaseOut); err != nil {
-		resp.Diagnostics.AddError("delete field failed", fmt.Sprintf("failed to fetch phase repo_id: %s", err.Error()))
-		return
-	}
-	if phaseOut.Phase == nil {
-		resp.Diagnostics.AddError("delete field failed", "could not resolve phase from phase query")
-		return
-	}
-	repoIDStr := strconv.FormatInt(int64(phaseOut.Phase.RepoId), 10)
-	if repoIDStr == "0" {
-		resp.Diagnostics.AddError("delete field failed", "could not resolve valid phase repo_id from phase query")
-		return
-	}
-
-	pipeUUID, err := resolvePipeUUID(ctx, r.api, repoIDStr)
-	if err != nil {
-		resp.Diagnostics.AddError("delete field failed", err.Error())
-		return
-	}
-
-	mutation := "mutation DeletePhaseField_tf($id:ID!,$pipeUuid:ID!){ deletePhaseField(input:{ id:$id, pipeUuid:$pipeUuid }){ success } }"
-	vars := map[string]any{"id": data.Id.ValueString(), "pipeUuid": pipeUUID}
-	var out struct {
-		DeletePhaseField struct {
-			Success bool `json:"success"`
-		} `json:"deletePhaseField"`
-	}
-	if err := r.api.DoGraphQL(ctx, mutation, vars, &out); err != nil {
+	if err := r.api.Fields.Delete(ctx, data.PhaseId.ValueString(), data.Id.ValueString()); err != nil {
 		resp.Diagnostics.AddError("delete field failed", err.Error())
 		return
 	}
@@ -338,43 +260,32 @@ func boolPtr(p *bool) types.Bool {
 	return types.BoolValue(*p)
 }
 
-// addFieldWriteVars sends each attribute only when it has a concrete value, so an
+// fieldWrites carries each attribute only when it has a concrete value, so an
 // omitted Optional+Computed attribute keeps its server value instead of being cleared.
-func addFieldWriteVars(ctx context.Context, data FieldModel, vars map[string]any, diags *diag.Diagnostics) {
-	if !data.Required.IsNull() && !data.Required.IsUnknown() {
-		vars["required"] = data.Required.ValueBool()
+func fieldWrites(ctx context.Context, data FieldModel, diags *diag.Diagnostics) pipefy.FieldWrites {
+	writes := pipefy.FieldWrites{
+		Required:         optionalBool(data.Required),
+		Description:      optionalString(data.Description),
+		Help:             optionalString(data.Help),
+		Editable:         optionalBool(data.Editable),
+		MinimalView:      optionalBool(data.MinimalView),
+		CustomValidation: optionalString(data.CustomValidation),
+		Index:            optionalFloat64(data.Index),
 	}
-	if !data.Options.IsNull() && !data.Options.IsUnknown() {
+	if hasValue(data.Options) {
 		var opts []string
 		diags.Append(data.Options.ElementsAs(ctx, &opts, false)...)
-		vars["options"] = opts
+		writes.Options = &opts
 	}
-	if !data.Description.IsNull() && !data.Description.IsUnknown() {
-		vars["description"] = data.Description.ValueString()
-	}
-	if !data.Help.IsNull() && !data.Help.IsUnknown() {
-		vars["help"] = data.Help.ValueString()
-	}
-	if !data.Editable.IsNull() && !data.Editable.IsUnknown() {
-		vars["editable"] = data.Editable.ValueBool()
-	}
-	if !data.MinimalView.IsNull() && !data.MinimalView.IsUnknown() {
-		vars["minimalView"] = data.MinimalView.ValueBool()
-	}
-	if !data.CustomValidation.IsNull() && !data.CustomValidation.IsUnknown() {
-		vars["customValidation"] = data.CustomValidation.ValueString()
-	}
-	if !data.Index.IsNull() && !data.Index.IsUnknown() {
-		vars["index"] = data.Index.ValueFloat64()
-	}
+	return writes
 }
 
 // applyFieldToModel maps a fetched field onto the model. phase_id is not in the
 // payload; it is set at create/import and left untouched here.
-func applyFieldToModel(ctx context.Context, data *FieldModel, f fieldgql.Field, diags *diag.Diagnostics) {
-	data.Id = types.StringValue(f.Id)
-	data.InternalId = types.StringValue(f.InternalId)
-	data.Uuid = types.StringValue(f.Uuid)
+func applyFieldToModel(ctx context.Context, data *FieldModel, f pipefy.Field, diags *diag.Diagnostics) {
+	data.Id = types.StringValue(f.ID)
+	data.InternalId = types.StringValue(f.InternalID)
+	data.Uuid = types.StringValue(f.UUID)
 	data.Label = types.StringValue(f.Label)
 	data.Type = types.StringValue(f.Type)
 	data.Required = boolPtr(f.Required)

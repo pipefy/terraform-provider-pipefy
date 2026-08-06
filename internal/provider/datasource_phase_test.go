@@ -33,8 +33,16 @@ func TestUnit_PhaseDataSource_Read(t *testing.T) {
 
 		q := gr.Query
 		switch {
+		// Answer only what the query selected. The double used to volunteer a
+		// pipe object nobody asked for, which is how a pipe_id that never
+		// populated against the real API passed CI.
 		case strings.Contains(q, "phase("):
-			_, _ = io.WriteString(w, `{"data":{"phase":{"id":"phase_123","name":"My Phase","pipe":{"id":"pipe_123"}}}}`)
+			if !strings.Contains(q, "repo_id") {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"errors":[{"message":"query did not select repo_id"}]}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"data":{"phase":{"id":"phase_123","name":"My Phase","repo_id":302825965}}}`)
 		default:
 			_, _ = io.WriteString(w, `{"data":{}}`)
 		}
@@ -74,7 +82,7 @@ func TestUnit_PhaseDataSource_Read(t *testing.T) {
 					statecheck.ExpectKnownValue(
 						"data.pipefy_phase.test",
 						tfjsonpath.New("pipe_id"),
-						knownvalue.StringExact("pipe_123"),
+						knownvalue.StringExact("302825965"),
 					),
 				},
 			},
