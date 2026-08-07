@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -44,6 +45,10 @@ func randHex(n int) string {
 func traceparent(traceID, spanID string) string {
 	return "00-" + traceID + "-" + spanID + "-01"
 }
+
+// ErrRateLimited reports a request the API refused with HTTP 429. The transport
+// has already retried it.
+var ErrRateLimited = errors.New("rate limit exceeded")
 
 type graphQLRequest struct {
 	Query     string         `json:"query"`
@@ -95,6 +100,10 @@ func (c *ApiClient) execGraphQL(ctx context.Context, query string, variables map
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
+	}
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, fmt.Errorf("%w (HTTP 429): the API allows 500 requests per 30 seconds and blocks further requests for about 5 minutes once exceeded. Wait and re-run; resources already created are recorded in state", ErrRateLimited)
 	}
 
 	// Check for non-2xx status codes first

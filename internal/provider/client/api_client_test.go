@@ -5,6 +5,7 @@ package client
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -287,5 +288,39 @@ func TestApiClient_DoGraphQL_SuccessDecode(t *testing.T) {
 	}
 	if out.Hello != "world" {
 		t.Fatalf("unexpected decode result: %+v", out)
+	}
+}
+
+func TestApiClient_DoGraphQL_RateLimited(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte("<html>rate limited</html>"))
+	}))
+	defer ts.Close()
+
+	c := &ApiClient{HTTP: ts.Client(), Endpoint: ts.URL}
+	err := c.DoGraphQL(t.Context(), "query {}", nil, nil)
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("err = %v, want it to match ErrRateLimited", err)
+	}
+	if !strings.Contains(err.Error(), "500 requests per 30 seconds") {
+		t.Errorf("err = %q, want the documented limit in the message", err.Error())
+	}
+}
+
+func TestApiClient_DoGraphQL_Non2xxKeepsResponseBody(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte("field is invalid"))
+	}))
+	defer ts.Close()
+
+	c := &ApiClient{HTTP: ts.Client(), Endpoint: ts.URL}
+	err := c.DoGraphQL(t.Context(), "query {}", nil, nil)
+	if err == nil {
+		t.Fatal("err = nil, want a non-2xx error")
+	}
+	if !strings.Contains(err.Error(), "field is invalid") {
+		t.Errorf("err = %q, want the response body in the message", err.Error())
 	}
 }
