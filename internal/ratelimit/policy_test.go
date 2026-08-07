@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 )
 
 func TestRetryOn429(t *testing.T) {
@@ -54,5 +55,65 @@ func TestRetryOn429CancelledContext(t *testing.T) {
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("err = %v, want context.Canceled", err)
+	}
+}
+
+func TestBackoffLogsAndPreservesRetryAfter(t *testing.T) {
+	var gotMsg string
+	var gotFields map[string]any
+	r := retrier{log: func(_ context.Context, msg string, fields map[string]any) {
+		gotMsg = msg
+		gotFields = fields
+	}}
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://example.invalid/graphql", nil)
+	if err != nil {
+		t.Fatalf("building request: %v", err)
+	}
+	resp := &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header:     http.Header{"Retry-After": []string{"7"}},
+		Request:    req,
+	}
+
+	wait := r.backoff(retryWaitMin, retryWaitMax, 0, resp)
+
+	if wait != 7*time.Second {
+		t.Errorf("wait = %v, want 7s: Retry-After must reach the caller unchanged", wait)
+	}
+	if gotMsg == "" {
+		t.Fatal("nothing was logged")
+	}
+	if gotFields["attempt"] != 1 {
+		t.Errorf("attempt = %v, want 1", gotFields["attempt"])
+	}
+	if gotFields["wait"] != "7s" {
+		t.Errorf("wait field = %v, want \"7s\"", gotFields["wait"])
+	}
+	if gotFields["retry_after"] != "7" {
+		t.Errorf("retry_after = %v, want \"7\"", gotFields["retry_after"])
+	}
+}
+
+func TestBackoffWithoutRetryAfterIsExponential(t *testing.T) {
+	r := retrier{}
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://example.invalid/graphql", nil)
+	if err != nil {
+		t.Fatalf("building request: %v", err)
+	}
+	resp := &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{}, Request: req}
+
+	if got := r.backoff(retryWaitMin, retryWaitMax, 0, resp); got != retryWaitMin {
+		t.Errorf("first wait = %v, want %v", got, retryWaitMin)
+	}
+	if got := r.backoff(retryWaitMin, retryWaitMax, 1, resp); got != 2*time.Second {
+		t.Errorf("second wait = %v, want 2s", got)
+	}
+}
+
+func TestBackoffToleratesNilLogAndNilResponse(t *testing.T) {
+	r := retrier{}
+	if got := r.backoff(retryWaitMin, retryWaitMax, 0, nil); got != retryWaitMin {
+		t.Errorf("wait = %v, want %v", got, retryWaitMin)
 	}
 }
