@@ -106,7 +106,6 @@ func (c *ApiClient) execGraphQL(ctx context.Context, query string, variables map
 		return nil, fmt.Errorf("%w (HTTP 429): the API allows 500 requests per 30 seconds and blocks further requests for about 5 minutes once exceeded. Wait and re-run; resources already created are recorded in state", ErrRateLimited)
 	}
 
-	// Check for non-2xx status codes first
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("graphql http status %d (content-type=%s): %s", resp.StatusCode, resp.Header.Get("Content-Type"), string(respBody))
 	}

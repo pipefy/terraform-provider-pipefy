@@ -111,9 +111,44 @@ func TestBackoffWithoutRetryAfterIsExponential(t *testing.T) {
 	}
 }
 
-func TestBackoffToleratesNilLogAndNilResponse(t *testing.T) {
+// TestBackoffNilLogSkipsLoggingWithoutReadingResponse covers the case where
+// r.log == nil short-circuits the guard before resp is examined at all, so a
+// nil resp here is safe by construction rather than by the resp == nil check.
+func TestBackoffNilLogSkipsLoggingWithoutReadingResponse(t *testing.T) {
 	r := retrier{}
 	if got := r.backoff(retryWaitMin, retryWaitMax, 0, nil); got != retryWaitMin {
 		t.Errorf("wait = %v, want %v", got, retryWaitMin)
+	}
+}
+
+// TestBackoffWithLogSetSkipsLoggingOnNilResponse exercises the resp == nil arm
+// of the guard with a non-nil log, so it is the resp check itself under test,
+// not the short-circuit above it.
+func TestBackoffWithLogSetSkipsLoggingOnNilResponse(t *testing.T) {
+	var logged bool
+	r := retrier{log: func(context.Context, string, map[string]any) { logged = true }}
+
+	if got := r.backoff(retryWaitMin, retryWaitMax, 0, nil); got != retryWaitMin {
+		t.Errorf("wait = %v, want %v", got, retryWaitMin)
+	}
+	if logged {
+		t.Error("logged, want the nil-response guard to skip logging")
+	}
+}
+
+// TestBackoffWithLogSetSkipsLoggingOnNilRequest exercises the
+// resp.Request == nil arm of the guard with a non-nil log and a non-nil resp.
+// If that check were removed, r.log would dereference resp.Request.Context()
+// on a nil Request and panic.
+func TestBackoffWithLogSetSkipsLoggingOnNilRequest(t *testing.T) {
+	var logged bool
+	r := retrier{log: func(context.Context, string, map[string]any) { logged = true }}
+	resp := &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{}, Request: nil}
+
+	if got := r.backoff(retryWaitMin, retryWaitMax, 0, resp); got != retryWaitMin {
+		t.Errorf("wait = %v, want %v", got, retryWaitMin)
+	}
+	if logged {
+		t.Error("logged, want the nil-request guard to skip logging")
 	}
 }

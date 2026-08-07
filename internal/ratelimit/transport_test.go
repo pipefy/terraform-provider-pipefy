@@ -12,6 +12,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hashicorp/go-retryablehttp"
+	"golang.org/x/time/rate"
 )
 
 // recordingLimiter counts the waits and can fail on demand.
@@ -190,7 +193,7 @@ func TestTransportStopsWhenTheContextIsCancelled(t *testing.T) {
 	s.retryWaitMin = 10 * time.Second
 	s.retryWaitMax = 10 * time.Second
 
-	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL, strings.NewReader(`{}`))
@@ -198,7 +201,9 @@ func TestTransportStopsWhenTheContextIsCancelled(t *testing.T) {
 		t.Fatalf("building request: %v", err)
 	}
 
-	c := &http.Client{Transport: newTransport(s, &recordingLimiter{}, http.DefaultTransport, nil)}
+	var backoffCalls int
+	log := func(context.Context, string, map[string]any) { backoffCalls++ }
+	c := &http.Client{Transport: newTransport(s, &recordingLimiter{}, http.DefaultTransport, log)}
 
 	start := time.Now()
 	if _, err := c.Do(req); err == nil {
@@ -206,6 +211,13 @@ func TestTransportStopsWhenTheContextIsCancelled(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Errorf("returned after %v, want it to give up as soon as the context ended", elapsed)
+	}
+	// retryablehttp calls Backoff only after it has decided to retry and cleared
+	// its remaining-attempts check, so one call here proves the run reached the
+	// 10s wait and was interrupted there, rather than attempt 1 itself
+	// overrunning the context before the wait was ever entered.
+	if backoffCalls != 1 {
+		t.Errorf("backoff calls = %d, want 1: the wait must be entered and then interrupted", backoffCalls)
 	}
 }
 
@@ -236,5 +248,59 @@ func TestTransportLogsOncePerRetry(t *testing.T) {
 	}
 	if _, ok := logged[0]["wait"]; !ok {
 		t.Error("the wait duration is missing from the log fields")
+	}
+}
+
+// TestNewTransportUsesProductionSettings walks the stack NewTransport builds,
+// since every other test in this file goes through newTransport with
+// fastSettings, a recordingLimiter, and http.DefaultTransport, none of which
+// exercise the production wiring.
+func TestNewTransportUsesProductionSettings(t *testing.T) {
+	rt, ok := NewTransport(nil).(*retryablehttp.RoundTripper)
+	if !ok {
+		t.Fatal("NewTransport did not return a *retryablehttp.RoundTripper")
+	}
+	if rt.Client == nil {
+		t.Fatal("rt.Client is nil")
+	}
+
+	c := rt.Client
+	if c.RetryMax != 2 {
+		t.Errorf("RetryMax = %d, want 2", c.RetryMax)
+	}
+	if c.RetryWaitMin != time.Second {
+		t.Errorf("RetryWaitMin = %v, want 1s", c.RetryWaitMin)
+	}
+	if c.RetryWaitMax != 3*time.Second {
+		t.Errorf("RetryWaitMax = %v, want 3s", c.RetryWaitMax)
+	}
+	if c.HTTPClient == nil {
+		t.Fatal("HTTPClient is nil")
+	}
+	if c.HTTPClient.Timeout != 30*time.Second {
+		t.Errorf("HTTPClient.Timeout = %v, want 30s", c.HTTPClient.Timeout)
+	}
+
+	lt, ok := c.HTTPClient.Transport.(*limiterTransport)
+	if !ok {
+		t.Fatal("HTTPClient.Transport is not a *limiterTransport, so the limiter would sit outside the retry loop")
+	}
+
+	lim, ok := lt.limiter.(*rate.Limiter)
+	if !ok {
+		t.Fatal("limiter is not a *rate.Limiter")
+	}
+	if lim.Limit() != rate.Limit(15) {
+		t.Errorf("rate = %v, want 15", lim.Limit())
+	}
+	if lim.Burst() != 15 {
+		t.Errorf("burst = %d, want 15", lim.Burst())
+	}
+
+	if _, ok := lt.base.(*http.Transport); !ok {
+		t.Fatal("base is not a *http.Transport")
+	}
+	if lt.base == http.DefaultTransport {
+		t.Error("base is the shared http.DefaultTransport, want a private pooled transport")
 	}
 }

@@ -49,3 +49,12 @@ linters-settings:
         deny:
           - pkg: github.com/pipefy/terraform-provider-pipefy/internal/provider
             desc: the SDK must not depend on the Terraform layer
+      # internal/ratelimit takes a logFunc rather than importing
+      # terraform-plugin-log directly, so it stays testable and reusable outside
+      # the provider. This rule keeps that seam from eroding.
+      ratelimit-holds-no-terraform:
+        files:
+          - "**/internal/ratelimit/**"
+        deny:
+          - pkg: github.com/hashicorp/terraform-plugin-
+            desc: internal/ratelimit must stay free of Terraform types; use the logFunc seam instead
