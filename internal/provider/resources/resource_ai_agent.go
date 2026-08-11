@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -71,7 +72,7 @@ func (r *AiAgentResource) Create(
 		resp.Diagnostics.AddError("create AI agent failed", "generate action reference IDs: "+err.Error())
 		return
 	}
-	if err := r.createAgent(ctx, &model, repoUUID); err != nil {
+	if err := r.createAgent(ctx, &model, repoUUID, configuredActive); err != nil {
 		resp.Diagnostics.AddError("create AI agent failed", err.Error())
 		return
 	}
@@ -96,12 +97,21 @@ func loadCreateModel(
 	return model, configuredActive, !resp.Diagnostics.HasError()
 }
 
+// createAgent creates the agent disabled or enabled as configured. createAiAgent
+// always returns a disabled agent, but it honours an explicit disabledAt, so a
+// configuration that wants the agent off says so in the payload and needs no
+// status mutation afterwards.
 func (r *AiAgentResource) createAgent(
 	ctx context.Context,
 	model *AiAgentModel,
 	repoUUID string,
+	configuredActive types.Bool,
 ) error {
-	uuid, err := r.api.AiAgents.Create(ctx, model.graphQLInput(repoUUID))
+	input := model.graphQLInput(repoUUID)
+	if wantsInactive(configuredActive) {
+		input["disabledAt"] = disabledAtNow()
+	}
+	uuid, err := r.api.AiAgents.Create(ctx, input)
 	if err != nil {
 		return err
 	}
@@ -109,27 +119,24 @@ func (r *AiAgentResource) createAgent(
 	return nil
 }
 
-// finishCreate applies optional status then refreshes state. Status stays a
-// separate mutation because createAiAgent does not accept the active flag.
+// finishCreate switches the agent on when configured active, then verifies the
+// status the API actually reports before writing state. Status stays a separate
+// mutation because createAiAgent does not accept the active flag.
 func (r *AiAgentResource) finishCreate(
 	ctx context.Context,
 	model *AiAgentModel,
 	configuredActive types.Bool,
 	resp *resource.CreateResponse,
 ) {
-	if isConfiguredBool(configuredActive) {
-		if err := r.updateStatus(ctx, model.ID.ValueString(), configuredActive.ValueBool()); err != nil {
+	if wantsActive(configuredActive) {
+		if err := r.updateStatus(ctx, model.ID.ValueString(), true); err != nil {
 			r.rollbackCreate(ctx, model.ID.ValueString(), err, resp)
 			return
 		}
 	}
-	agent, err := r.fetchAgent(ctx, model.ID.ValueString())
+	agent, err := r.verifiedAgent(ctx, model.ID.ValueString(), configuredActive)
 	if err != nil {
 		r.rollbackCreate(ctx, model.ID.ValueString(), err, resp)
-		return
-	}
-	if agent == nil {
-		r.rollbackCreate(ctx, model.ID.ValueString(), fmt.Errorf("aiAgent %q returned no agent", model.ID.ValueString()), resp)
 		return
 	}
 	model.applyGraphQL(*agent)
@@ -193,11 +200,7 @@ func (r *AiAgentResource) Update(
 	resp *resource.UpdateResponse,
 ) {
 	var plan AiAgentModel
-	var state AiAgentModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-	var configuredActive types.Bool
-	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("active"), &configuredActive)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -210,44 +213,140 @@ func (r *AiAgentResource) Update(
 		resp.Diagnostics.AddError("update AI agent failed", "generate action reference IDs: "+err.Error())
 		return
 	}
-	r.applyUpdate(ctx, &plan, state, repoUUID, configuredActive, resp)
+	r.applyUpdate(ctx, &plan, repoUUID, resp)
 }
 
+// applyUpdate writes the configuration and then makes the agent's status match
+// the plan. updateAiAgent disables the agent on every call, so the desired status
+// drives the whole sequence: an agent that should stay off carries its own
+// disabledAt in the payload, and one that should stay on is switched back on
+// afterwards. The plan's active value, not the prior state, is what is enforced,
+// because the update disables the agent whether or not the status changed.
 func (r *AiAgentResource) applyUpdate(
 	ctx context.Context,
 	plan *AiAgentModel,
-	state AiAgentModel,
 	repoUUID string,
-	configuredActive types.Bool,
 	resp *resource.UpdateResponse,
 ) {
-	if err := r.updateAgent(ctx, *plan, repoUUID); err != nil {
+	desired := plan.Active
+	input, err := r.updateInput(ctx, *plan, repoUUID, desired)
+	if err != nil {
 		resp.Diagnostics.AddError("update AI agent failed", err.Error())
 		return
 	}
-	statusChanged := isConfiguredBool(configuredActive) &&
-		(state.Active.IsNull() || state.Active.ValueBool() != configuredActive.ValueBool())
-	if statusChanged {
-		if err := r.updateStatus(ctx, plan.ID.ValueString(), configuredActive.ValueBool()); err != nil {
-			r.refreshStateAfterPartialUpdate(ctx, plan, resp)
-			resp.Diagnostics.AddError("update AI agent status failed", err.Error())
+	if err := r.api.AiAgents.Update(ctx, plan.ID.ValueString(), input); err != nil {
+		resp.Diagnostics.AddError("update AI agent failed", err.Error())
+		return
+	}
+	if wantsActive(desired) {
+		if err := r.updateStatus(ctx, plan.ID.ValueString(), true); err != nil {
+			r.reportStatusFailure(ctx, plan, err, resp)
 			return
 		}
 	}
-	agent, err := r.fetchAgent(ctx, plan.ID.ValueString())
+	agent, err := r.requireAgent(ctx, plan.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("read AI agent after update failed", err.Error())
 		return
 	}
-	if agent == nil {
-		resp.Diagnostics.AddError(
-			"read AI agent after update failed",
-			fmt.Sprintf("aiAgent %q returned no agent", plan.ID.ValueString()),
-		)
+	agent, err = r.enforceStatus(ctx, plan.ID.ValueString(), desired, agent)
+	if err != nil {
+		r.reportStatusFailure(ctx, plan, err, resp)
 		return
 	}
 	plan.applyGraphQL(*agent)
 	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
+}
+
+// updateInput builds the updateAiAgent payload. Re-sending the current
+// disabledAt is the only way to keep a disabled agent disabled without the
+// update stamping a fresh timestamp; an agent that should end up active omits it
+// and is switched on by the status mutation that follows.
+func (r *AiAgentResource) updateInput(
+	ctx context.Context,
+	model AiAgentModel,
+	repoUUID string,
+	desired types.Bool,
+) (map[string]any, error) {
+	input := model.graphQLInput(repoUUID)
+	if !wantsInactive(desired) {
+		return input, nil
+	}
+	current, err := r.fetchAgent(ctx, model.ID.ValueString())
+	if err != nil {
+		return nil, err
+	}
+	if current != nil && current.DisabledAt != nil {
+		input["disabledAt"] = *current.DisabledAt
+		return input, nil
+	}
+	input["disabledAt"] = disabledAtNow()
+	return input, nil
+}
+
+// verifiedAgent reads the agent back and makes its real status match the desired
+// one. Every write path ends here rather than trusting the mutation it just sent.
+func (r *AiAgentResource) verifiedAgent(
+	ctx context.Context,
+	id string,
+	desired types.Bool,
+) (*pipefy.Agent, error) {
+	agent, err := r.requireAgent(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return r.enforceStatus(ctx, id, desired, agent)
+}
+
+// enforceStatus corrects a status that came back different from the desired one
+// and fails loudly if the correction did not take, so state never claims a status
+// the API does not report.
+func (r *AiAgentResource) enforceStatus(
+	ctx context.Context,
+	id string,
+	desired types.Bool,
+	agent *pipefy.Agent,
+) (*pipefy.Agent, error) {
+	if !isConfiguredBool(desired) || agentIsActive(*agent) == desired.ValueBool() {
+		return agent, nil
+	}
+	if err := r.updateStatus(ctx, id, desired.ValueBool()); err != nil {
+		return nil, err
+	}
+	corrected, err := r.requireAgent(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if agentIsActive(*corrected) != desired.ValueBool() {
+		return nil, fmt.Errorf(
+			"AI agent %q reports active=%t after applying the configured active=%t",
+			id, agentIsActive(*corrected), desired.ValueBool(),
+		)
+	}
+	return corrected, nil
+}
+
+// reportStatusFailure persists the remote configuration before failing, so the
+// next apply only has the status left to retry.
+func (r *AiAgentResource) reportStatusFailure(
+	ctx context.Context,
+	plan *AiAgentModel,
+	statusErr error,
+	resp *resource.UpdateResponse,
+) {
+	r.refreshStateAfterPartialUpdate(ctx, plan, resp)
+	resp.Diagnostics.AddError("update AI agent status failed", statusErr.Error())
+}
+
+func (r *AiAgentResource) requireAgent(ctx context.Context, id string) (*pipefy.Agent, error) {
+	agent, err := r.fetchAgent(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if agent == nil {
+		return nil, fmt.Errorf("aiAgent %q returned no agent", id)
+	}
+	return agent, nil
 }
 
 // refreshStateAfterPartialUpdate persists the remote config after updateAiAgent
@@ -281,14 +380,6 @@ func (r *AiAgentResource) verifyPipeOwnsAgent(
 		"pipe_id %q resolves to UUID %q but AI agent %q belongs to repo UUID %q",
 		pipeID, repoUUID, agent.UUID, agent.RepoUUID,
 	)
-}
-
-func (r *AiAgentResource) updateAgent(
-	ctx context.Context,
-	model AiAgentModel,
-	repoUUID string,
-) error {
-	return r.api.AiAgents.Update(ctx, model.ID.ValueString(), model.graphQLInput(repoUUID))
 }
 
 func (r *AiAgentResource) updateStatus(ctx context.Context, id string, active bool) error {
@@ -349,4 +440,20 @@ func (r *AiAgentResource) ImportState(
 
 func isConfiguredBool(value types.Bool) bool {
 	return !value.IsNull() && !value.IsUnknown()
+}
+
+func wantsActive(value types.Bool) bool {
+	return isConfiguredBool(value) && value.ValueBool()
+}
+
+func wantsInactive(value types.Bool) bool {
+	return isConfiguredBool(value) && !value.ValueBool()
+}
+
+func agentIsActive(agent pipefy.Agent) bool {
+	return agent.DisabledAt == nil
+}
+
+func disabledAtNow() string {
+	return time.Now().UTC().Format(time.RFC3339)
 }

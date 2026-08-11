@@ -180,6 +180,29 @@ func TestUnit_AiAgentResource_OmittedFieldValueNoPerpetualDiff(t *testing.T) {
 	}))
 }
 
+// The direction in which updateAiAgent resets disabledAt has already changed
+// once between probes, so the provider reads the status back instead of assuming
+// the status mutation worked. A mutation that reports success without changing
+// anything must surface as an error, not as state claiming the agent is active.
+func TestUnit_AiAgentResource_UpdateReportsUnenforcedStatus(t *testing.T) {
+	mock := &aiAgentMock{}
+	server := newAiAgentServer(mock)
+	defer server.Close()
+	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{
+		{Config: aiAgentConfig(server.URL, "true", false)},
+		{
+			PreConfig:   func() { mock.failStatusSilently = true },
+			Config:      aiAgentConfig(server.URL, "true", true),
+			ExpectError: regexp.MustCompile(`(?s)reports active=false.*configured\s+active=true`),
+			ConfigStateChecks: []statecheck.StateCheck{
+				statecheck.ExpectKnownValue(
+					"pipefy_ai_agent.test", tfjsonpath.New("active"), knownvalue.Bool(false),
+				),
+			},
+		},
+	}))
+}
+
 func TestUnit_AiAgentResource_UpdateStatusFailureKeepsConfigState(t *testing.T) {
 	mock := &aiAgentMock{}
 	server := newAiAgentServer(mock)
