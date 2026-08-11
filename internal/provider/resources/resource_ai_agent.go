@@ -97,10 +97,8 @@ func loadCreateModel(
 	return model, configuredActive, !resp.Diagnostics.HasError()
 }
 
-// createAgent creates the agent disabled or enabled as configured. createAiAgent
-// always returns a disabled agent, but it honours an explicit disabledAt, so a
-// configuration that wants the agent off says so in the payload and needs no
-// status mutation afterwards.
+// createAgent sends disabledAt for an agent configured inactive. createAiAgent
+// honours it, so that agent is never switched on and off again.
 func (r *AiAgentResource) createAgent(
 	ctx context.Context,
 	model *AiAgentModel,
@@ -119,9 +117,8 @@ func (r *AiAgentResource) createAgent(
 	return nil
 }
 
-// finishCreate switches the agent on when configured active, then verifies the
-// status the API actually reports before writing state. Status stays a separate
-// mutation because createAiAgent does not accept the active flag.
+// finishCreate applies optional status then refreshes state. Status stays a
+// separate mutation because createAiAgent does not accept the active flag.
 func (r *AiAgentResource) finishCreate(
 	ctx context.Context,
 	model *AiAgentModel,
@@ -134,7 +131,12 @@ func (r *AiAgentResource) finishCreate(
 			return
 		}
 	}
-	agent, err := r.verifiedAgent(ctx, model.ID.ValueString(), configuredActive)
+	agent, err := r.requireAgent(ctx, model.ID.ValueString())
+	if err != nil {
+		r.rollbackCreate(ctx, model.ID.ValueString(), err, resp)
+		return
+	}
+	agent, err = r.enforceStatus(ctx, model.ID.ValueString(), configuredActive, agent)
 	if err != nil {
 		r.rollbackCreate(ctx, model.ID.ValueString(), err, resp)
 		return
@@ -216,12 +218,8 @@ func (r *AiAgentResource) Update(
 	r.applyUpdate(ctx, &plan, repoUUID, resp)
 }
 
-// applyUpdate writes the configuration and then makes the agent's status match
-// the plan. updateAiAgent disables the agent on every call, so the desired status
-// drives the whole sequence: an agent that should stay off carries its own
-// disabledAt in the payload, and one that should stay on is switched back on
-// afterwards. The plan's active value, not the prior state, is what is enforced,
-// because the update disables the agent whether or not the status changed.
+// applyUpdate enforces the planned status, not the change between config and
+// prior state, because updateAiAgent disables the agent on every call.
 func (r *AiAgentResource) applyUpdate(
 	ctx context.Context,
 	plan *AiAgentModel,
@@ -240,7 +238,8 @@ func (r *AiAgentResource) applyUpdate(
 	}
 	if wantsActive(desired) {
 		if err := r.updateStatus(ctx, plan.ID.ValueString(), true); err != nil {
-			r.reportStatusFailure(ctx, plan, err, resp)
+			r.refreshStateAfterPartialUpdate(ctx, plan, resp)
+			resp.Diagnostics.AddError("update AI agent status failed", err.Error())
 			return
 		}
 	}
@@ -251,17 +250,16 @@ func (r *AiAgentResource) applyUpdate(
 	}
 	agent, err = r.enforceStatus(ctx, plan.ID.ValueString(), desired, agent)
 	if err != nil {
-		r.reportStatusFailure(ctx, plan, err, resp)
+		r.refreshStateAfterPartialUpdate(ctx, plan, resp)
+		resp.Diagnostics.AddError("update AI agent status failed", err.Error())
 		return
 	}
 	plan.fillFromAgent(*agent)
 	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
 
-// updateInput builds the updateAiAgent payload. Re-sending the current
-// disabledAt is the only way to keep a disabled agent disabled without the
-// update stamping a fresh timestamp; an agent that should end up active omits it
-// and is switched on by the status mutation that follows.
+// updateInput re-sends the current disabledAt for an agent that should stay
+// disabled, which is what keeps the update from stamping a fresh one.
 func (r *AiAgentResource) updateInput(
 	ctx context.Context,
 	model AiAgentModel,
@@ -284,23 +282,9 @@ func (r *AiAgentResource) updateInput(
 	return input, nil
 }
 
-// verifiedAgent reads the agent back and makes its real status match the desired
-// one. Every write path ends here rather than trusting the mutation it just sent.
-func (r *AiAgentResource) verifiedAgent(
-	ctx context.Context,
-	id string,
-	desired types.Bool,
-) (*pipefy.Agent, error) {
-	agent, err := r.requireAgent(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	return r.enforceStatus(ctx, id, desired, agent)
-}
-
 // enforceStatus corrects a status that came back different from the desired one
-// and fails loudly if the correction did not take, so state never claims a status
-// the API does not report.
+// and fails if the correction did not take, so state never claims a status the
+// API does not report.
 func (r *AiAgentResource) enforceStatus(
 	ctx context.Context,
 	id string,
@@ -324,18 +308,6 @@ func (r *AiAgentResource) enforceStatus(
 		)
 	}
 	return corrected, nil
-}
-
-// reportStatusFailure persists the remote configuration before failing, so the
-// next apply only has the status left to retry.
-func (r *AiAgentResource) reportStatusFailure(
-	ctx context.Context,
-	plan *AiAgentModel,
-	statusErr error,
-	resp *resource.UpdateResponse,
-) {
-	r.refreshStateAfterPartialUpdate(ctx, plan, resp)
-	resp.Diagnostics.AddError("update AI agent status failed", statusErr.Error())
 }
 
 func (r *AiAgentResource) requireAgent(ctx context.Context, id string) (*pipefy.Agent, error) {

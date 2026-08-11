@@ -53,8 +53,7 @@ func (mock *aiAgentMock) nextDisabledAt() string {
 	return fmt.Sprintf("2026-01-%02dT00:00:00Z", mock.disabledAtSeq)
 }
 
-// disable records the agent as inactive. An empty timestamp means the caller did
-// not pick one, which is when the API stamps "now".
+// disable stamps "now" when the caller passed no timestamp, as the API does.
 func (mock *aiAgentMock) disable(at string) {
 	mock.active = false
 	if at == "" {
@@ -63,13 +62,9 @@ func (mock *aiAgentMock) disable(at string) {
 	mock.disabledAt = at
 }
 
-// inputDisabledAt reads the disabledAt an agent input carries. The second result
-// says whether the key was present at all, which the API treats the same as an
-// explicit null but the tests still need to distinguish.
-func inputDisabledAt(agent map[string]any) (string, bool) {
-	raw, present := agent["disabledAt"]
-	value, _ := raw.(string)
-	return value, present
+func inputDisabledAt(agent map[string]any) string {
+	value, _ := agent["disabledAt"].(string)
+	return value
 }
 
 func (mock *aiAgentMock) serveHTTP(w http.ResponseWriter, r *http.Request) {
@@ -126,10 +121,8 @@ func (mock *aiAgentMock) create(variables map[string]any) string {
 	mock.behaviors, _ = agent["behaviors"].([]any)
 	mock.dataSourceIDs, _ = agent["dataSourceIds"].([]any)
 	mock.referenceHistory = append(mock.referenceHistory, actionReferences(mock.behaviors))
-	// createAiAgent always returns a disabled agent, and honours an explicit
-	// disabledAt when the input carries one.
-	requested, _ := inputDisabledAt(agent)
-	mock.disable(requested)
+	// createAiAgent returns a disabled agent, honouring an explicit disabledAt.
+	mock.disable(inputDisabledAt(agent))
 	return `{"data":{"createAiAgent":{"agent":{"uuid":"agent-uuid"}}}}`
 }
 
@@ -143,10 +136,9 @@ func (mock *aiAgentMock) update(variables map[string]any) string {
 	mock.behaviors, _ = agent["behaviors"].([]any)
 	mock.dataSourceIDs, _ = agent["dataSourceIds"].([]any)
 	mock.referenceHistory = append(mock.referenceHistory, actionReferences(mock.behaviors))
-	// updateAiAgent disables the agent on every call: an omitted or null
-	// disabledAt is stamped with "now", an explicit timestamp is kept verbatim.
-	requested, _ := inputDisabledAt(agent)
-	mock.disable(requested)
+	// updateAiAgent disables the agent on every call, keeping an explicit
+	// disabledAt verbatim and stamping "now" otherwise.
+	mock.disable(inputDisabledAt(agent))
 	if mock.nullAfterUpdate {
 		mock.readNull = true
 	}
@@ -436,8 +428,6 @@ func assertStableReferences(t *testing.T, history [][]string) {
 	}
 }
 
-// aiAgentConfigWithInstruction varies only the agent-level instruction, so a
-// step changes the agent configuration and nothing about its status.
 func aiAgentConfigWithInstruction(endpoint, active, instruction string) string {
 	return strings.ReplaceAll(
 		aiAgentConfig(endpoint, active, false),
@@ -451,10 +441,8 @@ func aiAgentActiveCheck(active bool) []statecheck.StateCheck {
 	)}
 }
 
-// updateAiAgent disables the agent on every call, so an agent configured active
-// has to be switched back on after each update. Without that, the second apply
-// fails with "Provider produced inconsistent result after apply: .active" and
-// the agent is left switched off in Pipefy.
+// Without the status reapplied after each update, the second apply fails with
+// "inconsistent result after apply: .active" and leaves the agent switched off.
 func TestUnit_AiAgentResource_ActiveSurvivesRepeatedUpdates(t *testing.T) {
 	mock := &aiAgentMock{}
 	server := newAiAgentServer(mock)
@@ -477,9 +465,7 @@ func TestUnit_AiAgentResource_ActiveSurvivesRepeatedUpdates(t *testing.T) {
 	resource.UnitTest(t, aiAgentTestCase(steps))
 }
 
-// An agent configured inactive must stay inactive across updates, and the
-// disabledAt already on the server must survive: re-sending it is the only way
-// to keep the update from stamping a new one.
+// An agent configured inactive keeps the disabledAt it was created with.
 func TestUnit_AiAgentResource_InactiveUpdatePreservesDisabledAt(t *testing.T) {
 	mock := &aiAgentMock{}
 	server := newAiAgentServer(mock)
@@ -508,8 +494,7 @@ func TestUnit_AiAgentResource_InactiveUpdatePreservesDisabledAt(t *testing.T) {
 			},
 		},
 	}))
-	// An agent that should stay off is disabled through the payload, so nothing
-	// ever switches it on and off again.
+	// The payload disables it, so nothing switches it on and off again.
 	for _, operation := range mock.operations {
 		if operation == "Status" {
 			t.Fatalf("status mutation called for an inactive agent: %v", mock.operations)

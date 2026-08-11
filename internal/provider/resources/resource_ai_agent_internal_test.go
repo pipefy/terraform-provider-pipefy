@@ -228,10 +228,8 @@ func TestRematchNestedIdentitiesOnReorder(t *testing.T) {
 	}
 }
 
-// Create and Update take only the ids and the status from the response. Anything
-// the plan already decided has to survive verbatim, or Terraform rejects the
-// apply, and the ids have to land on the right entry even when the response
-// lists the behaviors in another order than the request.
+// Anything the plan already decided has to survive verbatim, and the ids have to
+// land on the right entry even when the response reorders the behaviors.
 func TestFillFromAgentKeepsPlannedValuesAndGraftsIDs(t *testing.T) {
 	plan := plannedAgentModel()
 	plan.fillFromAgent(pipefy.Agent{
