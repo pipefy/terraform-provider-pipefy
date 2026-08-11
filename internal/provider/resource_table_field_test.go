@@ -230,6 +230,81 @@ resource "pipefy_table_field" "test" {
 	})
 }
 
+// Table fields store a written "" as NULL but can still read one back, so a
+// refresh must not seed "" into state and the next apply must not trip over it.
+func TestUnit_TableFieldResource_EmptyCustomValidationFromUIEdit(t *testing.T) {
+	st := &tableFieldState{}
+	srv := httptest.NewServer(tableFieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := tableFieldConfig(srv.URL, `
+resource "pipefy_table_field" "test" {
+  table_id = pipefy_table.t.id
+  type     = "radio_vertical"
+  label    = "Budget confirmed"
+  options  = ["Yes", "No"]
+}
+`)
+	withOption := strings.ReplaceAll(cfg, `["Yes", "No"]`, `["Yes", "No", "Unknown"]`)
+
+	uiEdit := func() {
+		empty := ""
+		st.customValidation = &empty
+	}
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: cfg},
+			{
+				PreConfig:         uiEdit,
+				Config:            cfg,
+				ConfigPlanChecks:  resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
+				ConfigStateChecks: []statecheck.StateCheck{statecheck.ExpectKnownValue("pipefy_table_field.test", tfjsonpath.New("custom_validation"), knownvalue.Null())},
+			},
+			{
+				PreConfig:         uiEdit,
+				Config:            withOption,
+				ConfigPlanChecks:  planTableFieldUpdate,
+				ConfigStateChecks: []statecheck.StateCheck{expectTableFieldList("options", "Yes", "No", "Unknown")},
+			},
+		},
+	})
+}
+
+// A rule set in config must survive the server reporting it back as null.
+// long_text coerces a written "" to NULL; short_text would not exercise this.
+func TestUnit_TableFieldResource_EmptyCustomValidationFromConfig(t *testing.T) {
+	st := &tableFieldState{}
+	srv := httptest.NewServer(tableFieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := tableFieldConfig(srv.URL, `
+resource "pipefy_table_field" "test" {
+  table_id          = pipefy_table.t.id
+  type              = "long_text"
+  label             = "Name"
+  custom_validation = ""
+}
+`)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:            cfg,
+				ConfigStateChecks: []statecheck.StateCheck{expectTableFieldStr("custom_validation", "")},
+			},
+			{
+				Config:           cfg,
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
+			},
+		},
+	})
+}
+
 func TestUnit_TableFieldResource_ReadRefreshDetectsDrift(t *testing.T) {
 	st := &tableFieldState{}
 	srv := httptest.NewServer(tableFieldMockHandler(st))

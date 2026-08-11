@@ -355,6 +355,159 @@ resource "pipefy_field" "test" {
 	})
 }
 
+// The web UI writes "" for custom_validation when someone edits a field, but a
+// write of "" is stored as NULL. Refresh therefore seeds "" into state, the next
+// plan carries it forward, and the update response comes back null. Both values
+// mean "no rule", so neither the refresh nor the apply may report a change.
+func TestUnit_FieldResource_EmptyCustomValidationFromUIEdit(t *testing.T) {
+	st := &fieldState{}
+	srv := httptest.NewServer(fieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := fieldConfig(srv.URL, `
+resource "pipefy_field" "test" {
+  phase_id = pipefy_phase.ph.id
+  type     = "radio_vertical"
+  label    = "Budget confirmed"
+  options  = ["Yes", "No"]
+}
+`)
+	withOption := strings.ReplaceAll(cfg, `["Yes", "No"]`, `["Yes", "No", "Unknown"]`)
+
+	uiEdit := func() {
+		empty := ""
+		st.customValidation = &empty
+	}
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: cfg},
+			// A UI edit that only sets "" is not a change the provider should see.
+			{
+				PreConfig:         uiEdit,
+				Config:            cfg,
+				ConfigPlanChecks:  resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
+				ConfigStateChecks: []statecheck.StateCheck{statecheck.ExpectKnownValue("pipefy_field.test", tfjsonpath.New("custom_validation"), knownvalue.Null())},
+			},
+			// Applying a real change while the server holds "" must still succeed.
+			{
+				PreConfig:         uiEdit,
+				Config:            withOption,
+				ConfigPlanChecks:  planUpdate,
+				ConfigStateChecks: []statecheck.StateCheck{expectList("options", "Yes", "No", "Unknown")},
+			},
+		},
+	})
+}
+
+// The empty-or-null merge is scoped to custom_validation. description and help
+// store "" verbatim on the API side, so a UI edit that blanks them is a real
+// value the refresh has to reflect. This fails the moment someone widens the
+// merge into a general "empty string means null" rule.
+func TestUnit_FieldResource_EmptyDescriptionAndHelpSurviveRefresh(t *testing.T) {
+	st := &fieldState{}
+	srv := httptest.NewServer(fieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := fieldConfig(srv.URL, `
+resource "pipefy_field" "test" {
+  phase_id = pipefy_phase.ph.id
+  type     = "short_text"
+  label    = "Title"
+}
+`)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: cfg},
+			{
+				PreConfig: func() {
+					empty := ""
+					st.description = &empty
+					st.help = &empty
+				},
+				Config:           cfg,
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
+				ConfigStateChecks: []statecheck.StateCheck{
+					expectStr("description", ""),
+					expectStr("help", ""),
+				},
+			},
+		},
+	})
+}
+
+// The merge keeps empty and null interchangeable, and nothing else: a rule that
+// appears on the server side is drift the refresh must report.
+func TestUnit_FieldResource_CustomValidationDriftDetected(t *testing.T) {
+	st := &fieldState{}
+	srv := httptest.NewServer(fieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := fieldConfig(srv.URL, `
+resource "pipefy_field" "test" {
+  phase_id = pipefy_phase.ph.id
+  type     = "short_text"
+  label    = "Title"
+}
+`)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:            cfg,
+				ConfigStateChecks: []statecheck.StateCheck{statecheck.ExpectKnownValue("pipefy_field.test", tfjsonpath.New("custom_validation"), knownvalue.Null())},
+			},
+			{
+				PreConfig: func() {
+					rule := "min:3"
+					st.customValidation = &rule
+				},
+				Config:            cfg,
+				ConfigStateChecks: []statecheck.StateCheck{expectStr("custom_validation", "min:3")},
+			},
+		},
+	})
+}
+
+// A rule set in config must survive the server reporting it back as null.
+// long_text coerces a written "" to NULL; short_text would not exercise this.
+func TestUnit_FieldResource_EmptyCustomValidationFromConfig(t *testing.T) {
+	st := &fieldState{}
+	srv := httptest.NewServer(fieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := fieldConfig(srv.URL, `
+resource "pipefy_field" "test" {
+  phase_id          = pipefy_phase.ph.id
+  type              = "long_text"
+  label             = "Title"
+  custom_validation = ""
+}
+`)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:            cfg,
+				ConfigStateChecks: []statecheck.StateCheck{expectStr("custom_validation", "")},
+			},
+			{
+				Config:           cfg,
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
+			},
+		},
+	})
+}
+
 func TestUnit_FieldResource_ComputedIndexNoPerpetualDiff(t *testing.T) {
 	st := &fieldState{}
 	srv := httptest.NewServer(fieldMockHandler(st))

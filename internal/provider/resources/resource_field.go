@@ -314,7 +314,7 @@ func applyFieldToModel(ctx context.Context, data *FieldModel, f pipefy.Field, on
 		data.MinimalView = boolPtr(f.MinimalView)
 	}
 	if !onlyUnknown || data.CustomValidation.IsUnknown() {
-		data.CustomValidation = strPtr(f.CustomValidation)
+		data.CustomValidation = mergeEmptyish(data.CustomValidation, f.CustomValidation)
 	}
 	if !onlyUnknown || data.Index.IsUnknown() {
 		if f.Index == nil {

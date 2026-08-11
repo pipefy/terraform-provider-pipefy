@@ -279,7 +279,7 @@ func applyTableFieldToModel(ctx context.Context, data *TableFieldModel, f pipefy
 		data.MinimalView = boolPtr(f.MinimalView)
 	}
 	if !onlyUnknown || data.CustomValidation.IsUnknown() {
-		data.CustomValidation = strPtr(f.CustomValidation)
+		data.CustomValidation = mergeEmptyish(data.CustomValidation, f.CustomValidation)
 	}
 	if !onlyUnknown || data.Unique.IsUnknown() {
 		data.Unique = boolPtr(f.Unique)

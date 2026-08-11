@@ -46,3 +46,17 @@ func optionalFloat64(v types.Float64) *float64 {
 }
 
 func hasValue(v attr.Value) bool { return !v.IsNull() && !v.IsUnknown() }
+
+// mergeEmptyish keeps the model's value when it and the API's are both empty or
+// null. The API stores a written "" for custom_validation as NULL, yet a field
+// last written outside the GraphQL API still reads back as "", and the two mean
+// the same thing. Any other case takes the API value, so drift still surfaces.
+// custom_validation only: description and help store "" verbatim.
+func mergeEmptyish(current types.String, api *string) types.String {
+	apiEmpty := api == nil || *api == ""
+	modelEmpty := !current.IsUnknown() && (current.IsNull() || current.ValueString() == "")
+	if apiEmpty && modelEmpty {
+		return current
+	}
+	return types.StringPointerValue(api)
+}
