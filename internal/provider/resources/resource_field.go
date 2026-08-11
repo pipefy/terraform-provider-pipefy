@@ -146,7 +146,7 @@ func (r *FieldResource) Create(ctx context.Context, req resource.CreateRequest, 
 		resp.Diagnostics.AddError("create field failed", err.Error())
 		return
 	}
-	applyFieldToModel(ctx, &data, field, &resp.Diagnostics)
+	applyFieldToModel(ctx, &data, field, true, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -174,7 +174,7 @@ func (r *FieldResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	applyFieldToModel(ctx, &data, found, &resp.Diagnostics)
+	applyFieldToModel(ctx, &data, found, false, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -207,7 +207,7 @@ func (r *FieldResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		resp.Diagnostics.AddError("update field failed", err.Error())
 		return
 	}
-	applyFieldToModel(ctx, &data, field, &resp.Diagnostics)
+	applyFieldToModel(ctx, &data, field, true, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -282,22 +282,48 @@ func fieldWrites(ctx context.Context, data FieldModel, diags *diag.Diagnostics) 
 
 // applyFieldToModel maps a fetched field onto the model. phase_id is not in the
 // payload; it is set at create/import and left untouched here.
-func applyFieldToModel(ctx context.Context, data *FieldModel, f pipefy.Field, diags *diag.Diagnostics) {
-	data.Id = types.StringValue(f.ID)
-	data.InternalId = types.StringValue(f.InternalID)
-	data.Uuid = types.StringValue(f.UUID)
-	data.Label = types.StringValue(f.Label)
-	data.Type = types.StringValue(f.Type)
-	data.Required = boolPtr(f.Required)
-	data.Description = strPtr(f.Description)
-	data.Help = strPtr(f.Help)
-	data.Editable = boolPtr(f.Editable)
-	data.MinimalView = boolPtr(f.MinimalView)
-	data.CustomValidation = strPtr(f.CustomValidation)
-	if f.Index == nil {
-		data.Index = types.Float64Null()
-	} else {
-		data.Index = types.Float64Value(*f.Index)
+func applyFieldToModel(ctx context.Context, data *FieldModel, f pipefy.Field, onlyUnknown bool, diags *diag.Diagnostics) {
+	if !onlyUnknown || data.Id.IsUnknown() {
+		data.Id = types.StringValue(f.ID)
 	}
-	data.Options = optionsToList(ctx, f.Options, diags)
+	if !onlyUnknown || data.InternalId.IsUnknown() {
+		data.InternalId = types.StringValue(f.InternalID)
+	}
+	if !onlyUnknown || data.Uuid.IsUnknown() {
+		data.Uuid = types.StringValue(f.UUID)
+	}
+	if !onlyUnknown || data.Label.IsUnknown() {
+		data.Label = types.StringValue(f.Label)
+	}
+	if !onlyUnknown || data.Type.IsUnknown() {
+		data.Type = types.StringValue(f.Type)
+	}
+	if !onlyUnknown || data.Required.IsUnknown() {
+		data.Required = boolPtr(f.Required)
+	}
+	if !onlyUnknown || data.Description.IsUnknown() {
+		data.Description = strPtr(f.Description)
+	}
+	if !onlyUnknown || data.Help.IsUnknown() {
+		data.Help = strPtr(f.Help)
+	}
+	if !onlyUnknown || data.Editable.IsUnknown() {
+		data.Editable = boolPtr(f.Editable)
+	}
+	if !onlyUnknown || data.MinimalView.IsUnknown() {
+		data.MinimalView = boolPtr(f.MinimalView)
+	}
+	if !onlyUnknown || data.CustomValidation.IsUnknown() {
+		data.CustomValidation = strPtr(f.CustomValidation)
+	}
+	if !onlyUnknown || data.Index.IsUnknown() {
+		if f.Index == nil {
+			data.Index = types.Float64Null()
+		} else {
+			data.Index = types.Float64Value(*f.Index)
+		}
+	}
+	if !onlyUnknown || data.Options.IsUnknown() {
+		data.Options = optionsToList(ctx, f.Options, diags)
+	}
 }

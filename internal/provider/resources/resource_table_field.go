@@ -138,7 +138,7 @@ func (r *TableFieldResource) Create(ctx context.Context, req resource.CreateRequ
 		resp.Diagnostics.AddError("create table field failed", err.Error())
 		return
 	}
-	applyTableFieldToModel(ctx, &data, field, &resp.Diagnostics)
+	applyTableFieldToModel(ctx, &data, field, true, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -166,7 +166,7 @@ func (r *TableFieldResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 
-	applyTableFieldToModel(ctx, &data, found, &resp.Diagnostics)
+	applyTableFieldToModel(ctx, &data, found, false, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -199,7 +199,7 @@ func (r *TableFieldResource) Update(ctx context.Context, req resource.UpdateRequ
 		resp.Diagnostics.AddError("update table field failed", err.Error())
 		return
 	}
-	applyTableFieldToModel(ctx, &data, field, &resp.Diagnostics)
+	applyTableFieldToModel(ctx, &data, field, true, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -250,17 +250,41 @@ func tableFieldWrites(ctx context.Context, data TableFieldModel, diags *diag.Dia
 
 // applyTableFieldToModel maps a fetched field onto the model. table_id is not in the
 // payload; it is set at create/import and left untouched here.
-func applyTableFieldToModel(ctx context.Context, data *TableFieldModel, f pipefy.TableField, diags *diag.Diagnostics) {
-	data.Id = types.StringValue(f.ID)
-	data.InternalId = types.StringValue(f.InternalID)
-	data.Uuid = types.StringValue(f.UUID)
-	data.Label = types.StringValue(f.Label)
-	data.Type = types.StringValue(f.Type)
-	data.Required = boolPtr(f.Required)
-	data.Description = strPtr(f.Description)
-	data.Help = strPtr(f.Help)
-	data.MinimalView = boolPtr(f.MinimalView)
-	data.CustomValidation = strPtr(f.CustomValidation)
-	data.Unique = boolPtr(f.Unique)
-	data.Options = optionsToList(ctx, f.Options, diags)
+func applyTableFieldToModel(ctx context.Context, data *TableFieldModel, f pipefy.TableField, onlyUnknown bool, diags *diag.Diagnostics) {
+	if !onlyUnknown || data.Id.IsUnknown() {
+		data.Id = types.StringValue(f.ID)
+	}
+	if !onlyUnknown || data.InternalId.IsUnknown() {
+		data.InternalId = types.StringValue(f.InternalID)
+	}
+	if !onlyUnknown || data.Uuid.IsUnknown() {
+		data.Uuid = types.StringValue(f.UUID)
+	}
+	if !onlyUnknown || data.Label.IsUnknown() {
+		data.Label = types.StringValue(f.Label)
+	}
+	if !onlyUnknown || data.Type.IsUnknown() {
+		data.Type = types.StringValue(f.Type)
+	}
+	if !onlyUnknown || data.Required.IsUnknown() {
+		data.Required = boolPtr(f.Required)
+	}
+	if !onlyUnknown || data.Description.IsUnknown() {
+		data.Description = strPtr(f.Description)
+	}
+	if !onlyUnknown || data.Help.IsUnknown() {
+		data.Help = strPtr(f.Help)
+	}
+	if !onlyUnknown || data.MinimalView.IsUnknown() {
+		data.MinimalView = boolPtr(f.MinimalView)
+	}
+	if !onlyUnknown || data.CustomValidation.IsUnknown() {
+		data.CustomValidation = strPtr(f.CustomValidation)
+	}
+	if !onlyUnknown || data.Unique.IsUnknown() {
+		data.Unique = boolPtr(f.Unique)
+	}
+	if !onlyUnknown || data.Options.IsUnknown() {
+		data.Options = optionsToList(ctx, f.Options, diags)
+	}
 }
