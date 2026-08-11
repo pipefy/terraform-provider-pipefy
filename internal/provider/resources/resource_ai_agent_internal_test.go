@@ -228,8 +228,6 @@ func TestRematchNestedIdentitiesOnReorder(t *testing.T) {
 	}
 }
 
-// Anything the plan already decided has to survive verbatim, and the ids have to
-// land on the right entry even when the response reorders the behaviors.
 func TestFillFromAgentKeepsPlannedValuesAndGraftsIDs(t *testing.T) {
 	plan := plannedAgentModel()
 	plan.fillFromAgent(pipefy.Agent{
@@ -251,6 +249,23 @@ func TestFillFromAgentKeepsPlannedValuesAndGraftsIDs(t *testing.T) {
 	}
 	assertBehaviorIdentity(t, plan.Behaviors[0], "behavior-created", "action-move")
 	assertBehaviorIdentity(t, plan.Behaviors[1], "behavior-updated", "action-update")
+}
+
+func TestFillFromAgentLeavesUnknownIDsWhenIdentityMisses(t *testing.T) {
+	plan := plannedAgentModel()
+	plan.fillFromAgent(pipefy.Agent{
+		UUID: "agent-uuid", Name: "renamed elsewhere", Instruction: "rewritten elsewhere",
+		DataSourceIDs: []string{"source-9"},
+		Behaviors: []pipefy.Behavior{
+			apiBehavior("behavior-other", "Other", "card_moved", "action-other", "Other", "move_card"),
+		},
+	})
+	if !plan.Behaviors[0].ID.IsUnknown() || !plan.Behaviors[1].ID.IsUnknown() {
+		t.Fatalf("miss grafted identity: %#v", plan.Behaviors)
+	}
+	if !plan.Behaviors[0].Actions[0].ID.IsUnknown() || !plan.Behaviors[1].Actions[0].ID.IsUnknown() {
+		t.Fatalf("miss grafted action identity: %#v", plan.Behaviors)
+	}
 }
 
 func assertBehaviorIdentity(t *testing.T, behavior AiAgentBehaviorModel, wantID, wantActionID string) {
