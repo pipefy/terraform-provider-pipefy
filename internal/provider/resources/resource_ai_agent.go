@@ -76,8 +76,8 @@ func (r *AiAgentResource) Create(
 		resp.Diagnostics.AddError("create AI agent failed", err.Error())
 		return
 	}
-	prepareCreatedPartialState(&model)
-	resp.Diagnostics.Append(resp.State.Set(ctx, &model)...)
+	partial := createdPartialState(model)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &partial)...)
 	if resp.Diagnostics.HasError() {
 		r.rollbackCreate(ctx, model.ID.ValueString(), fmt.Errorf("persist created agent state"), resp)
 		return
@@ -139,7 +139,7 @@ func (r *AiAgentResource) finishCreate(
 		r.rollbackCreate(ctx, model.ID.ValueString(), err, resp)
 		return
 	}
-	model.applyGraphQL(*agent)
+	model.fillFromAgent(*agent)
 	resp.Diagnostics.Append(resp.State.Set(ctx, model)...)
 	if resp.Diagnostics.HasError() {
 		r.rollbackCreate(ctx, model.ID.ValueString(), fmt.Errorf("persist created agent state"), resp)
@@ -254,7 +254,7 @@ func (r *AiAgentResource) applyUpdate(
 		r.reportStatusFailure(ctx, plan, err, resp)
 		return
 	}
-	plan.applyGraphQL(*agent)
+	plan.fillFromAgent(*agent)
 	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
 

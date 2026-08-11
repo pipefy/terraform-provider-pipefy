@@ -10,6 +10,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 )
 
 func TestStringSetRoundTripIgnoresOrder(t *testing.T) {
@@ -224,6 +225,82 @@ func TestRematchNestedIdentitiesOnReorder(t *testing.T) {
 	}
 	if actions[1].ReferenceID.ValueString() != "ref-move" || actions[1].ID.ValueString() != "action-1" {
 		t.Fatalf("reordered Move kept wrong identity: %#v", actions[1])
+	}
+}
+
+// Create and Update take only the ids and the status from the response. Anything
+// the plan already decided has to survive verbatim, or Terraform rejects the
+// apply, and the ids have to land on the right entry even when the response
+// lists the behaviors in another order than the request.
+func TestFillFromAgentKeepsPlannedValuesAndGraftsIDs(t *testing.T) {
+	plan := plannedAgentModel()
+	plan.fillFromAgent(pipefy.Agent{
+		UUID: "agent-uuid", Name: "renamed elsewhere", Instruction: "rewritten elsewhere",
+		DataSourceIDs: []string{"source-9"},
+		Behaviors: []pipefy.Behavior{
+			apiBehavior("behavior-updated", "On update", "field_updated", "action-update", "Update", "update_card"),
+			apiBehavior("behavior-created", "On create", "card_created", "action-move", "Move", "move_card"),
+		},
+	})
+	if plan.Name.ValueString() != "Triage" || plan.Instruction.ValueString() != "Classify cards" {
+		t.Fatalf("response overwrote planned values: %#v", plan)
+	}
+	if plan.ID.ValueString() != "agent-uuid" || !plan.Active.ValueBool() {
+		t.Fatalf("unknowns not filled from response: %#v", plan)
+	}
+	if !plan.DataSourceIDs.Equal(stringsToSet([]string{"source-1"})) {
+		t.Fatalf("response overwrote planned data_source_ids: %#v", plan.DataSourceIDs)
+	}
+	assertBehaviorIdentity(t, plan.Behaviors[0], "behavior-created", "action-move")
+	assertBehaviorIdentity(t, plan.Behaviors[1], "behavior-updated", "action-update")
+}
+
+func assertBehaviorIdentity(t *testing.T, behavior AiAgentBehaviorModel, wantID, wantActionID string) {
+	t.Helper()
+	if behavior.ID.ValueString() != wantID {
+		t.Fatalf("behavior %q got id %q, want %q", behavior.Name, behavior.ID, wantID)
+	}
+	if behavior.Actions[0].ID.ValueString() != wantActionID {
+		t.Fatalf("behavior %q got action id %q, want %q", behavior.Name, behavior.Actions[0].ID, wantActionID)
+	}
+	if behavior.Instruction.ValueString() != "Planned instruction" {
+		t.Fatalf("behavior %q lost its planned instruction: %q", behavior.Name, behavior.Instruction)
+	}
+}
+
+func plannedAgentModel() AiAgentModel {
+	return AiAgentModel{
+		ID: types.StringUnknown(), Name: types.StringValue("Triage"),
+		Instruction: types.StringValue("Classify cards"), Active: types.BoolUnknown(),
+		DataSourceIDs: stringsToSet([]string{"source-1"}),
+		Behaviors: []AiAgentBehaviorModel{
+			plannedBehavior("On create", "card_created", "Move", "move_card"),
+			plannedBehavior("On update", "field_updated", "Update", "update_card"),
+		},
+	}
+}
+
+func plannedBehavior(name, eventID, actionName, actionType string) AiAgentBehaviorModel {
+	return AiAgentBehaviorModel{
+		ID: types.StringUnknown(), Name: types.StringValue(name),
+		EventID: types.StringValue(eventID), Instruction: types.StringValue("Planned instruction"),
+		Actions: []AiAgentActionModel{{
+			ID: types.StringUnknown(), ReferenceID: types.StringValue("ref-" + actionName),
+			Name: types.StringValue(actionName), ActionType: types.StringValue(actionType),
+		}},
+	}
+}
+
+func apiBehavior(id, name, eventID, actionID, actionName, actionType string) pipefy.Behavior {
+	return pipefy.Behavior{
+		ID: id, Name: name, EventID: eventID,
+		ActionParams: pipefy.BehaviorActionRoot{AIBehaviorParams: pipefy.AIBehaviorParams{
+			Instruction: "Planned instruction",
+			Actions: []pipefy.Action{{
+				ID: actionID, ReferenceID: "ref-" + actionName,
+				Name: actionName, ActionType: actionType,
+			}},
+		}},
 	}
 }
 
