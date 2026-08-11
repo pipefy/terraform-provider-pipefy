@@ -3,12 +3,12 @@
 page_title: "pipefy_ai_agent Resource - pipefy"
 subcategory: ""
 description: |-
-  Manages an AI agent and its ordered behaviors for a Pipefy pipe. Behavior configuration is replaced in full on each update. When active is set, status is applied with a separate API call after that update; if the status call fails, the configuration change has already been applied.
+  Manages an AI agent and its ordered behaviors for a Pipefy pipe. Behavior configuration is replaced in full on each update. Updating an agent disables it in Pipefy, so the provider reapplies the configured active status after every update and reads it back to confirm it took; an agent configured inactive keeps the timestamp it was disabled at. If the status call fails, the configuration change has already been applied and only the status is left to retry.
 ---
 
 # pipefy_ai_agent (Resource)
 
-Manages an AI agent and its ordered behaviors for a Pipefy pipe. Behavior configuration is replaced in full on each update. When `active` is set, status is applied with a separate API call after that update; if the status call fails, the configuration change has already been applied.
+Manages an AI agent and its ordered behaviors for a Pipefy pipe. Behavior configuration is replaced in full on each update. Updating an agent disables it in Pipefy, so the provider reapplies the configured `active` status after every update and reads it back to confirm it took; an agent configured inactive keeps the timestamp it was disabled at. If the status call fails, the configuration change has already been applied and only the status is left to retry.
 
 ## Example Usage
 
@@ -126,7 +126,7 @@ resource "pipefy_ai_agent" "triage" {
 
 ### Optional
 
-- `active` (Boolean) Whether the AI agent is active. Applied with a separate status API call after create/update of the agent configuration.
+- `active` (Boolean) Whether the AI agent is active. Reapplied and verified against the API after every create and update, because updating an agent disables it. An agent created with `active = false` is never switched on.
 - `data_source_ids` (Set of String) Knowledge-source IDs managed as the complete unordered agent-level set.
 
 ### Read-Only
