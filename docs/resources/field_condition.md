@@ -89,7 +89,7 @@ resource "pipefy_field_condition" "hide_priority" {
 - `actions` (Attributes List) What happens to each phase field when the condition holds. One entry per target field. (see [below for nested schema](#nestedatt--actions))
 - `condition` (Attributes) The criteria that must hold for the actions to run. (see [below for nested schema](#nestedatt--condition))
 - `name` (String) Name that describes what this condition does
-- `phase_id` (String) The ID of the phase the condition belongs to. Changing it forces a new field condition.
+- `phase_id` (String) The ID of the phase the condition belongs to. Changing it forces a new field condition. Pipefy currently attaches every field condition to the pipe's start form phase whatever phase the request names, so the provider fails the apply when the API reports a different phase rather than recording a phase the condition is not on. See the API reference (https://developers.pipefy.com/reference).
 
 ### Read-Only
 

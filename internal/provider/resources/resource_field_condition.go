@@ -57,7 +57,7 @@ func (r *FieldConditionResource) Schema(ctx context.Context, req resource.Schema
 			},
 			"phase_id": schema.StringAttribute{
 				Required:      true,
-				Description:   "The ID of the phase the condition belongs to. Changing it forces a new field condition.",
+				Description:   "The ID of the phase the condition belongs to. Changing it forces a new field condition. Pipefy currently attaches every field condition to the pipe's start form phase whatever phase the request names, so the provider fails the apply when the API reports a different phase rather than recording a phase the condition is not on. See the API reference (https://developers.pipefy.com/reference).",
 				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"name": schema.StringAttribute{Required: true, Description: "Name that describes what this condition does"},
