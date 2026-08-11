@@ -132,7 +132,7 @@ func (r *FieldConditionResource) Create(ctx context.Context, req resource.Create
 		r.rollbackCreate(ctx, requestedPhase, fc.ID, detail, resp)
 		return
 	}
-	applyFieldConditionToModel(&data, &fc, &resp.Diagnostics)
+	applyFieldConditionToModel(&data, &fc, true, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -158,7 +158,7 @@ func (r *FieldConditionResource) Read(ctx context.Context, req resource.ReadRequ
 		resp.Diagnostics.AddError("read field condition failed", err.Error())
 		return
 	}
-	applyFieldConditionToModel(&data, &fc, &resp.Diagnostics)
+	applyFieldConditionToModel(&data, &fc, false, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -196,7 +196,7 @@ func (r *FieldConditionResource) Update(ctx context.Context, req resource.Update
 		resp.Diagnostics.AddError("update field condition failed", detail)
 		return
 	}
-	applyFieldConditionToModel(&data, &fc, &resp.Diagnostics)
+	applyFieldConditionToModel(&data, &fc, true, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -282,8 +282,16 @@ func (m *FieldConditionModel) actionsInput() []map[string]any {
 }
 
 // applyFieldConditionToModel maps a fetched field condition onto the model.
-func applyFieldConditionToModel(data *FieldConditionModel, fc *pipefy.FieldCondition, diags *diag.Diagnostics) {
-	data.Id = types.StringValue(fc.ID)
+// Every attribute but id is Required, so onlyUnknown leaves Create and Update
+// with just the id to fill; Read passes false to pick up drift.
+func applyFieldConditionToModel(data *FieldConditionModel, fc *pipefy.FieldCondition, onlyUnknown bool, diags *diag.Diagnostics) {
+	if !onlyUnknown || data.Id.IsUnknown() {
+		data.Id = types.StringValue(fc.ID)
+	}
+	if onlyUnknown {
+		return
+	}
+
 	data.Name = types.StringValue(fc.Name)
 	if fc.Phase != nil && fc.Phase.ID != "" {
 		data.PhaseId = types.StringValue(fc.Phase.ID)

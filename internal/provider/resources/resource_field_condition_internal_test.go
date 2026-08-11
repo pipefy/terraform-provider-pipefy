@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 )
 
@@ -39,7 +40,7 @@ func TestApplyFieldConditionToModelCondition(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				var data FieldConditionModel
 				var diags diag.Diagnostics
-				applyFieldConditionToModel(&data, fc, &diags)
+				applyFieldConditionToModel(&data, fc, false, &diags)
 				if diags.HasError() {
 					t.Fatalf("unexpected diagnostics: %v", diags)
 				}
@@ -61,12 +62,45 @@ func TestApplyFieldConditionToModelCondition(t *testing.T) {
 		}
 		var data FieldConditionModel
 		var diags diag.Diagnostics
-		applyFieldConditionToModel(&data, fc, &diags)
+		applyFieldConditionToModel(&data, fc, false, &diags)
 		if !diags.HasError() {
 			t.Fatal("expected an error for a structure_id no expression carries")
 		}
 		if data.Condition != nil {
 			t.Fatalf("expected no condition alongside the error, got %#v", data.Condition)
+		}
+	})
+
+	t.Run("onlyUnknown keeps the planned values a write must return verbatim", func(t *testing.T) {
+		fc := base()
+		fc.Name = "renamed by the API"
+		fc.Actions = []pipefy.FieldConditionAction{
+			{ActionID: "hide", PhaseField: &pipefy.FieldConditionPhaseField{InternalID: "9999"}, WhenEvaluator: boolValue(false)},
+		}
+
+		data := FieldConditionModel{
+			Id:      types.StringUnknown(),
+			PhaseId: types.StringValue("phase_1"),
+			Name:    types.StringValue("rule"),
+			Actions: []fieldConditionActionModel{{
+				Field:     types.StringValue("1002"),
+				WhenTrue:  types.StringValue("show"),
+				WhenFalse: types.StringNull(),
+			}},
+		}
+		var diags diag.Diagnostics
+		applyFieldConditionToModel(&data, fc, true, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags)
+		}
+		if data.Id.ValueString() != "fc_1" {
+			t.Fatalf("expected the unknown id to be filled from the response, got %#v", data.Id)
+		}
+		if data.Name.ValueString() != "rule" {
+			t.Fatalf("expected the planned name to survive the write, got %q", data.Name.ValueString())
+		}
+		if len(data.Actions) != 1 || data.Actions[0].Field.ValueString() != "1002" {
+			t.Fatalf("expected the planned actions to survive the write, got %#v", data.Actions)
 		}
 	})
 }
