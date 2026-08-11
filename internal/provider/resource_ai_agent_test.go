@@ -403,7 +403,7 @@ func aiAgentStateChecks() []statecheck.StateCheck {
 
 func assertAiAgentCRUD(t *testing.T, mock *aiAgentMock) {
 	t.Helper()
-	wantPrefix := []string{"GetPipeUuid", "Create", "Status", "Read"}
+	wantPrefix := []string{"GetPipeUuid", "Create", "Read", "Status", "Read"}
 	if len(mock.operations) < len(wantPrefix) {
 		t.Fatalf("operations = %v, want prefix %v", mock.operations, wantPrefix)
 	}
