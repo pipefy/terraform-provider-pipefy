@@ -71,7 +71,7 @@ func TestApplyFieldConditionToModelCondition(t *testing.T) {
 		}
 	})
 
-	t.Run("onlyUnknown keeps the planned values a write must return verbatim", func(t *testing.T) {
+	t.Run("onlyUnknown keeps planned name and actions", func(t *testing.T) {
 		fc := base()
 		fc.Name = "renamed by the API"
 		fc.Actions = []pipefy.FieldConditionAction{

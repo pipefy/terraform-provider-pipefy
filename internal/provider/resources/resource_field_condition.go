@@ -190,8 +190,7 @@ func (r *FieldConditionResource) Update(ctx context.Context, req resource.Update
 		resp.Diagnostics.AddError("update field condition failed", err.Error())
 		return
 	}
-	// No rollback: the condition already exists and prior state still describes
-	// it, so a later refresh reports whatever phase the API now claims.
+	// No rollback: prior state still describes the existing condition.
 	if detail := phaseMismatchDetail(requestedPhase, &fc); detail != "" {
 		resp.Diagnostics.AddError("update field condition failed", detail)
 		return
@@ -222,13 +221,10 @@ func (r *FieldConditionResource) ImportState(ctx context.Context, req resource.I
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
-// phaseMismatchDetail describes a write that landed on a phase other than the
-// one it asked for. Observed against the live API: createFieldCondition
-// attaches the condition to the pipe's start-form phase whatever phaseId the
-// request carries. Recording either phase misrepresents the result, one
-// breaking the apply and the other claiming a phase the condition is not on,
-// so the write is reported as the failure it is. A response with no phase is
-// nothing to contradict.
+// phaseMismatchDetail is non-empty when the API attached the condition to a
+// phase other than the one requested. Observed live: createFieldCondition
+// always lands on the pipe's start form. An empty/missing phase is nothing to
+// contradict.
 func phaseMismatchDetail(requested string, fc *pipefy.FieldCondition) string {
 	if fc.Phase == nil || fc.Phase.ID == "" || fc.Phase.ID == requested {
 		return ""
@@ -243,10 +239,6 @@ func phaseMismatchDetail(requested string, fc *pipefy.FieldCondition) string {
 	)
 }
 
-// rollbackCreate deletes a condition the provider created but cannot manage,
-// so a failed apply leaves nothing behind for no state to own. It follows the
-// AI agent resource: report the original failure, or the orphan with both
-// failures when the delete fails too.
 func (r *FieldConditionResource) rollbackCreate(ctx context.Context, phaseID, id, detail string, resp *resource.CreateResponse) {
 	if rollbackErr := r.api.FieldConditions.Delete(ctx, phaseID, id); rollbackErr != nil {
 		resp.Diagnostics.AddError(
@@ -282,8 +274,7 @@ func (m *FieldConditionModel) actionsInput() []map[string]any {
 }
 
 // applyFieldConditionToModel maps a fetched field condition onto the model.
-// Every attribute but id is Required, so onlyUnknown leaves Create and Update
-// with just the id to fill; Read passes false to pick up drift.
+// onlyUnknown fills just the unknown id on Create/Update; Read passes false.
 func applyFieldConditionToModel(data *FieldConditionModel, fc *pipefy.FieldCondition, onlyUnknown bool, diags *diag.Diagnostics) {
 	if !onlyUnknown || data.Id.IsUnknown() {
 		data.Id = types.StringValue(fc.ID)
