@@ -98,9 +98,12 @@ func (r *FieldResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
 			},
 			"custom_validation": schema.StringAttribute{
-				Optional:      true,
-				Computed:      true,
-				Description:   "Custom validation rule applied to the field value",
+				Optional: true,
+				Computed: true,
+				Description: "Custom validation rule applied to the field value. The API stores an empty " +
+					"rule as null, and a field last written outside GraphQL can still read back as an empty " +
+					"string; the provider treats empty and null as the same value for this attribute so " +
+					"refresh and apply stay consistent. See the API reference (https://developers.pipefy.com/reference).",
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"index": schema.Float64Attribute{
