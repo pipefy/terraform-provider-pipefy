@@ -63,7 +63,7 @@ func tableFieldMockHandler(st *tableFieldState) http.HandlerFunc {
 			st.description = varStr(gr.Variables, "description")
 			st.help = varStr(gr.Variables, "help")
 			st.minimalView = varBool(gr.Variables, "minimalView")
-			st.customValidation = varStr(gr.Variables, "customValidation")
+			st.customValidation = varCustomValidation(gr.Variables)
 			st.unique = varBool(gr.Variables, "unique")
 			st.optionsJSON = optionsJSON(gr.Variables, "null")
 			st.created = true
@@ -84,8 +84,8 @@ func tableFieldMockHandler(st *tableFieldState) http.HandlerFunc {
 			if p := varBool(gr.Variables, "minimalView"); p != nil {
 				st.minimalView = p
 			}
-			if p := varStr(gr.Variables, "customValidation"); p != nil {
-				st.customValidation = p
+			if _, sent := gr.Variables["customValidation"]; sent {
+				st.customValidation = varCustomValidation(gr.Variables)
 			}
 			if p := varBool(gr.Variables, "unique"); p != nil {
 				st.unique = p

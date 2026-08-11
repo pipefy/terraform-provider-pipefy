@@ -78,6 +78,18 @@ func varStr(vars map[string]any, k string) *string {
 	return nil
 }
 
+// varCustomValidation mirrors the API's custom_validation handling: a written ""
+// is stored as NULL, while description and help keep "" verbatim. The live API
+// applies the coercion per field type, short_text being the one exception; the
+// mock coerces for every type, so tests that need it avoid short_text.
+func varCustomValidation(vars map[string]any) *string {
+	v, ok := vars["customValidation"].(string)
+	if !ok || v == "" {
+		return nil
+	}
+	return &v
+}
+
 func varNum(vars map[string]any, k string) *float64 {
 	if v, ok := vars[k].(float64); ok {
 		return &v
@@ -122,7 +134,7 @@ func fieldMockHandler(st *fieldState) http.HandlerFunc {
 			st.help = varStr(gr.Variables, "help")
 			st.editable = varBool(gr.Variables, "editable")
 			st.minimalView = varBool(gr.Variables, "minimalView")
-			st.customValidation = varStr(gr.Variables, "customValidation")
+			st.customValidation = varCustomValidation(gr.Variables)
 			st.index = varNum(gr.Variables, "index")
 			if st.index == nil {
 				def := 1.5
@@ -150,8 +162,8 @@ func fieldMockHandler(st *fieldState) http.HandlerFunc {
 			if p := varBool(gr.Variables, "minimalView"); p != nil {
 				st.minimalView = p
 			}
-			if p := varStr(gr.Variables, "customValidation"); p != nil {
-				st.customValidation = p
+			if _, sent := gr.Variables["customValidation"]; sent {
+				st.customValidation = varCustomValidation(gr.Variables)
 			}
 			if p := varNum(gr.Variables, "index"); p != nil {
 				st.index = p
