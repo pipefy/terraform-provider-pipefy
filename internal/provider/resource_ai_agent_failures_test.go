@@ -180,8 +180,6 @@ func TestUnit_AiAgentResource_OmittedFieldValueNoPerpetualDiff(t *testing.T) {
 	}))
 }
 
-// A status mutation reporting success without changing anything must surface as
-// an error, not as state claiming the agent is active.
 func TestUnit_AiAgentResource_UpdateReportsUnenforcedStatus(t *testing.T) {
 	mock := &aiAgentMock{}
 	server := newAiAgentServer(mock)

@@ -121,7 +121,6 @@ func (mock *aiAgentMock) create(variables map[string]any) string {
 	mock.behaviors, _ = agent["behaviors"].([]any)
 	mock.dataSourceIDs, _ = agent["dataSourceIds"].([]any)
 	mock.referenceHistory = append(mock.referenceHistory, actionReferences(mock.behaviors))
-	// createAiAgent returns a disabled agent, honouring an explicit disabledAt.
 	mock.disable(inputDisabledAt(agent))
 	return `{"data":{"createAiAgent":{"agent":{"uuid":"agent-uuid"}}}}`
 }
@@ -136,8 +135,6 @@ func (mock *aiAgentMock) update(variables map[string]any) string {
 	mock.behaviors, _ = agent["behaviors"].([]any)
 	mock.dataSourceIDs, _ = agent["dataSourceIds"].([]any)
 	mock.referenceHistory = append(mock.referenceHistory, actionReferences(mock.behaviors))
-	// updateAiAgent disables the agent on every call, keeping an explicit
-	// disabledAt verbatim and stamping "now" otherwise.
 	mock.disable(inputDisabledAt(agent))
 	if mock.nullAfterUpdate {
 		mock.readNull = true
@@ -381,7 +378,16 @@ func TestUnit_AiAgentResource_CRUD(t *testing.T) {
 	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{
 		{Config: first, ConfigStateChecks: aiAgentStateChecks()},
 		{Config: first},
-		{Config: updated},
+		{
+			Config:            updated,
+			ConfigStateChecks: aiAgentActiveCheck(false),
+			Check: func(*terraform.State) error {
+				if mock.active {
+					return fmt.Errorf("agent left active after deactivate update")
+				}
+				return nil
+			},
+		},
 	}))
 	assertAiAgentCRUD(t, mock)
 }
@@ -441,8 +447,6 @@ func aiAgentActiveCheck(active bool) []statecheck.StateCheck {
 	)}
 }
 
-// Without the status reapplied after each update, the second apply fails with
-// "inconsistent result after apply: .active" and leaves the agent switched off.
 func TestUnit_AiAgentResource_ActiveSurvivesRepeatedUpdates(t *testing.T) {
 	mock := &aiAgentMock{}
 	server := newAiAgentServer(mock)
@@ -465,7 +469,6 @@ func TestUnit_AiAgentResource_ActiveSurvivesRepeatedUpdates(t *testing.T) {
 	resource.UnitTest(t, aiAgentTestCase(steps))
 }
 
-// An agent configured inactive keeps the disabledAt it was created with.
 func TestUnit_AiAgentResource_InactiveUpdatePreservesDisabledAt(t *testing.T) {
 	mock := &aiAgentMock{}
 	server := newAiAgentServer(mock)
@@ -494,11 +497,78 @@ func TestUnit_AiAgentResource_InactiveUpdatePreservesDisabledAt(t *testing.T) {
 			},
 		},
 	}))
-	// The payload disables it, so nothing switches it on and off again.
 	for _, operation := range mock.operations {
 		if operation == "Status" {
 			t.Fatalf("status mutation called for an inactive agent: %v", mock.operations)
 		}
+	}
+}
+
+func TestUnit_AiAgentResource_InactiveToActive(t *testing.T) {
+	mock := &aiAgentMock{}
+	server := newAiAgentServer(mock)
+	defer server.Close()
+	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{
+		{
+			Config:            aiAgentConfigWithInstruction(server.URL, "false", "Classify cards"),
+			ConfigStateChecks: aiAgentActiveCheck(false),
+		},
+		{
+			Config:            aiAgentConfigWithInstruction(server.URL, "true", "Classify cards v2"),
+			ConfigStateChecks: aiAgentActiveCheck(true),
+			Check: func(*terraform.State) error {
+				if !mock.active {
+					return fmt.Errorf("agent left disabled after activate update (disabledAt %q)", mock.disabledAt)
+				}
+				return nil
+			},
+		},
+	}))
+	sawStatus := false
+	for _, operation := range mock.operations {
+		if operation == "Status" {
+			sawStatus = true
+			break
+		}
+	}
+	if !sawStatus {
+		t.Fatalf("status mutation missing on inactive→active: %v", mock.operations)
+	}
+}
+
+func TestUnit_AiAgentResource_OmittedActiveAfterPriorTrueReappliesStatus(t *testing.T) {
+	mock := &aiAgentMock{}
+	server := newAiAgentServer(mock)
+	defer server.Close()
+	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{
+		{
+			Config:            aiAgentConfigWithInstruction(server.URL, "true", "Classify cards"),
+			ConfigStateChecks: aiAgentActiveCheck(true),
+		},
+		{
+			Config:            aiAgentConfigWithInstruction(server.URL, "", "Classify cards v2"),
+			ConfigStateChecks: aiAgentActiveCheck(true),
+			Check: func(*terraform.State) error {
+				if !mock.active {
+					return fmt.Errorf("omitted active left agent disabled after update (disabledAt %q)", mock.disabledAt)
+				}
+				return nil
+			},
+		},
+	}))
+	statusAfterUpdate := 0
+	sawUpdate := false
+	for _, operation := range mock.operations {
+		if operation == "Update" {
+			sawUpdate = true
+			continue
+		}
+		if sawUpdate && operation == "Status" {
+			statusAfterUpdate++
+		}
+	}
+	if !sawUpdate || statusAfterUpdate == 0 {
+		t.Fatalf("expected Status after Update when active omitted: %v", mock.operations)
 	}
 }
 
