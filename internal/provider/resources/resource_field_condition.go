@@ -118,13 +118,18 @@ func (r *FieldConditionResource) Create(ctx context.Context, req resource.Create
 	input["condition"] = data.Condition.Input()
 	input["actions"] = data.actionsInput()
 
-	fc, err := r.api.FieldConditions.Create(ctx, data.PhaseId.ValueString(), input)
+	requestedPhase := data.PhaseId.ValueString()
+	fc, err := r.api.FieldConditions.Create(ctx, requestedPhase, input)
 	if errors.Is(err, pipefy.ErrNoFieldCondition) {
 		resp.Diagnostics.AddError("create field condition failed", "the API returned no field condition")
 		return
 	}
 	if err != nil {
 		resp.Diagnostics.AddError("create field condition failed", err.Error())
+		return
+	}
+	if detail := phaseMismatchDetail(requestedPhase, &fc); detail != "" {
+		r.rollbackCreate(ctx, requestedPhase, fc.ID, detail, resp)
 		return
 	}
 	applyFieldConditionToModel(&data, &fc, &resp.Diagnostics)
@@ -175,13 +180,20 @@ func (r *FieldConditionResource) Update(ctx context.Context, req resource.Update
 	input["condition"] = data.Condition.Input()
 	input["actions"] = data.actionsInput()
 
-	fc, err := r.api.FieldConditions.Update(ctx, data.PhaseId.ValueString(), input)
+	requestedPhase := data.PhaseId.ValueString()
+	fc, err := r.api.FieldConditions.Update(ctx, requestedPhase, input)
 	if errors.Is(err, pipefy.ErrNoFieldCondition) {
 		resp.Diagnostics.AddError("update field condition failed", "the API returned no field condition")
 		return
 	}
 	if err != nil {
 		resp.Diagnostics.AddError("update field condition failed", err.Error())
+		return
+	}
+	// No rollback: the condition already exists and prior state still describes
+	// it, so a later refresh reports whatever phase the API now claims.
+	if detail := phaseMismatchDetail(requestedPhase, &fc); detail != "" {
+		resp.Diagnostics.AddError("update field condition failed", detail)
 		return
 	}
 	applyFieldConditionToModel(&data, &fc, &resp.Diagnostics)
@@ -210,6 +222,43 @@ func (r *FieldConditionResource) ImportState(ctx context.Context, req resource.I
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
+// phaseMismatchDetail describes a write that landed on a phase other than the
+// one it asked for. Observed against the live API: createFieldCondition
+// attaches the condition to the pipe's start-form phase whatever phaseId the
+// request carries. Recording either phase misrepresents the result, one
+// breaking the apply and the other claiming a phase the condition is not on,
+// so the write is reported as the failure it is. A response with no phase is
+// nothing to contradict.
+func phaseMismatchDetail(requested string, fc *pipefy.FieldCondition) string {
+	if fc.Phase == nil || fc.Phase.ID == "" || fc.Phase.ID == requested {
+		return ""
+	}
+	return fmt.Sprintf(
+		"the field condition was requested on phase %s, but the API attached it to phase %s. "+
+			"Pipefy currently attaches every field condition to the pipe's start form phase, "+
+			"whatever phase the request names, so a condition on any other phase cannot be kept "+
+			"in sync. Point phase_id at the pipe's start form phase (start_form_phase_id on the "+
+			"pipefy_pipe resource or data source) until the API honors the requested phase.",
+		requested, fc.Phase.ID,
+	)
+}
+
+// rollbackCreate deletes a condition the provider created but cannot manage,
+// so a failed apply leaves nothing behind for no state to own. It follows the
+// AI agent resource: report the original failure, or the orphan with both
+// failures when the delete fails too.
+func (r *FieldConditionResource) rollbackCreate(ctx context.Context, phaseID, id, detail string, resp *resource.CreateResponse) {
+	if rollbackErr := r.api.FieldConditions.Delete(ctx, phaseID, id); rollbackErr != nil {
+		resp.Diagnostics.AddError(
+			"create field condition failed and rollback failed",
+			fmt.Sprintf("field condition %q is orphaned: %s; rollback failed: %v", id, detail, rollbackErr),
+		)
+		return
+	}
+	resp.State.RemoveResource(ctx)
+	resp.Diagnostics.AddError("create field condition failed", detail)
+}
+
 func (m *FieldConditionModel) actionsInput() []map[string]any {
 	var actions []map[string]any
 	for _, a := range m.Actions {
@@ -236,11 +285,6 @@ func (m *FieldConditionModel) actionsInput() []map[string]any {
 func applyFieldConditionToModel(data *FieldConditionModel, fc *pipefy.FieldCondition, diags *diag.Diagnostics) {
 	data.Id = types.StringValue(fc.ID)
 	data.Name = types.StringValue(fc.Name)
-	// Observed against the live API: the field condition is associated with
-	// the pipe's start-form phase regardless of the phaseId passed to
-	// createFieldCondition, so fc.Phase.Id can legitimately differ from the
-	// phase_id the config requested. This assigns whatever the API reports
-	// rather than trusting the request, since that's the actual owning phase.
 	if fc.Phase != nil && fc.Phase.ID != "" {
 		data.PhaseId = types.StringValue(fc.Phase.ID)
 	}
