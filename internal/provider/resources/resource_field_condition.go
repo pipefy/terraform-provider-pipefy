@@ -274,18 +274,22 @@ func (m *FieldConditionModel) actionsInput() []map[string]any {
 }
 
 // applyFieldConditionToModel maps a fetched field condition onto the model.
-// onlyUnknown fills just the unknown id on Create/Update; Read passes false.
+// onlyUnknown fills attributes the plan could not know, gated per field the
+// same way pipe and table do; Read passes false.
 func applyFieldConditionToModel(data *FieldConditionModel, fc *pipefy.FieldCondition, onlyUnknown bool, diags *diag.Diagnostics) {
 	if !onlyUnknown || data.Id.IsUnknown() {
 		data.Id = types.StringValue(fc.ID)
 	}
+	if !onlyUnknown || data.Name.IsUnknown() {
+		data.Name = types.StringValue(fc.Name)
+	}
+	if !onlyUnknown || data.PhaseId.IsUnknown() {
+		if fc.Phase != nil && fc.Phase.ID != "" {
+			data.PhaseId = types.StringValue(fc.Phase.ID)
+		}
+	}
 	if onlyUnknown {
 		return
-	}
-
-	data.Name = types.StringValue(fc.Name)
-	if fc.Phase != nil && fc.Phase.ID != "" {
-		data.PhaseId = types.StringValue(fc.Phase.ID)
 	}
 
 	cond, err := conditionschema.FromPayload(fc.Condition)

@@ -74,6 +74,7 @@ func TestApplyFieldConditionToModelCondition(t *testing.T) {
 	t.Run("onlyUnknown keeps planned name and actions", func(t *testing.T) {
 		fc := base()
 		fc.Name = "renamed by the API"
+		fc.Phase = &pipefy.FieldConditionPhase{ID: "phase_2"}
 		fc.Actions = []pipefy.FieldConditionAction{
 			{ActionID: "hide", PhaseField: &pipefy.FieldConditionPhaseField{InternalID: "9999"}, WhenEvaluator: boolValue(false)},
 		}
@@ -99,8 +100,36 @@ func TestApplyFieldConditionToModelCondition(t *testing.T) {
 		if data.Name.ValueString() != "rule" {
 			t.Fatalf("expected the planned name to survive the write, got %q", data.Name.ValueString())
 		}
+		if data.PhaseId.ValueString() != "phase_1" {
+			t.Fatalf("expected the planned phase_id to survive the write, got %q", data.PhaseId.ValueString())
+		}
 		if len(data.Actions) != 1 || data.Actions[0].Field.ValueString() != "1002" {
 			t.Fatalf("expected the planned actions to survive the write, got %#v", data.Actions)
+		}
+	})
+
+	t.Run("onlyUnknown fills unknown phase_id", func(t *testing.T) {
+		fc := base()
+		data := FieldConditionModel{
+			Id:      types.StringUnknown(),
+			PhaseId: types.StringUnknown(),
+			Name:    types.StringValue("rule"),
+			Actions: []fieldConditionActionModel{{
+				Field:     types.StringValue("1002"),
+				WhenTrue:  types.StringValue("show"),
+				WhenFalse: types.StringNull(),
+			}},
+		}
+		var diags diag.Diagnostics
+		applyFieldConditionToModel(&data, fc, true, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags)
+		}
+		if data.PhaseId.ValueString() != "phase_1" {
+			t.Fatalf("expected the unknown phase_id to be filled from the response, got %#v", data.PhaseId)
+		}
+		if data.Name.ValueString() != "rule" {
+			t.Fatalf("expected the planned name to survive the write, got %q", data.Name.ValueString())
 		}
 	})
 }
