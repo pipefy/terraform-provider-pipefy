@@ -6,14 +6,17 @@ package pipefy
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
 
 	"github.com/pipefy/terraform-provider-pipefy/internal/locks"
 )
 
 // fieldConditionSelection references fields by their internal_id: expressions
 // carry field_address and actions carry phaseField.internal_id, both of which
-// round-trip against the internal_id sent on writes.
-const fieldConditionSelection = "id name phase{ id } " +
+// round-trip against the internal_id sent on writes. phase.repo_id is the pipe
+// that owns the condition; FieldCondition has no pipe field of its own.
+const fieldConditionSelection = "id name phase{ id repo_id } " +
 	"condition{ " + conditionSelection + " } " +
 	"actions{ actionId phaseField{ internal_id } whenEvaluator }"
 
@@ -30,7 +33,7 @@ const deleteFieldConditionMutation = "mutation DeleteFieldCondition_tf($id:ID!){
 // resource from state, which is the wrong answer for a write that failed.
 var ErrNoFieldCondition = errors.New("the API returned no field condition")
 
-// FieldCondition is show/hide logic for a phase form.
+// FieldCondition is show/hide logic for fields in a pipe.
 type FieldCondition struct {
 	ID        string                 `json:"id"`
 	Name      string                 `json:"name"`
@@ -39,9 +42,19 @@ type FieldCondition struct {
 	Actions   []FieldConditionAction `json:"actions"`
 }
 
-// FieldConditionPhase is the phase the API reports as owning the condition.
+// FieldConditionPhase is the phase the API lists the condition under.
+// RepoID is the id of the owning pipe.
 type FieldConditionPhase struct {
-	ID string `json:"id"`
+	ID     string `json:"id"`
+	RepoID int64  `json:"repo_id"`
+}
+
+// PipeID is the owning pipe, or empty when the API omitted a usable repo_id.
+func (p *FieldConditionPhase) PipeID() string {
+	if p == nil || p.RepoID == 0 {
+		return ""
+	}
+	return strconv.FormatInt(p.RepoID, 10)
 }
 
 // FieldConditionAction is one action the condition runs against a phase field.
@@ -58,31 +71,23 @@ type FieldConditionPhaseField struct {
 	InternalID string `json:"internal_id"`
 }
 
-// FieldConditionService reads and writes phase form conditions.
+// FieldConditionService reads and writes field conditions.
 type FieldConditionService struct{ c *Client }
 
-// lockPhaseRepo serializes on the repo owning phaseID. A nil phase and a zero
-// repo id both render as errPhaseRepoIDUnresolved, so a caller cannot tell them
-// apart.
-func (s *FieldConditionService) lockPhaseRepo(ctx context.Context, phaseID string) (func(), error) {
-	repoID, err := s.c.phaseRepoID(ctx, phaseID)
-	if errors.Is(err, errPhaseUnresolved) {
-		err = errPhaseRepoIDUnresolved
+func lockFieldConditionPipe(pipeID string) (func(), error) {
+	if pipeID == "" {
+		return nil, fmt.Errorf("empty pipe_id, expected a Pipefy pipe ID")
 	}
-	if err != nil {
-		return nil, err
-	}
-	return locks.LockRepo(repoID), nil
+	return locks.LockRepo(pipeID), nil
 }
 
-// Create adds a condition to a phase form, serializing on the phase's repo the
-// same way a phase field does. The input stays a map because the resource builds
-// it from Terraform values.
+// Create adds a condition, serializing on the pipe. The input stays a map
+// because the resource builds it from Terraform values.
 //
 // Note that createFieldCondition takes phaseId while updateFieldCondition takes
 // phase_id. That inconsistency is the API's, and the caller spells each one.
-func (s *FieldConditionService) Create(ctx context.Context, phaseID string, input map[string]any) (FieldCondition, error) {
-	unlock, err := s.lockPhaseRepo(ctx, phaseID)
+func (s *FieldConditionService) Create(ctx context.Context, pipeID string, input map[string]any) (FieldCondition, error) {
+	unlock, err := lockFieldConditionPipe(pipeID)
 	if err != nil {
 		return FieldCondition{}, err
 	}
@@ -117,9 +122,8 @@ func (s *FieldConditionService) Get(ctx context.Context, id string) (FieldCondit
 }
 
 // Update replaces a condition's criteria and actions, serializing like Create.
-// Unlike a phase field's Update, this one does take the lock.
-func (s *FieldConditionService) Update(ctx context.Context, phaseID string, input map[string]any) (FieldCondition, error) {
-	unlock, err := s.lockPhaseRepo(ctx, phaseID)
+func (s *FieldConditionService) Update(ctx context.Context, pipeID string, input map[string]any) (FieldCondition, error) {
+	unlock, err := lockFieldConditionPipe(pipeID)
 	if err != nil {
 		return FieldCondition{}, err
 	}
@@ -139,19 +143,11 @@ func (s *FieldConditionService) Update(ctx context.Context, phaseID string, inpu
 	return *out.UpdateFieldCondition.FieldCondition, nil
 }
 
-// Delete removes a condition. An unresolvable phase is not an error here, unlike
-// in Create and Update: a condition whose phase was deleted out of band has
-// nothing left to lock and must still be removable rather than stuck in state. A
-// failure of the lookup query itself still is an error.
-func (s *FieldConditionService) Delete(ctx context.Context, phaseID, id string) error {
-	repoID, err := s.c.phaseRepoID(ctx, phaseID)
-	switch {
-	case errors.Is(err, errPhaseUnresolved), errors.Is(err, errPhaseRepoIDUnresolved):
-		// No repo to lock. Delete anyway.
-	case err != nil:
-		return err
-	default:
-		unlock := locks.LockRepo(repoID)
+// Delete removes a condition. An empty pipeID skips the lock so a condition
+// whose pipe is gone from state can still be deleted rather than stuck.
+func (s *FieldConditionService) Delete(ctx context.Context, pipeID, id string) error {
+	if pipeID != "" {
+		unlock := locks.LockRepo(pipeID)
 		defer unlock()
 	}
 

@@ -26,8 +26,8 @@ resource "pipefy_field" "details" {
 # Show the "Please describe" field only when "Request type" is "Other"
 # AND "Priority" is "High". all_of ANDs its comparisons together.
 resource "pipefy_field_condition" "show_details" {
-  phase_id = pipefy_pipe.example.start_form_phase_id
-  name     = "Show details for high-priority Other requests"
+  pipe_id = pipefy_pipe.example.id
+  name    = "Show details for high-priority Other requests"
 
   condition = {
     all_of = [
@@ -45,8 +45,8 @@ resource "pipefy_field_condition" "show_details" {
 # "Request type" is "Standard" OR "Priority" itself is "Low". any_of ORs its
 # entries together.
 resource "pipefy_field_condition" "hide_priority" {
-  phase_id = pipefy_pipe.example.start_form_phase_id
-  name     = "Hide priority for standard or low requests"
+  pipe_id = pipefy_pipe.example.id
+  name    = "Hide priority for standard or low requests"
 
   condition = {
     any_of = [

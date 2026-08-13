@@ -21,7 +21,7 @@ func TestApplyFieldConditionToModelCondition(t *testing.T) {
 		return &pipefy.FieldCondition{
 			ID:    "fc_1",
 			Name:  "rule",
-			Phase: &pipefy.FieldConditionPhase{ID: "phase_1"},
+			Phase: &pipefy.FieldConditionPhase{ID: "phase_1", RepoID: 123},
 			Actions: []pipefy.FieldConditionAction{
 				{ActionID: "show", PhaseField: &pipefy.FieldConditionPhaseField{InternalID: "1002"}, WhenEvaluator: boolValue(true)},
 			},
@@ -81,6 +81,7 @@ func TestApplyFieldConditionToModelCondition(t *testing.T) {
 
 		data := FieldConditionModel{
 			Id:      types.StringUnknown(),
+			PipeId:  types.StringValue("123"),
 			PhaseId: types.StringValue("phase_1"),
 			Name:    types.StringValue("rule"),
 			Actions: []fieldConditionActionModel{{
@@ -108,10 +109,11 @@ func TestApplyFieldConditionToModelCondition(t *testing.T) {
 		}
 	})
 
-	t.Run("onlyUnknown fills unknown phase_id", func(t *testing.T) {
+	t.Run("onlyUnknown fills unknown phase_id and pipe_id", func(t *testing.T) {
 		fc := base()
 		data := FieldConditionModel{
 			Id:      types.StringUnknown(),
+			PipeId:  types.StringUnknown(),
 			PhaseId: types.StringUnknown(),
 			Name:    types.StringValue("rule"),
 			Actions: []fieldConditionActionModel{{
@@ -127,6 +129,9 @@ func TestApplyFieldConditionToModelCondition(t *testing.T) {
 		}
 		if data.PhaseId.ValueString() != "phase_1" {
 			t.Fatalf("expected the unknown phase_id to be filled from the response, got %#v", data.PhaseId)
+		}
+		if data.PipeId.ValueString() != "123" {
+			t.Fatalf("expected the unknown pipe_id to be filled from the response, got %#v", data.PipeId)
 		}
 		if data.Name.ValueString() != "rule" {
 			t.Fatalf("expected the planned name to survive the write, got %q", data.Name.ValueString())

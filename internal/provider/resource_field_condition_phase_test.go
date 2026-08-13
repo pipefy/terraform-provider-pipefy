@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -20,30 +19,13 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/tfversion"
 )
 
-// fieldConditionPhaseState lets each GraphQL op report its own owning phase.
 type fieldConditionPhaseState struct {
-	name        string
-	createPhase string
-	updatePhase string
-	readPhase   string
-	echoPhase   bool
-	deleteFails bool
-	created     int
-	deleted     int
-}
-
-func fieldConditionRequestedPhase(gr gqlReq) string {
-	v, ok := gr.Variables["input"].(map[string]any)
-	if !ok {
-		return ""
-	}
-	if p, ok := v["phaseId"].(string); ok {
-		return p
-	}
-	if p, ok := v["phase_id"].(string); ok {
-		return p
-	}
-	return ""
+	name          string
+	createPhase   string
+	startForm     string
+	createPhaseId string
+	created       int
+	pipeID        string
 }
 
 func fieldConditionPhaseHandler(st *fieldConditionPhaseState) http.HandlerFunc {
@@ -63,53 +45,55 @@ func fieldConditionPhaseHandler(st *fieldConditionPhaseState) http.HandlerFunc {
 			if n, ok := v["name"].(string); ok {
 				st.name = n
 			}
+			if p, ok := v["phaseId"].(string); ok {
+				st.createPhaseId = p
+			}
 		}
 
 		q := gr.Query
 		switch {
+		case strings.Contains(q, "GetPipe_tf"):
+			pipeID := "123"
+			if id, ok := gr.Variables["id"].(string); ok && id != "" {
+				pipeID = id
+			}
+			st.pipeID = pipeID
+			start := st.startForm
+			if start == "" {
+				start = "phase_1"
+			}
+			_, _ = io.WriteString(w, `{"data":{"pipe":{"id":"`+pipeID+`","name":"Ops","startFormPhaseId":"`+start+`","organization":{"id":"1"}}}}`)
 		case strings.Contains(q, "createFieldCondition"):
 			st.created++
 			phase := st.createPhase
-			if st.echoPhase {
-				if requested := fieldConditionRequestedPhase(gr); requested != "" {
-					phase = requested
-				}
-				st.readPhase = phase
-				st.updatePhase = phase
+			if phase == "" {
+				phase = "phase_1"
 			}
-			_, _ = io.WriteString(w, `{"data":{"createFieldCondition":{"fieldCondition":`+fieldConditionBodyOnPhase(st.name, phase)+`}}}`)
+			_, _ = io.WriteString(w, `{"data":{"createFieldCondition":{"fieldCondition":`+st.body(phase)+`}}}`)
 		case strings.Contains(q, "updateFieldCondition"):
-			phase := st.updatePhase
-			if st.echoPhase {
-				if requested := fieldConditionRequestedPhase(gr); requested != "" {
-					phase = requested
-				}
-				st.readPhase = phase
-			}
-			_, _ = io.WriteString(w, `{"data":{"updateFieldCondition":{"fieldCondition":`+fieldConditionBodyOnPhase(st.name, phase)+`}}}`)
+			_, _ = io.WriteString(w, `{"data":{"updateFieldCondition":{"fieldCondition":`+st.body(st.createPhase)+`}}}`)
 		case strings.Contains(q, "deleteFieldCondition"):
-			st.deleted++
-			if st.deleteFails {
-				_, _ = io.WriteString(w, `{"errors":[{"message":"the phase is locked"}]}`)
-				return
-			}
 			_, _ = io.WriteString(w, `{"data":{"deleteFieldCondition":{"success":true}}}`)
-		case strings.Contains(q, "repo_id"):
-			_, _ = io.WriteString(w, `{"data":{"phase":{"repo_id":123}}}`)
 		case strings.Contains(q, "fieldCondition("):
-			_, _ = io.WriteString(w, `{"data":{"fieldCondition":`+fieldConditionBodyOnPhase(st.name, st.readPhase)+`}}`)
+			_, _ = io.WriteString(w, `{"data":{"fieldCondition":`+st.body(st.createPhase)+`}}`)
 		default:
 			_, _ = io.WriteString(w, `{"data":{}}`)
 		}
 	}
 }
 
-// fieldConditionPhaseConfig requests phase_2 (relocation mocks may answer phase_1).
-func fieldConditionPhaseConfig(endpoint, name string) string {
-	return fieldConditionPhaseConfigOn(endpoint, name, "phase_2")
+func (st *fieldConditionPhaseState) body(phase string) string {
+	repo := st.pipeID
+	if repo == "" {
+		repo = "123"
+	}
+	if phase == "" {
+		phase = "phase_1"
+	}
+	return fieldConditionBodyOnPhaseRepo(st.name, phase, repo)
 }
 
-func fieldConditionPhaseConfigOn(endpoint, name, phaseID string) string {
+func fieldConditionPipeConfig(endpoint, pipeID string) string {
 	return `
 	provider "pipefy" {
 		endpoint = "` + endpoint + `"
@@ -117,8 +101,8 @@ func fieldConditionPhaseConfigOn(endpoint, name, phaseID string) string {
 	}
 
 	resource "pipefy_field_condition" "test" {
-		phase_id = "` + phaseID + `"
-		name     = "` + name + `"
+		pipe_id = "` + pipeID + `"
+		name    = "Show details when type is Other"
 
 		condition = {
 			all_of = [
@@ -140,10 +124,10 @@ func fieldConditionPhaseConfigOn(endpoint, name, phaseID string) string {
 	`
 }
 
-// TestUnit_FieldConditionResource_CreatePhaseMismatchRollsBack: create relocates
-// to the start form; provider deletes the condition and fails with both phases.
-func TestUnit_FieldConditionResource_CreatePhaseMismatchRollsBack(t *testing.T) {
-	st := &fieldConditionPhaseState{createPhase: "phase_1", updatePhase: "phase_1", readPhase: "phase_1"}
+// TestUnit_FieldConditionResource_CreateRecordsListedPhase: create sends the
+// pipe's start form as phaseId and state records the phase the API lists.
+func TestUnit_FieldConditionResource_CreateRecordsListedPhase(t *testing.T) {
+	st := &fieldConditionPhaseState{startForm: "phase_start", createPhase: "phase_start"}
 	srv := httptest.NewServer(fieldConditionPhaseHandler(st))
 	defer srv.Close()
 
@@ -154,8 +138,51 @@ func TestUnit_FieldConditionResource_CreatePhaseMismatchRollsBack(t *testing.T) 
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config:      fieldConditionPhaseConfig(srv.URL, "Show details when type is Other"),
-				ExpectError: regexp.MustCompile(`(?s)phase_2.*phase_1.*start form`),
+				Config: fieldConditionPipeConfig(srv.URL, "123"),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(
+						"pipefy_field_condition.test",
+						tfjsonpath.New("pipe_id"),
+						knownvalue.StringExact("123"),
+					),
+					statecheck.ExpectKnownValue(
+						"pipefy_field_condition.test",
+						tfjsonpath.New("phase_id"),
+						knownvalue.StringExact("phase_start"),
+					),
+				},
+			},
+		},
+	})
+
+	if st.createPhaseId != "phase_start" {
+		t.Fatalf("expected create to send the start form phase, got %q", st.createPhaseId)
+	}
+}
+
+// TestUnit_FieldConditionResource_RelocationIsRecorded: createFieldCondition
+// attaches the condition to a different phase than the start form; Terraform
+// records that phase instead of failing the apply.
+func TestUnit_FieldConditionResource_RelocationIsRecorded(t *testing.T) {
+	st := &fieldConditionPhaseState{startForm: "phase_start", createPhase: "phase_listed"}
+	srv := httptest.NewServer(fieldConditionPhaseHandler(st))
+	defer srv.Close()
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
+			tfversion.SkipBelow(tfversion.Version1_8_0),
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fieldConditionPipeConfig(srv.URL, "123"),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(
+						"pipefy_field_condition.test",
+						tfjsonpath.New("phase_id"),
+						knownvalue.StringExact("phase_listed"),
+					),
+				},
 			},
 		},
 	})
@@ -163,15 +190,13 @@ func TestUnit_FieldConditionResource_CreatePhaseMismatchRollsBack(t *testing.T) 
 	if st.created != 1 {
 		t.Fatalf("expected exactly 1 createFieldCondition, got %d", st.created)
 	}
-	if st.deleted != 1 {
-		t.Fatalf("expected the rollback to delete the condition exactly once, got %d deletes", st.deleted)
+	if st.createPhaseId != "phase_start" {
+		t.Fatalf("expected create to send the start form phase, got %q", st.createPhaseId)
 	}
 }
 
-// TestUnit_FieldConditionResource_CreatePhaseMismatchRollbackFails: orphan error
-// names the phase mismatch and the failed delete.
-func TestUnit_FieldConditionResource_CreatePhaseMismatchRollbackFails(t *testing.T) {
-	st := &fieldConditionPhaseState{createPhase: "phase_1", updatePhase: "phase_1", readPhase: "phase_1", deleteFails: true}
+func TestUnit_FieldConditionResource_PipeIdChangeIsReplace(t *testing.T) {
+	st := &fieldConditionPhaseState{startForm: "phase_1", createPhase: "phase_1"}
 	srv := httptest.NewServer(fieldConditionPhaseHandler(st))
 	defer srv.Close()
 
@@ -182,106 +207,16 @@ func TestUnit_FieldConditionResource_CreatePhaseMismatchRollbackFails(t *testing
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config:      fieldConditionPhaseConfig(srv.URL, "Show details when type is Other"),
-				ExpectError: regexp.MustCompile(`(?s)orphaned.*phase_2.*rollback failed.*the phase is locked`),
-			},
-		},
-	})
-
-	if st.deleted != 1 {
-		t.Fatalf("expected exactly 1 rollback delete attempt, got %d", st.deleted)
-	}
-}
-
-// TestUnit_FieldConditionResource_UpdatePhaseMismatchFails: update relocates the
-// phase; apply fails without rollback and the same resource stays managed.
-func TestUnit_FieldConditionResource_UpdatePhaseMismatchFails(t *testing.T) {
-	st := &fieldConditionPhaseState{createPhase: "phase_2", updatePhase: "phase_2", readPhase: "phase_2"}
-	srv := httptest.NewServer(fieldConditionPhaseHandler(st))
-	defer srv.Close()
-
-	resource.UnitTest(t, resource.TestCase{
-		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
-			tfversion.SkipBelow(tfversion.Version1_8_0),
-		},
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config: fieldConditionPhaseConfig(srv.URL, "Show details when type is Other"),
-				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue(
-						"pipefy_field_condition.test",
-						tfjsonpath.New("phase_id"),
-						knownvalue.StringExact("phase_2"),
-					),
-				},
+				Config: fieldConditionPipeConfig(srv.URL, "123"),
 			},
 			{
-				PreConfig:   func() { st.updatePhase = "phase_1" },
-				Config:      fieldConditionPhaseConfig(srv.URL, "Renamed condition"),
-				ExpectError: regexp.MustCompile(`(?s)phase_2.*phase_1.*start form`),
-			},
-			{
-				PreConfig: func() { st.updatePhase = "phase_2" },
-				Config:    fieldConditionPhaseConfig(srv.URL, "Renamed condition"),
-				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue(
-						"pipefy_field_condition.test",
-						tfjsonpath.New("name"),
-						knownvalue.StringExact("Renamed condition"),
-					),
-				},
-			},
-		},
-	})
-
-	if st.created != 1 {
-		t.Fatalf("expected the failed update to keep the condition under management, got %d creates", st.created)
-	}
-}
-
-// TestUnit_FieldConditionResource_PhaseIdChangeIsUpdate: changing phase_id
-// plans an update, not a replacement, so a later mismatch can fail in place.
-func TestUnit_FieldConditionResource_PhaseIdChangeIsUpdate(t *testing.T) {
-	st := &fieldConditionPhaseState{echoPhase: true}
-	srv := httptest.NewServer(fieldConditionPhaseHandler(st))
-	defer srv.Close()
-
-	resource.UnitTest(t, resource.TestCase{
-		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
-			tfversion.SkipBelow(tfversion.Version1_8_0),
-		},
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config: fieldConditionPhaseConfigOn(srv.URL, "Show details when type is Other", "phase_2"),
-				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue(
-						"pipefy_field_condition.test",
-						tfjsonpath.New("phase_id"),
-						knownvalue.StringExact("phase_2"),
-					),
-				},
-			},
-			{
-				Config: fieldConditionPhaseConfigOn(srv.URL, "Show details when type is Other", "phase_1"),
+				Config: fieldConditionPipeConfig(srv.URL, "456"),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
-						plancheck.ExpectResourceAction("pipefy_field_condition.test", plancheck.ResourceActionUpdate),
+						plancheck.ExpectResourceAction("pipefy_field_condition.test", plancheck.ResourceActionReplace),
 					},
-				},
-				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue(
-						"pipefy_field_condition.test",
-						tfjsonpath.New("phase_id"),
-						knownvalue.StringExact("phase_1"),
-					),
 				},
 			},
 		},
 	})
-
-	if st.created != 1 {
-		t.Fatalf("expected the phase_id change to update in place, got %d creates", st.created)
-	}
 }

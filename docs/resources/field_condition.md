@@ -3,12 +3,12 @@
 page_title: "pipefy_field_condition Resource - pipefy"
 subcategory: ""
 description: |-
-  Conditional show/hide (and enable/disable) logic for a phase form. A field condition evaluates a set of comparisons and, when they hold, runs actions against phase fields.
+  Conditional show/hide (and enable/disable) logic for fields in a pipe. A field condition evaluates a set of comparisons and, when they hold, runs actions against fields. Pipefy currently lists every condition under the pipe's start form phase; evaluation is pipe-scoped, so the condition still governs the fields it names. See the API reference (https://developers.pipefy.com/reference).
 ---
 
 # pipefy_field_condition (Resource)
 
-Conditional show/hide (and enable/disable) logic for a phase form. A field condition evaluates a set of comparisons and, when they hold, runs actions against phase fields.
+Conditional show/hide (and enable/disable) logic for fields in a pipe. A field condition evaluates a set of comparisons and, when they hold, runs actions against fields. Pipefy currently lists every condition under the pipe's start form phase; evaluation is pipe-scoped, so the condition still governs the fields it names. See the API reference (https://developers.pipefy.com/reference).
 
 ## Example Usage
 
@@ -41,8 +41,8 @@ resource "pipefy_field" "details" {
 # Show the "Please describe" field only when "Request type" is "Other"
 # AND "Priority" is "High". all_of ANDs its comparisons together.
 resource "pipefy_field_condition" "show_details" {
-  phase_id = pipefy_pipe.example.start_form_phase_id
-  name     = "Show details for high-priority Other requests"
+  pipe_id = pipefy_pipe.example.id
+  name    = "Show details for high-priority Other requests"
 
   condition = {
     all_of = [
@@ -60,8 +60,8 @@ resource "pipefy_field_condition" "show_details" {
 # "Request type" is "Standard" OR "Priority" itself is "Low". any_of ORs its
 # entries together.
 resource "pipefy_field_condition" "hide_priority" {
-  phase_id = pipefy_pipe.example.start_form_phase_id
-  name     = "Hide priority for standard or low requests"
+  pipe_id = pipefy_pipe.example.id
+  name    = "Hide priority for standard or low requests"
 
   condition = {
     any_of = [
@@ -81,21 +81,22 @@ resource "pipefy_field_condition" "hide_priority" {
 
 ### Required
 
-- `actions` (Attributes List) What happens to each phase field when the condition holds. One entry per target field. (see [below for nested schema](#nestedatt--actions))
+- `actions` (Attributes List) What happens to each field when the condition holds. One entry per target field. (see [below for nested schema](#nestedatt--actions))
 - `condition` (Attributes) The criteria that must hold for the actions to run. (see [below for nested schema](#nestedatt--condition))
 - `name` (String) Name that describes what this condition does
-- `phase_id` (String) The ID of the phase the condition belongs to. Pipefy currently attaches every field condition to the pipe's start form phase whatever phase the request names, so the provider fails the apply when the API reports a different phase rather than recording a phase the condition is not on. See the API reference (https://developers.pipefy.com/reference).
+- `pipe_id` (String) The ID of the pipe that owns the field condition. Changing it forces a new field condition.
 
 ### Read-Only
 
 - `id` (String) The ID of the field condition
+- `phase_id` (String) The ID of the phase the API listed the condition under. Pipefy currently attaches every field condition to the pipe's start form phase. Evaluation is pipe-scoped: the condition still governs the fields it names. See the API reference (https://developers.pipefy.com/reference).
 
 <a id="nestedatt--actions"></a>
 ### Nested Schema for `actions`
 
 Required:
 
-- `field` (String) The internal_id of the phase field affected by this action.
+- `field` (String) The internal_id of the field affected by this action.
 
 Optional:
 

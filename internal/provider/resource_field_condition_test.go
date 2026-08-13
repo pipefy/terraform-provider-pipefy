@@ -36,9 +36,17 @@ func fieldConditionBody(name string) string {
 
 // fieldConditionBodyOnPhase is fieldConditionBody with an explicit owning phase.
 func fieldConditionBodyOnPhase(name, phaseID string) string {
-	return `{"id":"fc_123","name":"` + name + `","phase":{"id":"` + phaseID + `"},` +
+	return fieldConditionBodyOnPhaseRepo(name, phaseID, "123")
+}
+
+func fieldConditionBodyOnPhaseRepo(name, phaseID, repoID string) string {
+	return `{"id":"fc_123","name":"` + name + `","phase":{"id":"` + phaseID + `","repo_id":` + repoID + `},` +
 		`"condition":{"expressions":[{"structure_id":"0","field_address":"1001","operation":"equals","value":"Other"}],"expressions_structure":[[0]]},` +
 		`"actions":[{"actionId":"show","phaseField":{"internal_id":"1002"},"whenEvaluator":true}]}`
+}
+
+func writeFieldConditionPipe(w http.ResponseWriter) {
+	_, _ = io.WriteString(w, `{"data":{"pipe":{"id":"123","name":"Ops","startFormPhaseId":"phase_1","organization":{"id":"1"}}}}`)
 }
 
 func TestUnit_FieldConditionResource_CRUD(t *testing.T) {
@@ -75,8 +83,8 @@ func TestUnit_FieldConditionResource_CRUD(t *testing.T) {
 		case strings.Contains(q, "deleteFieldCondition"):
 			st.DeletedCt++
 			_, _ = io.WriteString(w, `{"data":{"deleteFieldCondition":{"success":true}}}`)
-		case strings.Contains(q, "repo_id"):
-			_, _ = io.WriteString(w, `{"data":{"phase":{"repo_id":123}}}`)
+		case strings.Contains(q, "GetPipe_tf"):
+			writeFieldConditionPipe(w)
 		case strings.Contains(q, "fieldCondition("):
 			if st.ID == "" {
 				_, _ = io.WriteString(w, `{"data":{"fieldCondition":null}}`)
@@ -97,7 +105,7 @@ func TestUnit_FieldConditionResource_CRUD(t *testing.T) {
 		}
 
 		resource "pipefy_field_condition" "test" {
-			phase_id = "phase_1"
+			pipe_id = "123"
 			name     = "` + name + `"
 
 			condition = {
@@ -140,6 +148,16 @@ func TestUnit_FieldConditionResource_CRUD(t *testing.T) {
 						"pipefy_field_condition.test",
 						tfjsonpath.New("id"),
 						knownvalue.StringExact("fc_123"),
+					),
+					statecheck.ExpectKnownValue(
+						"pipefy_field_condition.test",
+						tfjsonpath.New("pipe_id"),
+						knownvalue.StringExact("123"),
+					),
+					statecheck.ExpectKnownValue(
+						"pipefy_field_condition.test",
+						tfjsonpath.New("phase_id"),
+						knownvalue.StringExact("phase_1"),
 					),
 					statecheck.ExpectKnownValue(
 						"pipefy_field_condition.test",
@@ -187,7 +205,7 @@ func TestUnit_FieldConditionResource_CRUD(t *testing.T) {
 // expressions_structure order even when that doesn't match the order
 // expressions themselves happen to appear in.
 func fieldConditionOrderingBody(name string) string {
-	return `{"id":"fc_123","name":"` + name + `","phase":{"id":"phase_1"},` +
+	return `{"id":"fc_123","name":"` + name + `","phase":{"id":"phase_1","repo_id":123},` +
 		`"condition":{"expressions":[` +
 		`{"structure_id":"1","field_address":"2001","operation":"equals","value":"High"},` +
 		`{"structure_id":"0","field_address":"1001","operation":"equals","value":"Other"}` +
@@ -226,8 +244,8 @@ func TestUnit_FieldConditionResource_AnyOfOrdering(t *testing.T) {
 		case strings.Contains(q, "deleteFieldCondition"):
 			st.DeletedCt++
 			_, _ = io.WriteString(w, `{"data":{"deleteFieldCondition":{"success":true}}}`)
-		case strings.Contains(q, "repo_id"):
-			_, _ = io.WriteString(w, `{"data":{"phase":{"repo_id":123}}}`)
+		case strings.Contains(q, "GetPipe_tf"):
+			writeFieldConditionPipe(w)
 		case strings.Contains(q, "fieldCondition("):
 			if st.ID == "" {
 				_, _ = io.WriteString(w, `{"data":{"fieldCondition":null}}`)
@@ -247,7 +265,7 @@ func TestUnit_FieldConditionResource_AnyOfOrdering(t *testing.T) {
 	}
 
 	resource "pipefy_field_condition" "test" {
-		phase_id = "phase_1"
+		pipe_id = "123"
 		name     = "Ordering"
 
 		condition = {
@@ -319,7 +337,7 @@ func fieldConditionValueBody(name string, gr gqlReq) string {
 			}
 		}
 	}
-	return `{"id":"fc_123","name":"` + name + `","phase":{"id":"phase_1"},` +
+	return `{"id":"fc_123","name":"` + name + `","phase":{"id":"phase_1","repo_id":123},` +
 		`"condition":{"expressions":[{"structure_id":"0","field_address":"1001","operation":"` + op + `","value":` + valJSON + `}],"expressions_structure":[[0]]},` +
 		`"actions":[{"actionId":"show","phaseField":{"internal_id":"1002"},"whenEvaluator":true}]}`
 }
@@ -353,8 +371,8 @@ func TestUnit_FieldConditionResource_ValueClear(t *testing.T) {
 		case strings.Contains(q, "deleteFieldCondition"):
 			st.DeletedCt++
 			_, _ = io.WriteString(w, `{"data":{"deleteFieldCondition":{"success":true}}}`)
-		case strings.Contains(q, "repo_id"):
-			_, _ = io.WriteString(w, `{"data":{"phase":{"repo_id":123}}}`)
+		case strings.Contains(q, "GetPipe_tf"):
+			writeFieldConditionPipe(w)
 		case strings.Contains(q, "fieldCondition("):
 			if st.ID == "" {
 				_, _ = io.WriteString(w, `{"data":{"fieldCondition":null}}`)
@@ -375,7 +393,7 @@ func TestUnit_FieldConditionResource_ValueClear(t *testing.T) {
 		}
 
 		resource "pipefy_field_condition" "test" {
-			phase_id = "phase_1"
+			pipe_id = "123"
 			name     = "Value clear"
 
 			condition = {
@@ -433,7 +451,7 @@ func TestUnit_FieldConditionResource_ValueClear(t *testing.T) {
 // is a plain comparison. It assumes the provider flattens all_of/any_of into
 // sequential integer structure_ids in declaration order.
 func fieldConditionMixedAnyOfBody(name string) string {
-	return `{"id":"fc_123","name":"` + name + `","phase":{"id":"phase_1"},` +
+	return `{"id":"fc_123","name":"` + name + `","phase":{"id":"phase_1","repo_id":123},` +
 		`"condition":{"expressions":[` +
 		`{"structure_id":"0","field_address":"1001","operation":"equals","value":"Other"},` +
 		`{"structure_id":"1","field_address":"2001","operation":"equals","value":"High"},` +
@@ -479,8 +497,8 @@ func TestUnit_FieldConditionResource_MixedAnyOf(t *testing.T) {
 		case strings.Contains(q, "deleteFieldCondition"):
 			st.DeletedCt++
 			_, _ = io.WriteString(w, `{"data":{"deleteFieldCondition":{"success":true}}}`)
-		case strings.Contains(q, "repo_id"):
-			_, _ = io.WriteString(w, `{"data":{"phase":{"repo_id":123}}}`)
+		case strings.Contains(q, "GetPipe_tf"):
+			writeFieldConditionPipe(w)
 		case strings.Contains(q, "fieldCondition("):
 			if st.ID == "" {
 				_, _ = io.WriteString(w, `{"data":{"fieldCondition":null}}`)
@@ -500,7 +518,7 @@ func TestUnit_FieldConditionResource_MixedAnyOf(t *testing.T) {
 	}
 
 	resource "pipefy_field_condition" "test" {
-		phase_id = "phase_1"
+		pipe_id = "123"
 		name     = "Mixed any_of"
 
 		condition = {
@@ -608,7 +626,7 @@ func renderActionsResponse(sentActions []any) string {
 }
 
 func fieldConditionActionsBody(name, actionsJSON string) string {
-	return `{"id":"fc_123","name":"` + name + `","phase":{"id":"phase_1"},` +
+	return `{"id":"fc_123","name":"` + name + `","phase":{"id":"phase_1","repo_id":123},` +
 		`"condition":{"expressions":[{"structure_id":"0","field_address":"1001","operation":"equals","value":"Other"}],"expressions_structure":[[0]]},` +
 		`"actions":` + actionsJSON + `}`
 }
@@ -655,8 +673,8 @@ func TestUnit_FieldConditionResource_ActionBranchRemoval(t *testing.T) {
 		case strings.Contains(q, "deleteFieldCondition"):
 			st.DeletedCt++
 			_, _ = io.WriteString(w, `{"data":{"deleteFieldCondition":{"success":true}}}`)
-		case strings.Contains(q, "repo_id"):
-			_, _ = io.WriteString(w, `{"data":{"phase":{"repo_id":123}}}`)
+		case strings.Contains(q, "GetPipe_tf"):
+			writeFieldConditionPipe(w)
 		case strings.Contains(q, "fieldCondition("):
 			if st.ID == "" {
 				_, _ = io.WriteString(w, `{"data":{"fieldCondition":null}}`)
@@ -676,7 +694,7 @@ func TestUnit_FieldConditionResource_ActionBranchRemoval(t *testing.T) {
 	}
 
 	resource "pipefy_field_condition" "test" {
-		phase_id = "phase_1"
+		pipe_id = "123"
 		name     = "Branch removal"
 
 		condition = {
@@ -706,7 +724,7 @@ func TestUnit_FieldConditionResource_ActionBranchRemoval(t *testing.T) {
 	}
 
 	resource "pipefy_field_condition" "test" {
-		phase_id = "phase_1"
+		pipe_id = "123"
 		name     = "Branch removal"
 
 		condition = {
@@ -779,112 +797,5 @@ func TestUnit_FieldConditionResource_ActionBranchRemoval(t *testing.T) {
 	}
 	if whenEvaluator, _ := sent["whenEvaluator"].(bool); !whenEvaluator {
 		t.Fatalf("expected surviving action's whenEvaluator to be true, got %#v", sent["whenEvaluator"])
-	}
-}
-
-// TestUnit_FieldConditionResource_DestroyFallback simulates the field
-// condition's phase having already been deleted out-of-band by the time
-// destroy runs: the repo_id lookup (which succeeded at create time) returns
-// no phase on its second call. Delete must still remove the resource
-// instead of hard-failing on the lock lookup.
-func TestUnit_FieldConditionResource_DestroyFallback(t *testing.T) {
-	st := &fieldConditionState{}
-	repoIDCalls := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer testtoken" {
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = io.WriteString(w, `{"errors":[{"message":"unauthorized"}]}`)
-			return
-		}
-		var gr gqlReq
-		defer r.Body.Close()
-		b, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(b, &gr)
-		w.Header().Set("Content-Type", "application/json")
-
-		q := gr.Query
-		switch {
-		case strings.Contains(q, "createFieldCondition"):
-			st.ID = "fc_123"
-			if v, ok := gr.Variables["input"].(map[string]any); ok {
-				if n, ok := v["name"].(string); ok {
-					st.Name = n
-				}
-			}
-			_, _ = io.WriteString(w, `{"data":{"createFieldCondition":{"fieldCondition":`+fieldConditionBody(st.Name)+`}}}`)
-		case strings.Contains(q, "deleteFieldCondition"):
-			st.DeletedCt++
-			_, _ = io.WriteString(w, `{"data":{"deleteFieldCondition":{"success":true}}}`)
-		case strings.Contains(q, "repo_id"):
-			repoIDCalls++
-			if repoIDCalls == 1 {
-				_, _ = io.WriteString(w, `{"data":{"phase":{"repo_id":123}}}`)
-			} else {
-				_, _ = io.WriteString(w, `{"data":{"phase":null}}`)
-			}
-		case strings.Contains(q, "fieldCondition("):
-			if st.ID == "" {
-				_, _ = io.WriteString(w, `{"data":{"fieldCondition":null}}`)
-				return
-			}
-			_, _ = io.WriteString(w, `{"data":{"fieldCondition":`+fieldConditionBody(st.Name)+`}}`)
-		default:
-			_, _ = io.WriteString(w, `{"data":{}}`)
-		}
-	}))
-	defer srv.Close()
-
-	baseConfig := `
-	provider "pipefy" {
-		endpoint = "` + srv.URL + `"
-		token    = "testtoken"
-	}
-
-	resource "pipefy_field_condition" "test" {
-		phase_id = "phase_1"
-		name     = "Destroy fallback"
-
-		condition = {
-			all_of = [
-				{
-					field     = "1001"
-					operation = "equals"
-					value     = "Other"
-				}
-			]
-		}
-
-		actions = [
-			{
-				field     = "1002"
-				when_true = "show"
-			}
-		]
-	}
-	`
-
-	configDestroy := `
-	provider "pipefy" {
-		endpoint = "` + srv.URL + `"
-		token    = "testtoken"
-	}
-	`
-
-	resource.UnitTest(t, resource.TestCase{
-		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
-			tfversion.SkipBelow(tfversion.Version1_8_0),
-		},
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{Config: baseConfig},
-			{Config: configDestroy},
-		},
-	})
-
-	if st.DeletedCt == 0 {
-		t.Fatalf("expected deleteFieldCondition mutation to be called even though the phase was already gone")
-	}
-	if repoIDCalls < 2 {
-		t.Fatalf("expected repo_id to be queried again at destroy time, got %d calls", repoIDCalls)
 	}
 }

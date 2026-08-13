@@ -30,6 +30,7 @@ type FieldConditionResource struct{ api *pipefy.Client }
 
 type FieldConditionModel struct {
 	Id        types.String                `tfsdk:"id"`
+	PipeId    types.String                `tfsdk:"pipe_id"`
 	PhaseId   types.String                `tfsdk:"phase_id"`
 	Name      types.String                `tfsdk:"name"`
 	Condition *conditionschema.Condition  `tfsdk:"condition"`
@@ -48,16 +49,22 @@ func (r *FieldConditionResource) Metadata(ctx context.Context, req resource.Meta
 
 func (r *FieldConditionResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Conditional show/hide (and enable/disable) logic for a phase form. A field condition evaluates a set of comparisons and, when they hold, runs actions against phase fields.",
+		MarkdownDescription: "Conditional show/hide (and enable/disable) logic for fields in a pipe. A field condition evaluates a set of comparisons and, when they hold, runs actions against fields. Pipefy currently lists every condition under the pipe's start form phase; evaluation is pipe-scoped, so the condition still governs the fields it names. See the API reference (https://developers.pipefy.com/reference).",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:      true,
 				Description:   "The ID of the field condition",
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
+			"pipe_id": schema.StringAttribute{
+				Required:      true,
+				Description:   "The ID of the pipe that owns the field condition. Changing it forces a new field condition.",
+				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
+			},
 			"phase_id": schema.StringAttribute{
-				Required:    true,
-				Description: "The ID of the phase the condition belongs to. Pipefy currently attaches every field condition to the pipe's start form phase whatever phase the request names, so the provider fails the apply when the API reports a different phase rather than recording a phase the condition is not on. See the API reference (https://developers.pipefy.com/reference).",
+				Computed:      true,
+				Description:   "The ID of the phase the API listed the condition under. Pipefy currently attaches every field condition to the pipe's start form phase. Evaluation is pipe-scoped: the condition still governs the fields it names. See the API reference (https://developers.pipefy.com/reference).",
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"name": schema.StringAttribute{Required: true, Description: "Name that describes what this condition does"},
 			"condition": schema.SingleNestedAttribute{
@@ -67,13 +74,13 @@ func (r *FieldConditionResource) Schema(ctx context.Context, req resource.Schema
 			},
 			"actions": schema.ListNestedAttribute{
 				Required:    true,
-				Description: "What happens to each phase field when the condition holds. One entry per target field.",
+				Description: "What happens to each field when the condition holds. One entry per target field.",
 				Validators:  []validator.List{validators.FieldConditionActionsUniqueField()},
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
 						"field": schema.StringAttribute{
 							Required:    true,
-							Description: "The internal_id of the phase field affected by this action.",
+							Description: "The internal_id of the field affected by this action.",
 						},
 						"when_true": schema.StringAttribute{
 							Optional:    true,
@@ -110,25 +117,27 @@ func (r *FieldConditionResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
+	pipeID := data.PipeId.ValueString()
+	startForm, err := r.startFormPhaseID(ctx, pipeID)
+	if err != nil {
+		resp.Diagnostics.AddError("create field condition failed", err.Error())
+		return
+	}
+
 	input := map[string]any{
 		"name":    data.Name.ValueString(),
-		"phaseId": data.PhaseId.ValueString(),
+		"phaseId": startForm,
 	}
 	input["condition"] = data.Condition.Input()
 	input["actions"] = data.actionsInput()
 
-	requestedPhase := data.PhaseId.ValueString()
-	fc, err := r.api.FieldConditions.Create(ctx, requestedPhase, input)
+	fc, err := r.api.FieldConditions.Create(ctx, pipeID, input)
 	if errors.Is(err, pipefy.ErrNoFieldCondition) {
 		resp.Diagnostics.AddError("create field condition failed", "the API returned no field condition")
 		return
 	}
 	if err != nil {
 		resp.Diagnostics.AddError("create field condition failed", err.Error())
-		return
-	}
-	if detail := phaseMismatchDetail(requestedPhase, &fc); detail != "" {
-		r.rollbackCreate(ctx, requestedPhase, fc.ID, detail, resp)
 		return
 	}
 	applyFieldConditionToModel(&data, &fc, true, &resp.Diagnostics)
@@ -172,26 +181,19 @@ func (r *FieldConditionResource) Update(ctx context.Context, req resource.Update
 	}
 
 	input := map[string]any{
-		"id":       data.Id.ValueString(),
-		"name":     data.Name.ValueString(),
-		"phase_id": data.PhaseId.ValueString(),
+		"id":   data.Id.ValueString(),
+		"name": data.Name.ValueString(),
 	}
 	input["condition"] = data.Condition.Input()
 	input["actions"] = data.actionsInput()
 
-	requestedPhase := data.PhaseId.ValueString()
-	fc, err := r.api.FieldConditions.Update(ctx, requestedPhase, input)
+	fc, err := r.api.FieldConditions.Update(ctx, data.PipeId.ValueString(), input)
 	if errors.Is(err, pipefy.ErrNoFieldCondition) {
 		resp.Diagnostics.AddError("update field condition failed", "the API returned no field condition")
 		return
 	}
 	if err != nil {
 		resp.Diagnostics.AddError("update field condition failed", err.Error())
-		return
-	}
-	// No rollback: prior state still describes the existing condition.
-	if detail := phaseMismatchDetail(requestedPhase, &fc); detail != "" {
-		resp.Diagnostics.AddError("update field condition failed", detail)
 		return
 	}
 	applyFieldConditionToModel(&data, &fc, true, &resp.Diagnostics)
@@ -208,46 +210,28 @@ func (r *FieldConditionResource) Delete(ctx context.Context, req resource.Delete
 		return
 	}
 
-	if err := r.api.FieldConditions.Delete(ctx, data.PhaseId.ValueString(), data.Id.ValueString()); err != nil {
+	if err := r.api.FieldConditions.Delete(ctx, data.PipeId.ValueString(), data.Id.ValueString()); err != nil {
 		resp.Diagnostics.AddError("delete field condition failed", err.Error())
 		return
 	}
 }
 
 func (r *FieldConditionResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	// The field condition id is enough; Read resolves phase_id, name, condition,
-	// and actions from the API (phase_id comes from the payload's phase.id).
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
-// phaseMismatchDetail is non-empty when the API attached the condition to a
-// phase other than the one requested. Observed live: createFieldCondition
-// always lands on the pipe's start form. An empty/missing phase is nothing to
-// contradict.
-func phaseMismatchDetail(requested string, fc *pipefy.FieldCondition) string {
-	if fc.Phase == nil || fc.Phase.ID == "" || fc.Phase.ID == requested {
-		return ""
+func (r *FieldConditionResource) startFormPhaseID(ctx context.Context, pipeID string) (string, error) {
+	pipe, err := r.api.Pipes.Get(ctx, pipeID)
+	if errors.Is(err, pipefy.ErrNotFound) {
+		return "", fmt.Errorf("pipe %q was not found", pipeID)
 	}
-	return fmt.Sprintf(
-		"the field condition was requested on phase %s, but the API attached it to phase %s. "+
-			"Pipefy currently attaches every field condition to the pipe's start form phase, "+
-			"whatever phase the request names, so a condition on any other phase cannot be kept "+
-			"in sync. Point phase_id at the pipe's start form phase (start_form_phase_id on the "+
-			"pipefy_pipe resource or data source) until the API honors the requested phase.",
-		requested, fc.Phase.ID,
-	)
-}
-
-func (r *FieldConditionResource) rollbackCreate(ctx context.Context, phaseID, id, detail string, resp *resource.CreateResponse) {
-	if rollbackErr := r.api.FieldConditions.Delete(ctx, phaseID, id); rollbackErr != nil {
-		resp.Diagnostics.AddError(
-			"create field condition failed and rollback failed",
-			fmt.Sprintf("field condition %q is orphaned: %s; rollback failed: %v", id, detail, rollbackErr),
-		)
-		return
+	if err != nil {
+		return "", err
 	}
-	resp.State.RemoveResource(ctx)
-	resp.Diagnostics.AddError("create field condition failed", detail)
+	if pipe.StartFormPhaseID == "" {
+		return "", fmt.Errorf("pipe %q has no start form phase", pipeID)
+	}
+	return pipe.StartFormPhaseID, nil
 }
 
 func (m *FieldConditionModel) actionsInput() []map[string]any {
@@ -285,6 +269,11 @@ func applyFieldConditionToModel(data *FieldConditionModel, fc *pipefy.FieldCondi
 	if !onlyUnknown || data.PhaseId.IsUnknown() {
 		if fc.Phase != nil && fc.Phase.ID != "" {
 			data.PhaseId = types.StringValue(fc.Phase.ID)
+		}
+	}
+	if !onlyUnknown || data.PipeId.IsUnknown() {
+		if pid := fc.Phase.PipeID(); pid != "" {
+			data.PipeId = types.StringValue(pid)
 		}
 	}
 	if onlyUnknown {
