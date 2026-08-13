@@ -213,7 +213,7 @@ func (r *AiAgentResource) Update(
 }
 
 // applyUpdate enforces the planned status, not the change between config and
-// prior state, because updateAiAgent disables the agent on every call.
+// prior state, because updateAiAgent disables the agent unless a behavior is active.
 func (r *AiAgentResource) applyUpdate(
 	ctx context.Context,
 	plan *AiAgentModel,

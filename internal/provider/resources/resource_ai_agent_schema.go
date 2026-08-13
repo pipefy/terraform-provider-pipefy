@@ -64,11 +64,12 @@ type AiAgentFieldModel struct {
 func (r *AiAgentResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages an AI agent and its ordered behaviors for a Pipefy pipe. " +
-			"Behavior configuration is replaced in full on each update. Updating an agent " +
-			"disables it in Pipefy, so the provider reapplies the configured `active` status " +
-			"after every update and reads it back to confirm it took; an agent configured " +
-			"inactive keeps the timestamp it was disabled at. If the status call fails, the " +
-			"configuration change has already been applied and only the status is left to retry.",
+			"Behavior configuration is replaced in full on each update. Pipefy keeps the agent " +
+			"active when the update includes an active behavior; the provider sets each " +
+			"behavior's `active` flag from the agent's `active` value, then reads the status " +
+			"back and corrects it if the API disagrees. An agent configured inactive keeps " +
+			"the timestamp it was disabled at. If a later status call fails, the configuration " +
+			"change has already been applied and only the status is left to retry.",
 		Attributes: aiAgentAttributes(),
 	}
 }
@@ -87,9 +88,9 @@ func aiAgentAttributes() map[string]schema.Attribute {
 		"instruction": requiredNonEmptyString("The agent-level purpose shown as its description."),
 		"active": schema.BoolAttribute{
 			Optional: true, Computed: true,
-			Description: "Whether the AI agent is active. Reapplied and verified against the API " +
-				"after every create and update, because updating an agent disables it. " +
-				"An agent created with `active = false` is never switched on.",
+			Description: "Whether the AI agent is active. Sent as each behavior's `active` flag " +
+				"and verified after every create and update. An agent created with " +
+				"`active = false` is never switched on.",
 			PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
 		},
 		"data_source_ids": stringSetWithEmptyDefault(

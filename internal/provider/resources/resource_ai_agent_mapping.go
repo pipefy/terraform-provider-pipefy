@@ -99,17 +99,31 @@ func (model AiAgentModel) graphQLInput(repoUUID string) map[string]any {
 		"repoUuid":      repoUUID,
 		"dataSourceIds": stringSetValues(model.DataSourceIDs),
 	}
+	behaviorActive := agentBehaviorActive(model.Active)
 	behaviors := make([]map[string]any, len(model.Behaviors))
 	for index, behavior := range model.Behaviors {
-		behaviors[index] = behavior.graphQLInput()
+		behaviors[index] = behavior.graphQLInput(behaviorActive)
 	}
 	input["behaviors"] = behaviors
 	return input
 }
 
-func (behavior AiAgentBehaviorModel) graphQLInput() map[string]any {
+// agentBehaviorActive is the flag Pipefy uses to decide whether updateAiAgent
+// leaves the agent on: any behavior with active true keeps it enabled.
+func agentBehaviorActive(active types.Bool) *bool {
+	if !isConfiguredBool(active) {
+		return nil
+	}
+	value := active.ValueBool()
+	return &value
+}
+
+func (behavior AiAgentBehaviorModel) graphQLInput(active *bool) map[string]any {
 	input := map[string]any{
 		"name": behavior.Name.ValueString(), "eventId": behavior.EventID.ValueString(),
+	}
+	if active != nil {
+		input["active"] = *active
 	}
 	if hasString(behavior.ID) {
 		input["id"] = behavior.ID.ValueString()

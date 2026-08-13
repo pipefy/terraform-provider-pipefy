@@ -228,6 +228,36 @@ func TestRematchNestedIdentitiesOnReorder(t *testing.T) {
 	}
 }
 
+func TestGraphQLInputSetsBehaviorActiveFromAgent(t *testing.T) {
+	cases := map[string]struct {
+		active  types.Bool
+		want    any
+		present bool
+	}{
+		"true":    {active: types.BoolValue(true), want: true, present: true},
+		"false":   {active: types.BoolValue(false), want: false, present: true},
+		"unknown": {active: types.BoolUnknown(), present: false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			model := plannedAgentModel()
+			model.Active = tc.active
+			input := model.graphQLInput("pipe-uuid")
+			behaviors, _ := input["behaviors"].([]map[string]any)
+			if len(behaviors) == 0 {
+				t.Fatal("expected behaviors in GraphQL input")
+			}
+			got, present := behaviors[0]["active"]
+			if present != tc.present {
+				t.Fatalf("active present = %t, want %t", present, tc.present)
+			}
+			if tc.present && got != tc.want {
+				t.Fatalf("active = %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFillFromAgentKeepsPlannedValuesAndGraftsIDs(t *testing.T) {
 	plan := plannedAgentModel()
 	plan.fillFromAgent(pipefy.Agent{
