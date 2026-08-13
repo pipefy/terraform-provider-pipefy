@@ -36,3 +36,10 @@ website/vendor
 
 # Ignore CLI configuration files
 .terraformrc
+
+# Local build artifact at repo root (`go build` without -o)
+/terraform-provider-pipefy
+
+# Local agent workspaces.
+.claude/
+.cursor/
