@@ -11,11 +11,13 @@ import (
 )
 
 func TestAiAgentsGet(t *testing.T) {
+	var got capturedRequest
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		got = capture(t, r)
 		respondJSON(w, `{"data":{"aiAgent":{
 			"uuid":"ag-1","name":"Triager","instruction":"sort things",
 			"repoUuid":"pipe-uuid","dataSourceIds":["ds1","ds2"],"disabledAt":null,
-			"behaviors":[{"id":"b1","name":"on move","event_id":"card_move",
+			"behaviors":[{"id":"b1","name":"on move","active":true,"event_id":"card_move",
 			  "event_params":{"to_phase_id":"900","triggerFieldIds":["f1"]},
 			  "action_params":{"aiBehaviorParams":{"instruction":"do it","actionsAttributes":[
 			    {"id":"a1","referenceId":"ref1","name":"fill","actionType":"update_fields",
@@ -41,7 +43,13 @@ func TestAiAgentsGet(t *testing.T) {
 	if len(agent.Behaviors) != 1 {
 		t.Fatalf("Behaviors = %+v", agent.Behaviors)
 	}
+	if !strings.Contains(got.Query, "behaviors { id name active ") {
+		t.Errorf("Get query missing behavior active: %s", got.Query)
+	}
 	b := agent.Behaviors[0]
+	if !b.Active {
+		t.Errorf("Active = false, want true")
+	}
 	if b.EventID != "card_move" || b.EventParams.ToPhaseID == nil || *b.EventParams.ToPhaseID != "900" {
 		t.Errorf("behavior = %+v", b)
 	}

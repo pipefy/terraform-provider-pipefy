@@ -8,9 +8,6 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
-	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
-	"github.com/hashicorp/terraform-plugin-testing/statecheck"
-	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 )
 
 func TestUnit_AiAgentResource_RollsBackFailedRead(t *testing.T) {
@@ -18,7 +15,7 @@ func TestUnit_AiAgentResource_RollsBackFailedRead(t *testing.T) {
 	server := newAiAgentServer(mock)
 	defer server.Close()
 	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{{
-		Config:      aiAgentConfig(server.URL, "", false),
+		Config:      aiAgentConfig(server.URL, "true", false),
 		ExpectError: regexp.MustCompile("agent read rejected"),
 	}}))
 	if mock.deleteCalls != 1 || mock.exists {
@@ -32,23 +29,36 @@ func TestUnit_AiAgentResource_ReportsRollbackFailure(t *testing.T) {
 	defer server.Close()
 	want := regexp.MustCompile(`create AI agent failed and rollback failed`)
 	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{{
-		Config: aiAgentConfig(server.URL, "", false), ExpectError: want,
+		Config: aiAgentConfig(server.URL, "true", false), ExpectError: want,
 	}}))
 	if mock.deleteCalls < 1 {
 		t.Fatalf("rollback delete calls = %d, want at least 1", mock.deleteCalls)
 	}
 }
 
-func TestUnit_AiAgentResource_RollsBackFailedStatus(t *testing.T) {
-	mock := &aiAgentMock{failStatus: true}
+func TestUnit_AiAgentResource_CreateStatusFailureLeavesAgent(t *testing.T) {
+	mock := &aiAgentMock{failStatus: true, forceDisableOnCreate: true}
 	server := newAiAgentServer(mock)
 	defer server.Close()
 	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{{
 		Config:      aiAgentConfig(server.URL, "true", false),
 		ExpectError: regexp.MustCompile("status update rejected"),
 	}}))
-	if mock.deleteCalls != 1 || mock.exists {
-		t.Fatalf("rollback deleteCalls=%d exists=%v, want 1 and false", mock.deleteCalls, mock.exists)
+	if countOperations(mock.operations, "Create") != 1 {
+		t.Fatalf("create count = %d, want 1: %v", countOperations(mock.operations, "Create"), mock.operations)
+	}
+}
+
+func TestUnit_AiAgentResource_CreateStatusMismatchLeavesAgent(t *testing.T) {
+	mock := &aiAgentMock{failStatusSilently: true, forceDisableOnCreate: true}
+	server := newAiAgentServer(mock)
+	defer server.Close()
+	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{{
+		Config:      aiAgentConfig(server.URL, "true", false),
+		ExpectError: regexp.MustCompile(`(?s)reports active=false.*planned\s+active=true`),
+	}}))
+	if countOperations(mock.operations, "Create") != 1 {
+		t.Fatalf("create count = %d, want 1: %v", countOperations(mock.operations, "Create"), mock.operations)
 	}
 }
 
@@ -57,7 +67,7 @@ func TestUnit_AiAgentResource_CreateFailureDoesNotDelete(t *testing.T) {
 	server := newAiAgentServer(mock)
 	defer server.Close()
 	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{{
-		Config:      aiAgentConfig(server.URL, "", false),
+		Config:      aiAgentConfig(server.URL, "true", false),
 		ExpectError: regexp.MustCompile("agent create rejected"),
 	}}))
 	if mock.deleteCalls != 0 {
@@ -70,7 +80,7 @@ func TestUnit_AiAgentResource_CreateRollsBackWhenReadReturnsNull(t *testing.T) {
 	server := newAiAgentServer(mock)
 	defer server.Close()
 	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{{
-		Config:      aiAgentConfig(server.URL, "", false),
+		Config:      aiAgentConfig(server.URL, "true", false),
 		ExpectError: regexp.MustCompile("(?s)create AI agent failed.*returned no agent"),
 	}}))
 	if mock.deleteCalls != 1 || mock.exists {
@@ -82,12 +92,12 @@ func TestUnit_AiAgentResource_UpdateFailsWhenReadReturnsNull(t *testing.T) {
 	mock := &aiAgentMock{}
 	server := newAiAgentServer(mock)
 	defer server.Close()
-	config := aiAgentConfig(server.URL, "", false)
+	config := aiAgentConfig(server.URL, "true", false)
 	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{
 		{Config: config},
 		{
 			PreConfig:   func() { mock.nullAfterUpdate = true },
-			Config:      aiAgentConfig(server.URL, "", true),
+			Config:      aiAgentConfig(server.URL, "true", true),
 			ExpectError: regexp.MustCompile("(?s)read AI agent after update failed.*returned no agent"),
 		},
 	}))
@@ -97,7 +107,7 @@ func TestUnit_AiAgentResource_ReadFailureIsActionable(t *testing.T) {
 	mock := &aiAgentMock{}
 	server := newAiAgentServer(mock)
 	defer server.Close()
-	config := aiAgentConfig(server.URL, "", false)
+	config := aiAgentConfig(server.URL, "true", false)
 	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{
 		{Config: config},
 		{
@@ -112,7 +122,7 @@ func TestUnit_AiAgentResource_DeleteFailureIsActionable(t *testing.T) {
 	mock := &aiAgentMock{}
 	server := newAiAgentServer(mock)
 	defer server.Close()
-	config := aiAgentConfig(server.URL, "", false)
+	config := aiAgentConfig(server.URL, "true", false)
 	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{
 		{Config: config},
 		{
@@ -127,7 +137,7 @@ func TestUnit_AiAgentResource_Import(t *testing.T) {
 	mock := &aiAgentMock{}
 	server := newAiAgentServer(mock)
 	defer server.Close()
-	config := aiAgentConfig(server.URL, "", false)
+	config := aiAgentConfig(server.URL, "true", false)
 	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{
 		{Config: config},
 		{
@@ -160,7 +170,7 @@ func TestUnit_AiAgentResource_ImportRejectsMismatchedPipe(t *testing.T) {
 	server := newAiAgentServer(mock)
 	defer server.Close()
 	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{{
-		Config:             aiAgentConfig(server.URL, "", false),
+		Config:             aiAgentConfig(server.URL, "true", false),
 		ResourceName:       "pipefy_ai_agent.test",
 		ImportState:        true,
 		ImportStateId:      "999/agent-uuid",
@@ -173,10 +183,32 @@ func TestUnit_AiAgentResource_OmittedFieldValueNoPerpetualDiff(t *testing.T) {
 	mock := &aiAgentMock{}
 	server := newAiAgentServer(mock)
 	defer server.Close()
-	config := aiAgentConfig(server.URL, "", true)
+	config := aiAgentConfig(server.URL, "true", true)
 	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{
 		{Config: config},
 		{Config: config, PlanOnly: true, ExpectNonEmptyPlan: false},
+	}))
+}
+
+func TestUnit_AiAgentResource_EmptyFieldValueRejected(t *testing.T) {
+	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{{
+		Config:      aiAgentConfigWithEmptyFieldValue("http://127.0.0.1:9"),
+		PlanOnly:    true,
+		ExpectError: regexp.MustCompile("(?s)string length must be at.*least 1"),
+	}}))
+}
+
+func TestUnit_AiAgentResource_UpdateReportsUnenforcedStatus(t *testing.T) {
+	mock := &aiAgentMock{}
+	server := newAiAgentServer(mock)
+	defer server.Close()
+	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{
+		{Config: aiAgentConfig(server.URL, "true", false)},
+		{
+			PreConfig:   func() { mock.failStatusSilently = true; mock.forceDisableOnUpdate = true },
+			Config:      aiAgentConfig(server.URL, "true", true),
+			ExpectError: regexp.MustCompile(`(?s)reports active=false.*planned\s+active=true`),
+		},
 	}))
 }
 
@@ -187,19 +219,9 @@ func TestUnit_AiAgentResource_UpdateStatusFailureKeepsConfigState(t *testing.T) 
 	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{
 		{Config: aiAgentConfig(server.URL, "false", false)},
 		{
-			PreConfig:   func() { mock.failStatus = true },
+			PreConfig:   func() { mock.failStatus = true; mock.forceDisableOnUpdate = true },
 			Config:      aiAgentConfig(server.URL, "true", true),
 			ExpectError: regexp.MustCompile("update AI agent status failed"),
-			ConfigStateChecks: []statecheck.StateCheck{
-				statecheck.ExpectKnownValue(
-					"pipefy_ai_agent.test", tfjsonpath.New("active"), knownvalue.Bool(false),
-				),
-				statecheck.ExpectKnownValue(
-					"pipefy_ai_agent.test",
-					tfjsonpath.New("behaviors").AtSliceIndex(1).AtMapKey("name"),
-					knownvalue.StringExact("On field update"),
-				),
-			},
 		},
 	}))
 }

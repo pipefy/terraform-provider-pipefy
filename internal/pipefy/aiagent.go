@@ -11,7 +11,7 @@ import (
 )
 
 const agentSelection = "uuid name instruction repoUuid dataSourceIds disabledAt behaviors { " +
-	"id name event_id event_params { to_phase_id triggerFieldIds } action_params { " +
+	"id name active event_id event_params { to_phase_id triggerFieldIds } action_params { " +
 	"aiBehaviorParams { instruction actionsAttributes { id referenceId name actionType " +
 	"metadata { destinationPhaseId pipeId fieldsAttributes { fieldId inputMode value } } } } } }"
 
@@ -45,6 +45,7 @@ type Agent struct {
 type Behavior struct {
 	ID           string             `json:"id"`
 	Name         string             `json:"name"`
+	Active       bool               `json:"active"`
 	EventID      string             `json:"event_id"`
 	EventParams  AgentEventParams   `json:"event_params"`
 	ActionParams BehaviorActionRoot `json:"action_params"`

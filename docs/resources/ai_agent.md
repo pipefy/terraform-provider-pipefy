@@ -3,12 +3,12 @@
 page_title: "pipefy_ai_agent Resource - pipefy"
 subcategory: ""
 description: |-
-  Manages an AI agent and its ordered behaviors for a Pipefy pipe. Behavior configuration is replaced in full on each update. When active is set, status is applied with a separate API call after that update; if the status call fails, the configuration change has already been applied.
+  Manages an AI agent and its ordered behaviors for a Pipefy pipe. Behavior configuration is replaced in full on each update. Pipefy keeps the agent active when the update includes an active behavior; the provider sends active: true on one already-active behavior and omits the flag on the rest, then reads the status back and corrects it if the API disagrees. An inactive agent is kept off via disabledAt, without sending active: false on behaviors. Create with active = true sends disabledAt: null so the agent is born enabled. If a later status call fails, the configuration change has already been applied and only the status is left to retry.
 ---
 
 # pipefy_ai_agent (Resource)
 
-Manages an AI agent and its ordered behaviors for a Pipefy pipe. Behavior configuration is replaced in full on each update. When `active` is set, status is applied with a separate API call after that update; if the status call fails, the configuration change has already been applied.
+Manages an AI agent and its ordered behaviors for a Pipefy pipe. Behavior configuration is replaced in full on each update. Pipefy keeps the agent active when the update includes an active behavior; the provider sends `active: true` on one already-active behavior and omits the flag on the rest, then reads the status back and corrects it if the API disagrees. An inactive agent is kept off via `disabledAt`, without sending `active: false` on behaviors. Create with `active = true` sends `disabledAt: null` so the agent is born enabled. If a later status call fails, the configuration change has already been applied and only the status is left to retry.
 
 ## Example Usage
 
@@ -119,14 +119,14 @@ resource "pipefy_ai_agent" "triage" {
 
 ### Required
 
-- `behaviors` (Attributes List) Ordered AI-agent behaviors, managed as a complete list. (see [below for nested schema](#nestedatt--behaviors))
+- `active` (Boolean) Whether the AI agent is active. An update that should keep the agent on sends `active: true` on one already-active behavior and omits the flag on the rest. An inactive agent is kept off via `disabledAt`, without sending `active: false` on behaviors. Create with `active = true` sends `disabledAt: null` so the agent is born enabled.
+- `behaviors` (Attributes List) Ordered AI-agent behaviors, managed as a complete list. The API stores and returns behaviors in creation order; Read reorders that list to match this configuration by name and event so inserting or reordering converges. (see [below for nested schema](#nestedatt--behaviors))
 - `instruction` (String) The agent-level purpose shown as its description.
 - `name` (String) The display name of the AI agent.
 - `pipe_id` (String) The ID of the pipe that owns the AI agent.
 
 ### Optional
 
-- `active` (Boolean) Whether the AI agent is active. Applied with a separate status API call after create/update of the agent configuration.
 - `data_source_ids` (Set of String) Knowledge-source IDs managed as the complete unordered agent-level set.
 
 ### Read-Only
@@ -180,7 +180,7 @@ Required:
 
 Optional:
 
-- `value` (String) Optional fixed value or source-field reference.
+- `value` (String) Optional fixed value or source-field reference. Omit the attribute rather than setting an empty string; Pipefy returns a blank that Read maps to null, so `value = ""` cannot converge.
 
 
 
