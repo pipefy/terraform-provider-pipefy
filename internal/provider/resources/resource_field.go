@@ -100,7 +100,7 @@ func (r *FieldResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 			"custom_validation": schema.StringAttribute{
 				Optional:      true,
 				Computed:      true,
-				Description:   "Custom validation rule applied to the field value",
+				Description:   "Custom validation rule applied to the field value. Empty string and null are equivalent, and the API honours this attribute only on field types that support custom validation. See https://developers.pipefy.com/reference.",
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"index": schema.Float64Attribute{
@@ -146,7 +146,7 @@ func (r *FieldResource) Create(ctx context.Context, req resource.CreateRequest, 
 		resp.Diagnostics.AddError("create field failed", err.Error())
 		return
 	}
-	applyFieldToModel(ctx, &data, field, &resp.Diagnostics)
+	fillFieldFromAPI(ctx, &data, field, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -207,7 +207,7 @@ func (r *FieldResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		resp.Diagnostics.AddError("update field failed", err.Error())
 		return
 	}
-	applyFieldToModel(ctx, &data, field, &resp.Diagnostics)
+	fillFieldFromAPI(ctx, &data, field, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -260,6 +260,13 @@ func boolPtr(p *bool) types.Bool {
 	return types.BoolValue(*p)
 }
 
+func floatPtr(p *float64) types.Float64 {
+	if p == nil {
+		return types.Float64Null()
+	}
+	return types.Float64Value(*p)
+}
+
 // fieldWrites carries each attribute only when it has a concrete value, so an
 // omitted Optional+Computed attribute keeps its server value instead of being cleared.
 func fieldWrites(ctx context.Context, data FieldModel, diags *diag.Diagnostics) pipefy.FieldWrites {
@@ -280,6 +287,23 @@ func fieldWrites(ctx context.Context, data FieldModel, diags *diag.Diagnostics) 
 	return writes
 }
 
+// fillFieldFromAPI takes unknowns from the response. options and index always
+// take the API value. custom_validation always goes through mergeEmptyish so a
+// dropped rule fails apply.
+func fillFieldFromAPI(ctx context.Context, data *FieldModel, f pipefy.Field, diags *diag.Diagnostics) {
+	data.Id = fillUnknownString(data.Id, types.StringValue(f.ID))
+	data.InternalId = fillUnknownString(data.InternalId, types.StringValue(f.InternalID))
+	data.Uuid = fillUnknownString(data.Uuid, types.StringValue(f.UUID))
+	data.Required = fillUnknownBool(data.Required, boolPtr(f.Required))
+	data.Description = fillUnknownString(data.Description, strPtr(f.Description))
+	data.Help = fillUnknownString(data.Help, strPtr(f.Help))
+	data.Editable = fillUnknownBool(data.Editable, boolPtr(f.Editable))
+	data.MinimalView = fillUnknownBool(data.MinimalView, boolPtr(f.MinimalView))
+	data.CustomValidation = mergeEmptyish(data.CustomValidation, f.CustomValidation)
+	data.Index = floatPtr(f.Index)
+	data.Options = optionsToList(ctx, f.Options, diags)
+}
+
 // applyFieldToModel maps a fetched field onto the model. phase_id is not in the
 // payload; it is set at create/import and left untouched here.
 func applyFieldToModel(ctx context.Context, data *FieldModel, f pipefy.Field, diags *diag.Diagnostics) {
@@ -293,11 +317,7 @@ func applyFieldToModel(ctx context.Context, data *FieldModel, f pipefy.Field, di
 	data.Help = strPtr(f.Help)
 	data.Editable = boolPtr(f.Editable)
 	data.MinimalView = boolPtr(f.MinimalView)
-	data.CustomValidation = strPtr(f.CustomValidation)
-	if f.Index == nil {
-		data.Index = types.Float64Null()
-	} else {
-		data.Index = types.Float64Value(*f.Index)
-	}
+	data.CustomValidation = mergeEmptyish(data.CustomValidation, f.CustomValidation)
+	data.Index = floatPtr(f.Index)
 	data.Options = optionsToList(ctx, f.Options, diags)
 }

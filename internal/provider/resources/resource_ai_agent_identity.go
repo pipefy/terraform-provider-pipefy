@@ -75,13 +75,6 @@ func matchByIndex[T any](index int, fromAPI []T, used []bool, planLen int) (T, b
 	return fromAPI[index], true
 }
 
-func fillUnknownString(planned, fromAPI types.String) types.String {
-	if planned.IsUnknown() {
-		return fromAPI
-	}
-	return planned
-}
-
 func (model *AiAgentModel) applyGraphQL(agent pipefy.Agent) {
 	model.ID = types.StringValue(agent.UUID)
 	model.Name = types.StringValue(agent.Name)

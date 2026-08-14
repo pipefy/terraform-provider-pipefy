@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -78,6 +79,19 @@ func varStr(vars map[string]any, k string) *string {
 	return nil
 }
 
+// varCustomValidation models a written "" coming back as null. A non-empty
+// rule on a number field is dropped: that type does not honour the attribute.
+func varCustomValidation(vars map[string]any, fieldType string) *string {
+	v, ok := vars["customValidation"].(string)
+	if !ok || v == "" {
+		return nil
+	}
+	if fieldType == "number" {
+		return nil
+	}
+	return &v
+}
+
 func varNum(vars map[string]any, k string) *float64 {
 	if v, ok := vars[k].(float64); ok {
 		return &v
@@ -122,7 +136,7 @@ func fieldMockHandler(st *fieldState) http.HandlerFunc {
 			st.help = varStr(gr.Variables, "help")
 			st.editable = varBool(gr.Variables, "editable")
 			st.minimalView = varBool(gr.Variables, "minimalView")
-			st.customValidation = varStr(gr.Variables, "customValidation")
+			st.customValidation = varCustomValidation(gr.Variables, st.fieldType)
 			st.index = varNum(gr.Variables, "index")
 			if st.index == nil {
 				def := 1.5
@@ -150,8 +164,8 @@ func fieldMockHandler(st *fieldState) http.HandlerFunc {
 			if p := varBool(gr.Variables, "minimalView"); p != nil {
 				st.minimalView = p
 			}
-			if p := varStr(gr.Variables, "customValidation"); p != nil {
-				st.customValidation = p
+			if _, sent := gr.Variables["customValidation"]; sent {
+				st.customValidation = varCustomValidation(gr.Variables, st.fieldType)
 			}
 			if p := varNum(gr.Variables, "index"); p != nil {
 				st.index = p
@@ -338,6 +352,188 @@ resource "pipefy_field" "test" {
 				},
 				RefreshState:       true,
 				ExpectNonEmptyPlan: true,
+			},
+		},
+	})
+}
+
+// The web UI writes "" for custom_validation when someone edits a field, but a
+// write of "" is stored as NULL. Refresh therefore seeds "" into state, the next
+// plan carries it forward, and the update response comes back null. Both values
+// mean "no rule", so neither the refresh nor the apply may report a change.
+func TestUnit_FieldResource_EmptyCustomValidationFromUIEdit(t *testing.T) {
+	st := &fieldState{}
+	srv := httptest.NewServer(fieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := fieldConfig(srv.URL, `
+resource "pipefy_field" "test" {
+  phase_id = pipefy_phase.ph.id
+  type     = "radio_vertical"
+  label    = "Budget confirmed"
+  options  = ["Yes", "No"]
+}
+`)
+	withOption := strings.ReplaceAll(cfg, `["Yes", "No"]`, `["Yes", "No", "Unknown"]`)
+
+	uiEdit := func() {
+		empty := ""
+		st.customValidation = &empty
+	}
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: cfg},
+			{
+				PreConfig:         uiEdit,
+				Config:            cfg,
+				ConfigPlanChecks:  resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
+				ConfigStateChecks: []statecheck.StateCheck{statecheck.ExpectKnownValue("pipefy_field.test", tfjsonpath.New("custom_validation"), knownvalue.Null())},
+			},
+			{
+				PreConfig:         uiEdit,
+				Config:            withOption,
+				ConfigPlanChecks:  planUpdate,
+				ConfigStateChecks: []statecheck.StateCheck{expectList("options", "Yes", "No", "Unknown")},
+			},
+		},
+	})
+}
+
+// The empty-or-null merge is scoped to custom_validation. description and help
+// store "" verbatim on the API side, so a UI edit that blanks them is a real
+// value the refresh has to reflect. This fails the moment someone widens the
+// merge into a general "empty string means null" rule.
+func TestUnit_FieldResource_EmptyDescriptionAndHelpSurviveRefresh(t *testing.T) {
+	st := &fieldState{}
+	srv := httptest.NewServer(fieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := fieldConfig(srv.URL, `
+resource "pipefy_field" "test" {
+  phase_id = pipefy_phase.ph.id
+  type     = "short_text"
+  label    = "Title"
+}
+`)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: cfg},
+			{
+				PreConfig: func() {
+					empty := ""
+					st.description = &empty
+					st.help = &empty
+				},
+				Config:           cfg,
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
+				ConfigStateChecks: []statecheck.StateCheck{
+					expectStr("description", ""),
+					expectStr("help", ""),
+				},
+			},
+		},
+	})
+}
+
+// The merge keeps empty and null interchangeable, and nothing else: a rule that
+// appears on the server side is drift the refresh must report. Config holds a
+// different rule so the plan is non-empty; omitting the attribute would let
+// Optional+Computed swallow the API value with an empty plan.
+func TestUnit_FieldResource_CustomValidationDriftDetected(t *testing.T) {
+	st := &fieldState{}
+	srv := httptest.NewServer(fieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := fieldConfig(srv.URL, `
+resource "pipefy_field" "test" {
+  phase_id          = pipefy_phase.ph.id
+  type              = "short_text"
+  label             = "Title"
+  custom_validation = "min:1"
+}
+`)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:            cfg,
+				ConfigStateChecks: []statecheck.StateCheck{expectStr("custom_validation", "min:1")},
+			},
+			{
+				PreConfig: func() {
+					rule := "min:3"
+					st.customValidation = &rule
+				},
+				Config:             cfg,
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: true,
+				ConfigStateChecks:  []statecheck.StateCheck{expectStr("custom_validation", "min:3")},
+			},
+		},
+	})
+}
+
+func TestUnit_FieldResource_EmptyCustomValidationFromConfig(t *testing.T) {
+	st := &fieldState{}
+	srv := httptest.NewServer(fieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := fieldConfig(srv.URL, `
+resource "pipefy_field" "test" {
+  phase_id          = pipefy_phase.ph.id
+  type              = "short_text"
+  label             = "Title"
+  custom_validation = ""
+}
+`)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:            cfg,
+				ConfigStateChecks: []statecheck.StateCheck{expectStr("custom_validation", "")},
+			},
+			{
+				Config:           cfg,
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
+			},
+		},
+	})
+}
+
+// Keeping the planned value would convert a dropped rule into a perpetual plan
+// with no diagnostic.
+func TestUnit_FieldResource_UnsupportedCustomValidationRejectedAfterApply(t *testing.T) {
+	st := &fieldState{}
+	srv := httptest.NewServer(fieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := fieldConfig(srv.URL, `
+resource "pipefy_field" "test" {
+  phase_id          = pipefy_phase.ph.id
+  type              = "number"
+  label             = "Amount"
+  custom_validation = "min:3"
+}
+`)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      cfg,
+				ExpectError: regexp.MustCompile(`inconsistent result after apply`),
 			},
 		},
 	})

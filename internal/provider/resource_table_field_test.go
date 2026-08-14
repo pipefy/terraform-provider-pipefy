@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -63,7 +64,7 @@ func tableFieldMockHandler(st *tableFieldState) http.HandlerFunc {
 			st.description = varStr(gr.Variables, "description")
 			st.help = varStr(gr.Variables, "help")
 			st.minimalView = varBool(gr.Variables, "minimalView")
-			st.customValidation = varStr(gr.Variables, "customValidation")
+			st.customValidation = varCustomValidation(gr.Variables, st.fieldType)
 			st.unique = varBool(gr.Variables, "unique")
 			st.optionsJSON = optionsJSON(gr.Variables, "null")
 			st.created = true
@@ -84,8 +85,8 @@ func tableFieldMockHandler(st *tableFieldState) http.HandlerFunc {
 			if p := varBool(gr.Variables, "minimalView"); p != nil {
 				st.minimalView = p
 			}
-			if p := varStr(gr.Variables, "customValidation"); p != nil {
-				st.customValidation = p
+			if _, sent := gr.Variables["customValidation"]; sent {
+				st.customValidation = varCustomValidation(gr.Variables, st.fieldType)
 			}
 			if p := varBool(gr.Variables, "unique"); p != nil {
 				st.unique = p
@@ -225,6 +226,186 @@ resource "pipefy_table_field" "test" {
 				ConfigStateChecks: []statecheck.StateCheck{
 					expectTableFieldStr("help", "Give it a unique name"),
 				},
+			},
+		},
+	})
+}
+
+// Table fields store a written "" as NULL but can still read one back, so a
+// refresh must not seed "" into state and the next apply must not trip over it.
+func TestUnit_TableFieldResource_EmptyCustomValidationFromUIEdit(t *testing.T) {
+	st := &tableFieldState{}
+	srv := httptest.NewServer(tableFieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := tableFieldConfig(srv.URL, `
+resource "pipefy_table_field" "test" {
+  table_id = pipefy_table.t.id
+  type     = "radio_vertical"
+  label    = "Budget confirmed"
+  options  = ["Yes", "No"]
+}
+`)
+	withOption := strings.ReplaceAll(cfg, `["Yes", "No"]`, `["Yes", "No", "Unknown"]`)
+
+	uiEdit := func() {
+		empty := ""
+		st.customValidation = &empty
+	}
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: cfg},
+			{
+				PreConfig:         uiEdit,
+				Config:            cfg,
+				ConfigPlanChecks:  resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
+				ConfigStateChecks: []statecheck.StateCheck{statecheck.ExpectKnownValue("pipefy_table_field.test", tfjsonpath.New("custom_validation"), knownvalue.Null())},
+			},
+			{
+				PreConfig:         uiEdit,
+				Config:            withOption,
+				ConfigPlanChecks:  planTableFieldUpdate,
+				ConfigStateChecks: []statecheck.StateCheck{expectTableFieldList("options", "Yes", "No", "Unknown")},
+			},
+		},
+	})
+}
+
+func TestUnit_TableFieldResource_EmptyCustomValidationFromConfig(t *testing.T) {
+	st := &tableFieldState{}
+	srv := httptest.NewServer(tableFieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := tableFieldConfig(srv.URL, `
+resource "pipefy_table_field" "test" {
+  table_id          = pipefy_table.t.id
+  type              = "short_text"
+  label             = "Name"
+  custom_validation = ""
+}
+`)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:            cfg,
+				ConfigStateChecks: []statecheck.StateCheck{expectTableFieldStr("custom_validation", "")},
+			},
+			{
+				Config:           cfg,
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
+			},
+		},
+	})
+}
+
+// The empty-or-null merge is scoped to custom_validation. description and help
+// store "" verbatim on the API side, so a UI edit that blanks them is a real
+// value the refresh has to reflect. This fails the moment someone widens the
+// merge into a general "empty string means null" rule.
+func TestUnit_TableFieldResource_EmptyDescriptionAndHelpSurviveRefresh(t *testing.T) {
+	st := &tableFieldState{}
+	srv := httptest.NewServer(tableFieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := tableFieldConfig(srv.URL, `
+resource "pipefy_table_field" "test" {
+  table_id = pipefy_table.t.id
+  type     = "short_text"
+  label    = "Name"
+}
+`)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: cfg},
+			{
+				PreConfig: func() {
+					empty := ""
+					st.description = &empty
+					st.help = &empty
+				},
+				Config:           cfg,
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
+				ConfigStateChecks: []statecheck.StateCheck{
+					expectTableFieldStr("description", ""),
+					expectTableFieldStr("help", ""),
+				},
+			},
+		},
+	})
+}
+
+// The merge keeps empty and null interchangeable, and nothing else: a rule that
+// appears on the server side is drift the refresh must report. Config holds a
+// different rule so the plan is non-empty; omitting the attribute would let
+// Optional+Computed swallow the API value with an empty plan.
+func TestUnit_TableFieldResource_CustomValidationDriftDetected(t *testing.T) {
+	st := &tableFieldState{}
+	srv := httptest.NewServer(tableFieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := tableFieldConfig(srv.URL, `
+resource "pipefy_table_field" "test" {
+  table_id          = pipefy_table.t.id
+  type              = "short_text"
+  label             = "Name"
+  custom_validation = "min:1"
+}
+`)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:            cfg,
+				ConfigStateChecks: []statecheck.StateCheck{expectTableFieldStr("custom_validation", "min:1")},
+			},
+			{
+				PreConfig: func() {
+					rule := "min:3"
+					st.customValidation = &rule
+				},
+				Config:             cfg,
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: true,
+				ConfigStateChecks:  []statecheck.StateCheck{expectTableFieldStr("custom_validation", "min:3")},
+			},
+		},
+	})
+}
+
+// Keeping the planned value would convert a dropped rule into a perpetual plan
+// with no diagnostic.
+func TestUnit_TableFieldResource_UnsupportedCustomValidationRejectedAfterApply(t *testing.T) {
+	st := &tableFieldState{}
+	srv := httptest.NewServer(tableFieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := tableFieldConfig(srv.URL, `
+resource "pipefy_table_field" "test" {
+  table_id          = pipefy_table.t.id
+  type              = "number"
+  label             = "Amount"
+  custom_validation = "min:3"
+}
+`)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      cfg,
+				ExpectError: regexp.MustCompile(`inconsistent result after apply`),
 			},
 		},
 	})

@@ -55,7 +55,7 @@ resource "pipefy_field" "priority" {
 
 ### Optional
 
-- `custom_validation` (String) Custom validation rule applied to the field value
+- `custom_validation` (String) Custom validation rule applied to the field value. Empty string and null are equivalent, and the API honours this attribute only on field types that support custom validation. See https://developers.pipefy.com/reference.
 - `description` (String) Helper description shown under the field
 - `editable` (Boolean) Whether the field value can be edited after creation
 - `help` (String) Help text shown for the field

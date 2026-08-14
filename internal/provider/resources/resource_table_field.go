@@ -92,7 +92,7 @@ func (r *TableFieldResource) Schema(ctx context.Context, req resource.SchemaRequ
 			"custom_validation": schema.StringAttribute{
 				Optional:      true,
 				Computed:      true,
-				Description:   "Custom validation rule applied to the field value",
+				Description:   "Custom validation rule applied to the field value. Empty string and null are equivalent, and the API honours this attribute only on field types that support custom validation. See https://developers.pipefy.com/reference.",
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"unique": schema.BoolAttribute{
@@ -138,7 +138,7 @@ func (r *TableFieldResource) Create(ctx context.Context, req resource.CreateRequ
 		resp.Diagnostics.AddError("create table field failed", err.Error())
 		return
 	}
-	applyTableFieldToModel(ctx, &data, field, &resp.Diagnostics)
+	fillTableFieldFromAPI(ctx, &data, field, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -199,7 +199,7 @@ func (r *TableFieldResource) Update(ctx context.Context, req resource.UpdateRequ
 		resp.Diagnostics.AddError("update table field failed", err.Error())
 		return
 	}
-	applyTableFieldToModel(ctx, &data, field, &resp.Diagnostics)
+	fillTableFieldFromAPI(ctx, &data, field, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -248,8 +248,24 @@ func tableFieldWrites(ctx context.Context, data TableFieldModel, diags *diag.Dia
 	return writes
 }
 
-// applyTableFieldToModel maps a fetched field onto the model. table_id is not in the
-// payload; it is set at create/import and left untouched here.
+// fillTableFieldFromAPI takes unknowns from the response. options always takes
+// the API value. custom_validation always goes through mergeEmptyish so a
+// dropped rule fails apply.
+func fillTableFieldFromAPI(ctx context.Context, data *TableFieldModel, f pipefy.TableField, diags *diag.Diagnostics) {
+	data.Id = fillUnknownString(data.Id, types.StringValue(f.ID))
+	data.InternalId = fillUnknownString(data.InternalId, types.StringValue(f.InternalID))
+	data.Uuid = fillUnknownString(data.Uuid, types.StringValue(f.UUID))
+	data.Required = fillUnknownBool(data.Required, boolPtr(f.Required))
+	data.Description = fillUnknownString(data.Description, strPtr(f.Description))
+	data.Help = fillUnknownString(data.Help, strPtr(f.Help))
+	data.MinimalView = fillUnknownBool(data.MinimalView, boolPtr(f.MinimalView))
+	data.CustomValidation = mergeEmptyish(data.CustomValidation, f.CustomValidation)
+	data.Unique = fillUnknownBool(data.Unique, boolPtr(f.Unique))
+	data.Options = optionsToList(ctx, f.Options, diags)
+}
+
+// applyTableFieldToModel maps a fetched field onto the model. table_id is not
+// in the payload; it is set at create/import and left untouched here.
 func applyTableFieldToModel(ctx context.Context, data *TableFieldModel, f pipefy.TableField, diags *diag.Diagnostics) {
 	data.Id = types.StringValue(f.ID)
 	data.InternalId = types.StringValue(f.InternalID)
@@ -260,7 +276,7 @@ func applyTableFieldToModel(ctx context.Context, data *TableFieldModel, f pipefy
 	data.Description = strPtr(f.Description)
 	data.Help = strPtr(f.Help)
 	data.MinimalView = boolPtr(f.MinimalView)
-	data.CustomValidation = strPtr(f.CustomValidation)
+	data.CustomValidation = mergeEmptyish(data.CustomValidation, f.CustomValidation)
 	data.Unique = boolPtr(f.Unique)
 	data.Options = optionsToList(ctx, f.Options, diags)
 }
