@@ -86,9 +86,7 @@ func (r *AiAgentResource) Create(
 	r.finishCreate(ctx, &model, resp)
 }
 
-// createAgent sends disabledAt: null when the agent should start active, and a
-// timestamp when it should start inactive, so create does not need a follow-up
-// status mutation on the happy path.
+// createAgent sets disabledAt so the happy path needs no follow-up status call.
 func (r *AiAgentResource) createAgent(
 	ctx context.Context,
 	model *AiAgentModel,
@@ -108,9 +106,8 @@ func (r *AiAgentResource) createAgent(
 	return nil
 }
 
-// finishCreate verifies the agent and enforces planned status. A status
-// mismatch fails the apply and leaves the agent in state; deleting it here
-// would destroy a resource the create mutation already succeeded on.
+// A status mismatch fails the apply and leaves the agent in state; deleting it
+// here would destroy a resource the create mutation already succeeded on.
 func (r *AiAgentResource) finishCreate(
 	ctx context.Context,
 	model *AiAgentModel,
@@ -143,9 +140,6 @@ func (r *AiAgentResource) persistCreated(
 	agent *pipefy.Agent,
 	resp *resource.CreateResponse,
 ) {
-	if agent == nil {
-		return
-	}
 	if err := model.fillFromAgent(*agent); err != nil {
 		return
 	}
@@ -277,11 +271,11 @@ func updateInput(
 	current pipefy.Agent,
 ) map[string]any {
 	keepAlive := omitBehaviorActive
-	if isConfiguredBool(desired) && desired.ValueBool() {
+	if desired.ValueBool() {
 		keepAlive = keepAliveBehaviorIndex(model.Behaviors, current)
 	}
 	input := model.graphQLInput(repoUUID, keepAlive)
-	if !wantsInactive(desired) {
+	if desired.ValueBool() {
 		return input
 	}
 	if current.DisabledAt != nil {
@@ -292,15 +286,15 @@ func updateInput(
 	return input
 }
 
-// enforceStatus corrects a mismatched status once and errors if the API still
-// disagrees, so state never claims a status the remote does not report.
+// enforceStatus corrects a mismatch once so state never claims a status the
+// remote does not report.
 func (r *AiAgentResource) enforceStatus(
 	ctx context.Context,
 	id string,
 	desired types.Bool,
 	agent *pipefy.Agent,
 ) (*pipefy.Agent, error) {
-	if !isConfiguredBool(desired) || agentIsActive(*agent) == desired.ValueBool() {
+	if agentIsActive(*agent) == desired.ValueBool() {
 		return agent, nil
 	}
 	if err := r.updateStatus(ctx, id, desired.ValueBool()); err != nil {
@@ -339,9 +333,6 @@ func (r *AiAgentResource) refreshStateAfterPartialUpdate(
 	agent *pipefy.Agent,
 	resp *resource.UpdateResponse,
 ) {
-	if agent == nil {
-		return
-	}
 	if err := plan.fillFromAgent(*agent); err != nil {
 		return
 	}
@@ -370,8 +361,7 @@ func (r *AiAgentResource) updateStatus(ctx context.Context, id string, active bo
 	return r.api.AiAgents.UpdateStatus(ctx, id, active)
 }
 
-// fetchAgent maps ErrNotFound to a nil agent, which is the contract its five
-// call sites are written against.
+// fetchAgent maps ErrNotFound to a nil agent.
 func (r *AiAgentResource) fetchAgent(
 	ctx context.Context,
 	id string,
@@ -420,14 +410,6 @@ func (r *AiAgentResource) ImportState(
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("pipe_id"), parts[0])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[1])...)
-}
-
-func isConfiguredBool(value types.Bool) bool {
-	return !value.IsNull() && !value.IsUnknown()
-}
-
-func wantsInactive(value types.Bool) bool {
-	return isConfiguredBool(value) && !value.ValueBool()
 }
 
 func agentIsActive(agent pipefy.Agent) bool {
