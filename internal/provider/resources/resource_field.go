@@ -98,12 +98,9 @@ func (r *FieldResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
 			},
 			"custom_validation": schema.StringAttribute{
-				Optional: true,
-				Computed: true,
-				Description: "Custom validation rule applied to the field value. The API stores an empty " +
-					"rule as null, and a field last written outside GraphQL can still read back as an empty " +
-					"string; the provider treats empty and null as the same value for this attribute so " +
-					"refresh and apply stay consistent. See the API reference (https://developers.pipefy.com/reference).",
+				Optional:      true,
+				Computed:      true,
+				Description:   "Custom validation rule applied to the field value. Empty string and null are equivalent, and the API honours this attribute only on field types that support custom validation. See https://developers.pipefy.com/reference.",
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"index": schema.Float64Attribute{
@@ -149,7 +146,7 @@ func (r *FieldResource) Create(ctx context.Context, req resource.CreateRequest, 
 		resp.Diagnostics.AddError("create field failed", err.Error())
 		return
 	}
-	applyFieldToModel(ctx, &data, field, true, &resp.Diagnostics)
+	fillFieldFromAPI(ctx, &data, field, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -177,7 +174,7 @@ func (r *FieldResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	applyFieldToModel(ctx, &data, found, false, &resp.Diagnostics)
+	applyFieldToModel(ctx, &data, found, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -210,7 +207,7 @@ func (r *FieldResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		resp.Diagnostics.AddError("update field failed", err.Error())
 		return
 	}
-	applyFieldToModel(ctx, &data, field, true, &resp.Diagnostics)
+	fillFieldFromAPI(ctx, &data, field, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -263,6 +260,13 @@ func boolPtr(p *bool) types.Bool {
 	return types.BoolValue(*p)
 }
 
+func floatPtr(p *float64) types.Float64 {
+	if p == nil {
+		return types.Float64Null()
+	}
+	return types.Float64Value(*p)
+}
+
 // fieldWrites carries each attribute only when it has a concrete value, so an
 // omitted Optional+Computed attribute keeps its server value instead of being cleared.
 func fieldWrites(ctx context.Context, data FieldModel, diags *diag.Diagnostics) pipefy.FieldWrites {
@@ -283,50 +287,41 @@ func fieldWrites(ctx context.Context, data FieldModel, diags *diag.Diagnostics) 
 	return writes
 }
 
-// applyFieldToModel maps a fetched field onto the model. phase_id is not in the
-// payload; it is set at create/import and left untouched here.
-func applyFieldToModel(ctx context.Context, data *FieldModel, f pipefy.Field, onlyUnknown bool, diags *diag.Diagnostics) {
-	if !onlyUnknown || data.Id.IsUnknown() {
-		data.Id = types.StringValue(f.ID)
-	}
-	if !onlyUnknown || data.InternalId.IsUnknown() {
-		data.InternalId = types.StringValue(f.InternalID)
-	}
-	if !onlyUnknown || data.Uuid.IsUnknown() {
-		data.Uuid = types.StringValue(f.UUID)
-	}
-	if !onlyUnknown || data.Label.IsUnknown() {
-		data.Label = types.StringValue(f.Label)
-	}
-	if !onlyUnknown || data.Type.IsUnknown() {
-		data.Type = types.StringValue(f.Type)
-	}
-	if !onlyUnknown || data.Required.IsUnknown() {
-		data.Required = boolPtr(f.Required)
-	}
-	if !onlyUnknown || data.Description.IsUnknown() {
-		data.Description = strPtr(f.Description)
-	}
-	if !onlyUnknown || data.Help.IsUnknown() {
-		data.Help = strPtr(f.Help)
-	}
-	if !onlyUnknown || data.Editable.IsUnknown() {
-		data.Editable = boolPtr(f.Editable)
-	}
-	if !onlyUnknown || data.MinimalView.IsUnknown() {
-		data.MinimalView = boolPtr(f.MinimalView)
-	}
-	if !onlyUnknown || data.CustomValidation.IsUnknown() {
-		data.CustomValidation = mergeEmptyish(data.CustomValidation, f.CustomValidation)
-	}
-	if !onlyUnknown || data.Index.IsUnknown() {
-		if f.Index == nil {
-			data.Index = types.Float64Null()
-		} else {
-			data.Index = types.Float64Value(*f.Index)
-		}
-	}
-	if !onlyUnknown || data.Options.IsUnknown() {
-		data.Options = optionsToList(ctx, f.Options, diags)
-	}
+// fillFieldFromAPI is the Create and Update mapping: take from the response
+// only what the plan could not know. label and type are Required, so they stay
+// as planned. options and index always take the API value; preserving the plan
+// would silence a server-side change. custom_validation always goes through
+// mergeEmptyish, including when the plan already knew the value, so a rule the
+// API drops fails apply instead of looping as a perpetual plan.
+func fillFieldFromAPI(ctx context.Context, data *FieldModel, f pipefy.Field, diags *diag.Diagnostics) {
+	data.Id = fillUnknownString(data.Id, types.StringValue(f.ID))
+	data.InternalId = fillUnknownString(data.InternalId, types.StringValue(f.InternalID))
+	data.Uuid = fillUnknownString(data.Uuid, types.StringValue(f.UUID))
+	data.Required = fillUnknownBool(data.Required, boolPtr(f.Required))
+	data.Description = fillUnknownString(data.Description, strPtr(f.Description))
+	data.Help = fillUnknownString(data.Help, strPtr(f.Help))
+	data.Editable = fillUnknownBool(data.Editable, boolPtr(f.Editable))
+	data.MinimalView = fillUnknownBool(data.MinimalView, boolPtr(f.MinimalView))
+	data.CustomValidation = mergeEmptyish(data.CustomValidation, f.CustomValidation)
+	data.Index = floatPtr(f.Index)
+	data.Options = optionsToList(ctx, f.Options, diags)
+}
+
+// applyFieldToModel is the Read mapping. It overwrites every attribute so
+// drift surfaces. phase_id is not in the payload; it is set at create/import
+// and left untouched here.
+func applyFieldToModel(ctx context.Context, data *FieldModel, f pipefy.Field, diags *diag.Diagnostics) {
+	data.Id = types.StringValue(f.ID)
+	data.InternalId = types.StringValue(f.InternalID)
+	data.Uuid = types.StringValue(f.UUID)
+	data.Label = types.StringValue(f.Label)
+	data.Type = types.StringValue(f.Type)
+	data.Required = boolPtr(f.Required)
+	data.Description = strPtr(f.Description)
+	data.Help = strPtr(f.Help)
+	data.Editable = boolPtr(f.Editable)
+	data.MinimalView = boolPtr(f.MinimalView)
+	data.CustomValidation = mergeEmptyish(data.CustomValidation, f.CustomValidation)
+	data.Index = floatPtr(f.Index)
+	data.Options = optionsToList(ctx, f.Options, diags)
 }

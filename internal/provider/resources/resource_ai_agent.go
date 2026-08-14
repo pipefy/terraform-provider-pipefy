@@ -97,8 +97,8 @@ func loadCreateModel(
 	return model, configuredActive, !resp.Diagnostics.HasError()
 }
 
-// createAgent sends disabledAt for an agent configured inactive. createAiAgent
-// honours it, so that agent is never switched on and off again.
+// createAgent sends disabledAt when the agent should start inactive so create
+// never enables it and then toggles it off.
 func (r *AiAgentResource) createAgent(
 	ctx context.Context,
 	model *AiAgentModel,
@@ -117,7 +117,7 @@ func (r *AiAgentResource) createAgent(
 	return nil
 }
 
-// finishCreate applies optional status then refreshes state. Status stays a
+// finishCreate verifies the agent and enforces configured status. Status stays a
 // separate mutation because createAiAgent does not accept the active flag.
 func (r *AiAgentResource) finishCreate(
 	ctx context.Context,
@@ -125,12 +125,6 @@ func (r *AiAgentResource) finishCreate(
 	configuredActive types.Bool,
 	resp *resource.CreateResponse,
 ) {
-	if wantsActive(configuredActive) {
-		if err := r.updateStatus(ctx, model.ID.ValueString(), true); err != nil {
-			r.rollbackCreate(ctx, model.ID.ValueString(), err, resp)
-			return
-		}
-	}
 	agent, err := r.requireAgent(ctx, model.ID.ValueString())
 	if err != nil {
 		r.rollbackCreate(ctx, model.ID.ValueString(), err, resp)
@@ -219,7 +213,7 @@ func (r *AiAgentResource) Update(
 }
 
 // applyUpdate enforces the planned status, not the change between config and
-// prior state, because updateAiAgent disables the agent on every call.
+// prior state, because updateAiAgent disables the agent unless a behavior is active.
 func (r *AiAgentResource) applyUpdate(
 	ctx context.Context,
 	plan *AiAgentModel,
@@ -235,13 +229,6 @@ func (r *AiAgentResource) applyUpdate(
 	if err := r.api.AiAgents.Update(ctx, plan.ID.ValueString(), input); err != nil {
 		resp.Diagnostics.AddError("update AI agent failed", err.Error())
 		return
-	}
-	if wantsActive(desired) {
-		if err := r.updateStatus(ctx, plan.ID.ValueString(), true); err != nil {
-			r.refreshStateAfterPartialUpdate(ctx, plan, resp)
-			resp.Diagnostics.AddError("update AI agent status failed", err.Error())
-			return
-		}
 	}
 	agent, err := r.requireAgent(ctx, plan.ID.ValueString())
 	if err != nil {
@@ -282,9 +269,8 @@ func (r *AiAgentResource) updateInput(
 	return input, nil
 }
 
-// enforceStatus corrects a status that came back different from the desired one
-// and fails if the correction did not take, so state never claims a status the
-// API does not report.
+// enforceStatus corrects a mismatched status once and errors if the API still
+// disagrees, so state never claims a status the remote does not report.
 func (r *AiAgentResource) enforceStatus(
 	ctx context.Context,
 	id string,
@@ -412,10 +398,6 @@ func (r *AiAgentResource) ImportState(
 
 func isConfiguredBool(value types.Bool) bool {
 	return !value.IsNull() && !value.IsUnknown()
-}
-
-func wantsActive(value types.Bool) bool {
-	return isConfiguredBool(value) && value.ValueBool()
 }
 
 func wantsInactive(value types.Bool) bool {

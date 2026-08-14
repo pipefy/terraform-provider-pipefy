@@ -228,8 +228,36 @@ func TestRematchNestedIdentitiesOnReorder(t *testing.T) {
 	}
 }
 
-// Anything the plan already decided has to survive verbatim, and the ids have to
-// land on the right entry even when the response reorders the behaviors.
+func TestGraphQLInputSetsBehaviorActiveFromAgent(t *testing.T) {
+	cases := map[string]struct {
+		active  types.Bool
+		want    any
+		present bool
+	}{
+		"true":    {active: types.BoolValue(true), want: true, present: true},
+		"false":   {active: types.BoolValue(false), want: false, present: true},
+		"unknown": {active: types.BoolUnknown(), present: false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			model := plannedAgentModel()
+			model.Active = tc.active
+			input := model.graphQLInput("pipe-uuid")
+			behaviors, _ := input["behaviors"].([]map[string]any)
+			if len(behaviors) == 0 {
+				t.Fatal("expected behaviors in GraphQL input")
+			}
+			got, present := behaviors[0]["active"]
+			if present != tc.present {
+				t.Fatalf("active present = %t, want %t", present, tc.present)
+			}
+			if tc.present && got != tc.want {
+				t.Fatalf("active = %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFillFromAgentKeepsPlannedValuesAndGraftsIDs(t *testing.T) {
 	plan := plannedAgentModel()
 	plan.fillFromAgent(pipefy.Agent{
@@ -251,6 +279,23 @@ func TestFillFromAgentKeepsPlannedValuesAndGraftsIDs(t *testing.T) {
 	}
 	assertBehaviorIdentity(t, plan.Behaviors[0], "behavior-created", "action-move")
 	assertBehaviorIdentity(t, plan.Behaviors[1], "behavior-updated", "action-update")
+}
+
+func TestFillFromAgentLeavesUnknownIDsWhenIdentityMisses(t *testing.T) {
+	plan := plannedAgentModel()
+	plan.fillFromAgent(pipefy.Agent{
+		UUID: "agent-uuid", Name: "renamed elsewhere", Instruction: "rewritten elsewhere",
+		DataSourceIDs: []string{"source-9"},
+		Behaviors: []pipefy.Behavior{
+			apiBehavior("behavior-other", "Other", "card_moved", "action-other", "Other", "move_card"),
+		},
+	})
+	if !plan.Behaviors[0].ID.IsUnknown() || !plan.Behaviors[1].ID.IsUnknown() {
+		t.Fatalf("miss grafted identity: %#v", plan.Behaviors)
+	}
+	if !plan.Behaviors[0].Actions[0].ID.IsUnknown() || !plan.Behaviors[1].Actions[0].ID.IsUnknown() {
+		t.Fatalf("miss grafted action identity: %#v", plan.Behaviors)
+	}
 }
 
 func assertBehaviorIdentity(t *testing.T, behavior AiAgentBehaviorModel, wantID, wantActionID string) {

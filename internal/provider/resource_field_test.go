@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -78,13 +79,14 @@ func varStr(vars map[string]any, k string) *string {
 	return nil
 }
 
-// varCustomValidation mirrors the API's custom_validation handling: a written ""
-// is stored as NULL, while description and help keep "" verbatim. The live API
-// applies the coercion per field type, short_text being the one exception; the
-// mock coerces for every type, so tests that need it avoid short_text.
-func varCustomValidation(vars map[string]any) *string {
+// varCustomValidation models a written "" coming back as null. A non-empty
+// rule on a number field is dropped: that type does not honour the attribute.
+func varCustomValidation(vars map[string]any, fieldType string) *string {
 	v, ok := vars["customValidation"].(string)
 	if !ok || v == "" {
+		return nil
+	}
+	if fieldType == "number" {
 		return nil
 	}
 	return &v
@@ -134,7 +136,7 @@ func fieldMockHandler(st *fieldState) http.HandlerFunc {
 			st.help = varStr(gr.Variables, "help")
 			st.editable = varBool(gr.Variables, "editable")
 			st.minimalView = varBool(gr.Variables, "minimalView")
-			st.customValidation = varCustomValidation(gr.Variables)
+			st.customValidation = varCustomValidation(gr.Variables, st.fieldType)
 			st.index = varNum(gr.Variables, "index")
 			if st.index == nil {
 				def := 1.5
@@ -163,7 +165,7 @@ func fieldMockHandler(st *fieldState) http.HandlerFunc {
 				st.minimalView = p
 			}
 			if _, sent := gr.Variables["customValidation"]; sent {
-				st.customValidation = varCustomValidation(gr.Variables)
+				st.customValidation = varCustomValidation(gr.Variables, st.fieldType)
 			}
 			if p := varNum(gr.Variables, "index"); p != nil {
 				st.index = p
@@ -442,7 +444,9 @@ resource "pipefy_field" "test" {
 }
 
 // The merge keeps empty and null interchangeable, and nothing else: a rule that
-// appears on the server side is drift the refresh must report.
+// appears on the server side is drift the refresh must report. Config holds a
+// different rule so the plan is non-empty; omitting the attribute would let
+// Optional+Computed swallow the API value with an empty plan.
 func TestUnit_FieldResource_CustomValidationDriftDetected(t *testing.T) {
 	st := &fieldState{}
 	srv := httptest.NewServer(fieldMockHandler(st))
@@ -450,9 +454,10 @@ func TestUnit_FieldResource_CustomValidationDriftDetected(t *testing.T) {
 
 	cfg := fieldConfig(srv.URL, `
 resource "pipefy_field" "test" {
-  phase_id = pipefy_phase.ph.id
-  type     = "short_text"
-  label    = "Title"
+  phase_id          = pipefy_phase.ph.id
+  type              = "short_text"
+  label             = "Title"
+  custom_validation = "min:1"
 }
 `)
 
@@ -462,22 +467,23 @@ resource "pipefy_field" "test" {
 		Steps: []resource.TestStep{
 			{
 				Config:            cfg,
-				ConfigStateChecks: []statecheck.StateCheck{statecheck.ExpectKnownValue("pipefy_field.test", tfjsonpath.New("custom_validation"), knownvalue.Null())},
+				ConfigStateChecks: []statecheck.StateCheck{expectStr("custom_validation", "min:1")},
 			},
 			{
 				PreConfig: func() {
 					rule := "min:3"
 					st.customValidation = &rule
 				},
-				Config:            cfg,
-				ConfigStateChecks: []statecheck.StateCheck{expectStr("custom_validation", "min:3")},
+				Config:             cfg,
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: true,
+				ConfigStateChecks:  []statecheck.StateCheck{expectStr("custom_validation", "min:3")},
 			},
 		},
 	})
 }
 
 // A rule set in config must survive the server reporting it back as null.
-// long_text coerces a written "" to NULL; short_text would not exercise this.
 func TestUnit_FieldResource_EmptyCustomValidationFromConfig(t *testing.T) {
 	st := &fieldState{}
 	srv := httptest.NewServer(fieldMockHandler(st))
@@ -486,7 +492,7 @@ func TestUnit_FieldResource_EmptyCustomValidationFromConfig(t *testing.T) {
 	cfg := fieldConfig(srv.URL, `
 resource "pipefy_field" "test" {
   phase_id          = pipefy_phase.ph.id
-  type              = "long_text"
+  type              = "short_text"
   label             = "Title"
   custom_validation = ""
 }
@@ -503,6 +509,34 @@ resource "pipefy_field" "test" {
 			{
 				Config:           cfg,
 				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
+			},
+		},
+	})
+}
+
+// A non-empty rule the API drops must fail apply. Keeping the planned value
+// would convert this into a perpetual plan with no diagnostic.
+func TestUnit_FieldResource_UnsupportedCustomValidationRejectedAfterApply(t *testing.T) {
+	st := &fieldState{}
+	srv := httptest.NewServer(fieldMockHandler(st))
+	defer srv.Close()
+
+	cfg := fieldConfig(srv.URL, `
+resource "pipefy_field" "test" {
+  phase_id          = pipefy_phase.ph.id
+  type              = "number"
+  label             = "Amount"
+  custom_validation = "min:3"
+}
+`)
+
+	resource.UnitTest(t, resource.TestCase{
+		TerraformVersionChecks:   skipBelow18,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      cfg,
+				ExpectError: regexp.MustCompile(`inconsistent result after apply`),
 			},
 		},
 	})

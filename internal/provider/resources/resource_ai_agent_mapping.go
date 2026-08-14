@@ -44,9 +44,8 @@ func generateActionReferenceID() (string, error) {
 	), nil
 }
 
-// createdPartialState flattens the unknowns Terraform rejects in state. It
-// returns a copy, because the model the rest of Create fills has to keep knowing
-// which of its values are still unresolved.
+// createdPartialState flattens unknowns Terraform rejects in mid-create state
+// and returns a copy so the live model still tracks unresolved ids.
 func createdPartialState(model AiAgentModel) AiAgentModel {
 	partial := model
 	if partial.Active.IsUnknown() {
@@ -100,17 +99,31 @@ func (model AiAgentModel) graphQLInput(repoUUID string) map[string]any {
 		"repoUuid":      repoUUID,
 		"dataSourceIds": stringSetValues(model.DataSourceIDs),
 	}
+	behaviorActive := agentBehaviorActive(model.Active)
 	behaviors := make([]map[string]any, len(model.Behaviors))
 	for index, behavior := range model.Behaviors {
-		behaviors[index] = behavior.graphQLInput()
+		behaviors[index] = behavior.graphQLInput(behaviorActive)
 	}
 	input["behaviors"] = behaviors
 	return input
 }
 
-func (behavior AiAgentBehaviorModel) graphQLInput() map[string]any {
+// agentBehaviorActive is the flag Pipefy uses to decide whether updateAiAgent
+// leaves the agent on: any behavior with active true keeps it enabled.
+func agentBehaviorActive(active types.Bool) *bool {
+	if !isConfiguredBool(active) {
+		return nil
+	}
+	value := active.ValueBool()
+	return &value
+}
+
+func (behavior AiAgentBehaviorModel) graphQLInput(active *bool) map[string]any {
 	input := map[string]any{
 		"name": behavior.Name.ValueString(), "eventId": behavior.EventID.ValueString(),
+	}
+	if active != nil {
+		input["active"] = *active
 	}
 	if hasString(behavior.ID) {
 		input["id"] = behavior.ID.ValueString()
@@ -199,10 +212,8 @@ func stringSetValues(values types.Set) []string {
 	return result
 }
 
-// fillFromAgent takes from the response only what the plan could not know: the
-// agent UUID, the ids the API assigns, and the status the caller verified. It is
-// the Create and Update mapping; Read keeps applyGraphQL, which overwrites
-// everything because Read exists to detect drift.
+// fillFromAgent fills unknowns and grafts API-owned ids; planned values stay.
+// Read keeps applyGraphQL so drift detection still overwrites from the API.
 func (model *AiAgentModel) fillFromAgent(agent pipefy.Agent) {
 	model.ID = fillUnknownString(model.ID, types.StringValue(agent.UUID))
 	model.Active = types.BoolValue(agent.DisabledAt == nil)
@@ -212,44 +223,32 @@ func (model *AiAgentModel) fillFromAgent(agent pipefy.Agent) {
 	fillBehaviorIdentities(model.Behaviors, behaviorsToModel(agent.Behaviors))
 }
 
-// fillBehaviorIdentities grafts the ids the API owns onto the planned behaviors,
-// pairing by content identity so a response listed in another order than the
-// request still lands on the right entry.
+// fillBehaviorIdentities grafts API ids onto planned behaviors by content
+// identity; a miss leaves planned Unknowns alone, like rematchNestedIdentities.
 func fillBehaviorIdentities(plan, fromAPI []AiAgentBehaviorModel) {
-	for index, match := range pairByIdentity(plan, fromAPI, matchBehavior) {
+	used := make([]bool, len(fromAPI))
+	for index := range plan {
 		behavior := &plan[index]
+		match, ok := matchBehavior(behavior, fromAPI, used)
+		if !ok {
+			continue
+		}
 		behavior.ID = fillUnknownString(behavior.ID, match.ID)
 		fillActionIdentities(behavior.Actions, match.Actions)
 	}
 }
 
 func fillActionIdentities(plan, fromAPI []AiAgentActionModel) {
-	for index, match := range pairByIdentity(plan, fromAPI, matchAction) {
+	used := make([]bool, len(fromAPI))
+	for index := range plan {
 		action := &plan[index]
+		match, ok := matchAction(action, fromAPI, used)
+		if !ok {
+			continue
+		}
 		action.ID = fillUnknownString(action.ID, match.ID)
 		action.ReferenceID = fillUnknownString(action.ReferenceID, match.ReferenceID)
 	}
-}
-
-// pairByIdentity lines each planned entry up with the response entry it came
-// from, leaving the zero value where nothing matched.
-func pairByIdentity[T any](
-	plan, fromAPI []T,
-	match func(*T, []T, []bool) (T, bool),
-) []T {
-	matched := make([]T, len(plan))
-	used := make([]bool, len(fromAPI))
-	for index := range plan {
-		matched[index], _ = match(&plan[index], fromAPI, used)
-	}
-	return matched
-}
-
-func fillUnknownString(planned, fromAPI types.String) types.String {
-	if planned.IsUnknown() {
-		return fromAPI
-	}
-	return planned
 }
 
 func (model *AiAgentModel) applyGraphQL(agent pipefy.Agent) {

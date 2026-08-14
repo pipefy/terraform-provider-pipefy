@@ -90,12 +90,9 @@ func (r *TableFieldResource) Schema(ctx context.Context, req resource.SchemaRequ
 				PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
 			},
 			"custom_validation": schema.StringAttribute{
-				Optional: true,
-				Computed: true,
-				Description: "Custom validation rule applied to the field value. The API stores an empty " +
-					"rule as null, and a field last written outside GraphQL can still read back as an empty " +
-					"string; the provider treats empty and null as the same value for this attribute so " +
-					"refresh and apply stay consistent. See the API reference (https://developers.pipefy.com/reference).",
+				Optional:      true,
+				Computed:      true,
+				Description:   "Custom validation rule applied to the field value. Empty string and null are equivalent, and the API honours this attribute only on field types that support custom validation. See https://developers.pipefy.com/reference.",
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"unique": schema.BoolAttribute{
@@ -141,7 +138,7 @@ func (r *TableFieldResource) Create(ctx context.Context, req resource.CreateRequ
 		resp.Diagnostics.AddError("create table field failed", err.Error())
 		return
 	}
-	applyTableFieldToModel(ctx, &data, field, true, &resp.Diagnostics)
+	fillTableFieldFromAPI(ctx, &data, field, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -169,7 +166,7 @@ func (r *TableFieldResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 
-	applyTableFieldToModel(ctx, &data, found, false, &resp.Diagnostics)
+	applyTableFieldToModel(ctx, &data, found, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -202,7 +199,7 @@ func (r *TableFieldResource) Update(ctx context.Context, req resource.UpdateRequ
 		resp.Diagnostics.AddError("update table field failed", err.Error())
 		return
 	}
-	applyTableFieldToModel(ctx, &data, field, true, &resp.Diagnostics)
+	fillTableFieldFromAPI(ctx, &data, field, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -251,43 +248,39 @@ func tableFieldWrites(ctx context.Context, data TableFieldModel, diags *diag.Dia
 	return writes
 }
 
-// applyTableFieldToModel maps a fetched field onto the model. table_id is not in the
-// payload; it is set at create/import and left untouched here.
-func applyTableFieldToModel(ctx context.Context, data *TableFieldModel, f pipefy.TableField, onlyUnknown bool, diags *diag.Diagnostics) {
-	if !onlyUnknown || data.Id.IsUnknown() {
-		data.Id = types.StringValue(f.ID)
-	}
-	if !onlyUnknown || data.InternalId.IsUnknown() {
-		data.InternalId = types.StringValue(f.InternalID)
-	}
-	if !onlyUnknown || data.Uuid.IsUnknown() {
-		data.Uuid = types.StringValue(f.UUID)
-	}
-	if !onlyUnknown || data.Label.IsUnknown() {
-		data.Label = types.StringValue(f.Label)
-	}
-	if !onlyUnknown || data.Type.IsUnknown() {
-		data.Type = types.StringValue(f.Type)
-	}
-	if !onlyUnknown || data.Required.IsUnknown() {
-		data.Required = boolPtr(f.Required)
-	}
-	if !onlyUnknown || data.Description.IsUnknown() {
-		data.Description = strPtr(f.Description)
-	}
-	if !onlyUnknown || data.Help.IsUnknown() {
-		data.Help = strPtr(f.Help)
-	}
-	if !onlyUnknown || data.MinimalView.IsUnknown() {
-		data.MinimalView = boolPtr(f.MinimalView)
-	}
-	if !onlyUnknown || data.CustomValidation.IsUnknown() {
-		data.CustomValidation = mergeEmptyish(data.CustomValidation, f.CustomValidation)
-	}
-	if !onlyUnknown || data.Unique.IsUnknown() {
-		data.Unique = boolPtr(f.Unique)
-	}
-	if !onlyUnknown || data.Options.IsUnknown() {
-		data.Options = optionsToList(ctx, f.Options, diags)
-	}
+// fillTableFieldFromAPI is the Create and Update mapping: take from the
+// response only what the plan could not know. label and type are Required, so
+// they stay as planned. options always takes the API value; preserving the plan
+// would silence a server-side change. custom_validation always goes through
+// mergeEmptyish, including when the plan already knew the value, so a rule the
+// API drops fails apply instead of looping as a perpetual plan.
+func fillTableFieldFromAPI(ctx context.Context, data *TableFieldModel, f pipefy.TableField, diags *diag.Diagnostics) {
+	data.Id = fillUnknownString(data.Id, types.StringValue(f.ID))
+	data.InternalId = fillUnknownString(data.InternalId, types.StringValue(f.InternalID))
+	data.Uuid = fillUnknownString(data.Uuid, types.StringValue(f.UUID))
+	data.Required = fillUnknownBool(data.Required, boolPtr(f.Required))
+	data.Description = fillUnknownString(data.Description, strPtr(f.Description))
+	data.Help = fillUnknownString(data.Help, strPtr(f.Help))
+	data.MinimalView = fillUnknownBool(data.MinimalView, boolPtr(f.MinimalView))
+	data.CustomValidation = mergeEmptyish(data.CustomValidation, f.CustomValidation)
+	data.Unique = fillUnknownBool(data.Unique, boolPtr(f.Unique))
+	data.Options = optionsToList(ctx, f.Options, diags)
+}
+
+// applyTableFieldToModel is the Read mapping. It overwrites every attribute so
+// drift surfaces. table_id is not in the payload; it is set at create/import
+// and left untouched here.
+func applyTableFieldToModel(ctx context.Context, data *TableFieldModel, f pipefy.TableField, diags *diag.Diagnostics) {
+	data.Id = types.StringValue(f.ID)
+	data.InternalId = types.StringValue(f.InternalID)
+	data.Uuid = types.StringValue(f.UUID)
+	data.Label = types.StringValue(f.Label)
+	data.Type = types.StringValue(f.Type)
+	data.Required = boolPtr(f.Required)
+	data.Description = strPtr(f.Description)
+	data.Help = strPtr(f.Help)
+	data.MinimalView = boolPtr(f.MinimalView)
+	data.CustomValidation = mergeEmptyish(data.CustomValidation, f.CustomValidation)
+	data.Unique = boolPtr(f.Unique)
+	data.Options = optionsToList(ctx, f.Options, diags)
 }
