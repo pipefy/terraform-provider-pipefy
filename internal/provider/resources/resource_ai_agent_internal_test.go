@@ -228,46 +228,132 @@ func TestRematchNestedIdentitiesOnReorder(t *testing.T) {
 	}
 }
 
-func TestGraphQLInputSetsBehaviorActiveFromAgent(t *testing.T) {
+func TestGraphQLInputOmitsBehaviorActiveByDefault(t *testing.T) {
+	input := plannedAgentModel().graphQLInput("pipe-uuid", omitBehaviorActive)
+	behaviors, _ := input["behaviors"].([]map[string]any)
+	if len(behaviors) == 0 {
+		t.Fatal("expected behaviors in GraphQL input")
+	}
+	for index, behavior := range behaviors {
+		if _, present := behavior["active"]; present {
+			t.Fatalf("behavior[%d] sent active = %#v, want omitted", index, behavior["active"])
+		}
+	}
+}
+
+func TestGraphQLInputSetsActiveOnOneBehavior(t *testing.T) {
+	input := plannedAgentModel().graphQLInput("pipe-uuid", 1)
+	behaviors, _ := input["behaviors"].([]map[string]any)
+	if _, present := behaviors[0]["active"]; present {
+		t.Fatalf("behavior[0] sent active = %#v, want omitted", behaviors[0]["active"])
+	}
+	if behaviors[1]["active"] != true {
+		t.Fatalf("behavior[1] active = %#v, want true", behaviors[1]["active"])
+	}
+}
+
+func TestKeepAliveBehaviorIndex(t *testing.T) {
+	plan := plannedAgentModel().Behaviors
+	disabledAt := "2026-01-01T00:00:00Z"
 	cases := map[string]struct {
-		active  types.Bool
-		want    any
-		present bool
+		current pipefy.Agent
+		want    int
 	}{
-		"true":    {active: types.BoolValue(true), want: true, present: true},
-		"false":   {active: types.BoolValue(false), want: false, present: true},
-		"unknown": {active: types.BoolUnknown(), present: false},
+		"disabled agent": {
+			current: pipefy.Agent{
+				DisabledAt: &disabledAt,
+				Behaviors: []pipefy.Behavior{
+					{Name: "On create", EventID: "card_created", Active: true},
+				},
+			},
+			want: omitBehaviorActive,
+		},
+		"first already active": {
+			current: pipefy.Agent{Behaviors: []pipefy.Behavior{
+				{Name: "On create", EventID: "card_created", Active: true},
+				{Name: "On update", EventID: "field_updated", Active: true},
+			}},
+			want: 0,
+		},
+		"second already active": {
+			current: pipefy.Agent{Behaviors: []pipefy.Behavior{
+				{Name: "On create", EventID: "card_created", Active: false},
+				{Name: "On update", EventID: "field_updated", Active: true},
+			}},
+			want: 1,
+		},
+		"none active": {
+			current: pipefy.Agent{Behaviors: []pipefy.Behavior{
+				{Name: "On create", EventID: "card_created", Active: false},
+				{Name: "On update", EventID: "field_updated", Active: false},
+			}},
+			want: omitBehaviorActive,
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			model := plannedAgentModel()
-			model.Active = tc.active
-			input := model.graphQLInput("pipe-uuid")
-			behaviors, _ := input["behaviors"].([]map[string]any)
-			if len(behaviors) == 0 {
-				t.Fatal("expected behaviors in GraphQL input")
-			}
-			got, present := behaviors[0]["active"]
-			if present != tc.present {
-				t.Fatalf("active present = %t, want %t", present, tc.present)
-			}
-			if tc.present && got != tc.want {
-				t.Fatalf("active = %#v, want %#v", got, tc.want)
+			if got := keepAliveBehaviorIndex(plan, tc.current); got != tc.want {
+				t.Fatalf("index = %d, want %d", got, tc.want)
 			}
 		})
 	}
 }
 
+func TestUpdateInputOmitsBehaviorActiveWhenInactive(t *testing.T) {
+	model := plannedAgentModel()
+	model.Active = types.BoolValue(false)
+	disabledAt := "2026-01-15T00:00:00Z"
+	input := updateInput(model, "pipe-uuid", model.Active, pipefy.Agent{
+		DisabledAt: &disabledAt,
+		Behaviors: []pipefy.Behavior{
+			{Name: "On create", EventID: "card_created", Active: true},
+			{Name: "On update", EventID: "field_updated", Active: true},
+		},
+	})
+	if input["disabledAt"] != disabledAt {
+		t.Fatalf("disabledAt = %#v, want %q", input["disabledAt"], disabledAt)
+	}
+	behaviors, _ := input["behaviors"].([]map[string]any)
+	for index, behavior := range behaviors {
+		if _, present := behavior["active"]; present {
+			t.Fatalf("behavior[%d] sent active = %#v on inactive update", index, behavior["active"])
+		}
+	}
+}
+
+func TestUpdateInputSignalsOneAlreadyActiveBehavior(t *testing.T) {
+	model := plannedAgentModel()
+	model.Active = types.BoolValue(true)
+	input := updateInput(model, "pipe-uuid", model.Active, pipefy.Agent{
+		Behaviors: []pipefy.Behavior{
+			{Name: "On create", EventID: "card_created", Active: false},
+			{Name: "On update", EventID: "field_updated", Active: true},
+		},
+	})
+	behaviors, _ := input["behaviors"].([]map[string]any)
+	if _, present := behaviors[0]["active"]; present {
+		t.Fatalf("behavior[0] sent active = %#v, want omitted", behaviors[0]["active"])
+	}
+	if behaviors[1]["active"] != true {
+		t.Fatalf("behavior[1] active = %#v, want true", behaviors[1]["active"])
+	}
+	if _, present := input["disabledAt"]; present {
+		t.Fatalf("active update sent disabledAt = %#v", input["disabledAt"])
+	}
+}
+
 func TestFillFromAgentKeepsPlannedValuesAndGraftsIDs(t *testing.T) {
 	plan := plannedAgentModel()
-	plan.fillFromAgent(pipefy.Agent{
+	if err := plan.fillFromAgent(pipefy.Agent{
 		UUID: "agent-uuid", Name: "renamed elsewhere", Instruction: "rewritten elsewhere",
 		DataSourceIDs: []string{"source-9"},
 		Behaviors: []pipefy.Behavior{
 			apiBehavior("behavior-updated", "On update", "field_updated", "action-update", "Update", "update_card"),
 			apiBehavior("behavior-created", "On create", "card_created", "action-move", "Move", "move_card"),
 		},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if plan.Name.ValueString() != "Triage" || plan.Instruction.ValueString() != "Classify cards" {
 		t.Fatalf("response overwrote planned values: %#v", plan)
 	}
@@ -281,20 +367,86 @@ func TestFillFromAgentKeepsPlannedValuesAndGraftsIDs(t *testing.T) {
 	assertBehaviorIdentity(t, plan.Behaviors[1], "behavior-updated", "action-update")
 }
 
-func TestFillFromAgentLeavesUnknownIDsWhenIdentityMisses(t *testing.T) {
+func TestFillFromAgentFallsBackToPositionWhenCountsMatch(t *testing.T) {
 	plan := plannedAgentModel()
-	plan.fillFromAgent(pipefy.Agent{
-		UUID: "agent-uuid", Name: "renamed elsewhere", Instruction: "rewritten elsewhere",
-		DataSourceIDs: []string{"source-9"},
+	if err := plan.fillFromAgent(pipefy.Agent{
+		UUID: "agent-uuid",
+		Behaviors: []pipefy.Behavior{
+			apiBehavior("behavior-a", "Other A", "card_moved", "action-a", "Other", "move_card"),
+			apiBehavior("behavior-b", "Other B", "card_moved", "action-b", "Other", "update_card"),
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assertBehaviorIdentity(t, plan.Behaviors[0], "behavior-a", "action-a")
+	assertBehaviorIdentity(t, plan.Behaviors[1], "behavior-b", "action-b")
+}
+
+func TestFillFromAgentErrorsWhenBehaviorIdentityMisses(t *testing.T) {
+	plan := plannedAgentModel()
+	err := plan.fillFromAgent(pipefy.Agent{
+		UUID: "agent-uuid",
 		Behaviors: []pipefy.Behavior{
 			apiBehavior("behavior-other", "Other", "card_moved", "action-other", "Other", "move_card"),
 		},
 	})
-	if !plan.Behaviors[0].ID.IsUnknown() || !plan.Behaviors[1].ID.IsUnknown() {
-		t.Fatalf("miss grafted identity: %#v", plan.Behaviors)
+	if err == nil || !strings.Contains(err.Error(), `"On create"`) {
+		t.Fatalf("error = %v, want the missing behavior name", err)
 	}
-	if !plan.Behaviors[0].Actions[0].ID.IsUnknown() || !plan.Behaviors[1].Actions[0].ID.IsUnknown() {
-		t.Fatalf("miss grafted action identity: %#v", plan.Behaviors)
+}
+
+func TestFillFromAgentPairsActionsByReferenceID(t *testing.T) {
+	plan := plannedAgentModel()
+	err := plan.fillFromAgent(pipefy.Agent{
+		UUID: "agent-uuid",
+		Behaviors: []pipefy.Behavior{
+			{
+				ID: "behavior-created", Name: "On create", EventID: "card_created",
+				ActionParams: pipefy.BehaviorActionRoot{AIBehaviorParams: pipefy.AIBehaviorParams{
+					Instruction: "Planned instruction",
+					Actions: []pipefy.Action{{
+						ID: "action-moved", ReferenceID: "ref-Move",
+						Name: "Renamed", ActionType: "create_card",
+					}},
+				}},
+			},
+			apiBehavior("behavior-updated", "On update", "field_updated", "action-update", "Update", "update_card"),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Behaviors[0].Actions[0].ID.ValueString() != "action-moved" {
+		t.Fatalf("action id = %q, want action-moved", plan.Behaviors[0].Actions[0].ID)
+	}
+}
+
+func TestApplyGraphQLOrdersBehaviorsByStateIdentity(t *testing.T) {
+	model := AiAgentModel{
+		Behaviors: []AiAgentBehaviorModel{
+			{Name: types.StringValue("A"), EventID: types.StringValue("card_created")},
+			{Name: types.StringValue("C"), EventID: types.StringValue("card_moved")},
+			{Name: types.StringValue("B"), EventID: types.StringValue("field_updated")},
+		},
+	}
+	model.applyGraphQL(pipefy.Agent{
+		UUID: "agent-uuid", Name: "Triage", Instruction: "Classify cards",
+		Behaviors: []pipefy.Behavior{
+			apiBehavior("id-a", "A", "card_created", "action-a", "Move", "move_card"),
+			apiBehavior("id-b", "B", "field_updated", "action-b", "Update", "update_card"),
+			apiBehavior("id-c", "C", "card_moved", "action-c", "Move", "move_card"),
+		},
+	})
+	got := []string{
+		model.Behaviors[0].Name.ValueString(),
+		model.Behaviors[1].Name.ValueString(),
+		model.Behaviors[2].Name.ValueString(),
+	}
+	if got[0] != "A" || got[1] != "C" || got[2] != "B" {
+		t.Fatalf("behavior order = %v, want [A C B]", got)
+	}
+	if model.Behaviors[1].ID.ValueString() != "id-c" {
+		t.Fatalf("inserted behavior id = %q, want id-c", model.Behaviors[1].ID)
 	}
 }
 
