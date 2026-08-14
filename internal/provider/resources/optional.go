@@ -47,7 +47,6 @@ func optionalFloat64(v types.Float64) *float64 {
 
 func hasValue(v attr.Value) bool { return !v.IsNull() && !v.IsUnknown() }
 
-// fillUnknownString takes fromAPI only when the plan could not know the value.
 func fillUnknownString(planned, fromAPI types.String) types.String {
 	if planned.IsUnknown() {
 		return fromAPI

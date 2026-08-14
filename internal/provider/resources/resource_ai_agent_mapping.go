@@ -48,9 +48,6 @@ func generateActionReferenceID() (string, error) {
 // and returns a copy so the live model still tracks unresolved ids.
 func createdPartialState(model AiAgentModel) AiAgentModel {
 	partial := model
-	if partial.Active.IsUnknown() {
-		partial.Active = types.BoolValue(false)
-	}
 	partial.Behaviors = make([]AiAgentBehaviorModel, len(model.Behaviors))
 	for behaviorIndex, behavior := range model.Behaviors {
 		behavior.ID = knownOrNull(behavior.ID)
@@ -92,36 +89,62 @@ func normalizeBehaviorInstruction(instruction string, references []string) strin
 	return result
 }
 
-func (model AiAgentModel) graphQLInput(repoUUID string) map[string]any {
+func (model AiAgentModel) graphQLInput(repoUUID string, keepAliveIndex int) map[string]any {
 	input := map[string]any{
 		"name":          model.Name.ValueString(),
 		"instruction":   model.Instruction.ValueString(),
 		"repoUuid":      repoUUID,
 		"dataSourceIds": stringSetValues(model.DataSourceIDs),
 	}
-	behaviorActive := agentBehaviorActive(model.Active)
 	behaviors := make([]map[string]any, len(model.Behaviors))
 	for index, behavior := range model.Behaviors {
-		behaviors[index] = behavior.graphQLInput(behaviorActive)
+		var active *bool
+		if index == keepAliveIndex {
+			value := true
+			active = &value
+		}
+		behaviors[index] = behavior.graphQLInput(active)
 	}
 	input["behaviors"] = behaviors
 	return input
 }
 
-// agentBehaviorActive is the flag Pipefy uses to decide whether updateAiAgent
-// leaves the agent on: any behavior with active true keeps it enabled.
-func agentBehaviorActive(active types.Bool) *bool {
-	if !isConfiguredBool(active) {
-		return nil
+const omitBehaviorActive = -1
+
+// keepAliveBehaviorIndex is the planned behavior that already reports active
+// on the last read. One true is enough for updateAiAgent to leave the agent
+// on; the rest omit the flag so stored enablement is not overwritten.
+// A disabled agent reports every behavior inactive, so that read is ignored.
+func keepAliveBehaviorIndex(plan []AiAgentBehaviorModel, current pipefy.Agent) int {
+	if current.DisabledAt != nil {
+		return omitBehaviorActive
 	}
-	value := active.ValueBool()
-	return &value
+	used := make([]bool, len(current.Behaviors))
+	for index, planned := range plan {
+		for apiIndex, candidate := range current.Behaviors {
+			if used[apiIndex] {
+				continue
+			}
+			if candidate.Name != planned.Name.ValueString() ||
+				candidate.EventID != planned.EventID.ValueString() {
+				continue
+			}
+			used[apiIndex] = true
+			if candidate.Active {
+				return index
+			}
+			break
+		}
+	}
+	return omitBehaviorActive
 }
 
 func (behavior AiAgentBehaviorModel) graphQLInput(active *bool) map[string]any {
 	input := map[string]any{
 		"name": behavior.Name.ValueString(), "eventId": behavior.EventID.ValueString(),
 	}
+	// Omit active unless this is the keep-alive signal. A false persists off
+	// on the automation and survives a later updateAiAgentStatus(true).
 	if active != nil {
 		input["active"] = *active
 	}
@@ -210,54 +233,6 @@ func stringSetValues(values types.Set) []string {
 		result = append(result, value.ValueString())
 	}
 	return result
-}
-
-// fillFromAgent fills unknowns and grafts API-owned ids; planned values stay.
-// Read keeps applyGraphQL so drift detection still overwrites from the API.
-func (model *AiAgentModel) fillFromAgent(agent pipefy.Agent) {
-	model.ID = fillUnknownString(model.ID, types.StringValue(agent.UUID))
-	model.Active = types.BoolValue(agent.DisabledAt == nil)
-	if model.DataSourceIDs.IsUnknown() {
-		model.DataSourceIDs = stringsToSet(agent.DataSourceIDs)
-	}
-	fillBehaviorIdentities(model.Behaviors, behaviorsToModel(agent.Behaviors))
-}
-
-// fillBehaviorIdentities grafts API ids onto planned behaviors by content
-// identity; a miss leaves planned Unknowns alone, like rematchNestedIdentities.
-func fillBehaviorIdentities(plan, fromAPI []AiAgentBehaviorModel) {
-	used := make([]bool, len(fromAPI))
-	for index := range plan {
-		behavior := &plan[index]
-		match, ok := matchBehavior(behavior, fromAPI, used)
-		if !ok {
-			continue
-		}
-		behavior.ID = fillUnknownString(behavior.ID, match.ID)
-		fillActionIdentities(behavior.Actions, match.Actions)
-	}
-}
-
-func fillActionIdentities(plan, fromAPI []AiAgentActionModel) {
-	used := make([]bool, len(fromAPI))
-	for index := range plan {
-		action := &plan[index]
-		match, ok := matchAction(action, fromAPI, used)
-		if !ok {
-			continue
-		}
-		action.ID = fillUnknownString(action.ID, match.ID)
-		action.ReferenceID = fillUnknownString(action.ReferenceID, match.ReferenceID)
-	}
-}
-
-func (model *AiAgentModel) applyGraphQL(agent pipefy.Agent) {
-	model.ID = types.StringValue(agent.UUID)
-	model.Name = types.StringValue(agent.Name)
-	model.Instruction = types.StringValue(agent.Instruction)
-	model.Active = types.BoolValue(agent.DisabledAt == nil)
-	model.DataSourceIDs = stringsToSet(agent.DataSourceIDs)
-	model.Behaviors = behaviorsToModel(agent.Behaviors)
 }
 
 func behaviorsToModel(behaviors []pipefy.Behavior) []AiAgentBehaviorModel {
@@ -352,95 +327,6 @@ func setHasUnknownElements(values types.Set) bool {
 		}
 	}
 	return false
-}
-
-// rematchNestedIdentities copies API ids / reference_ids from prior state by
-// content identity so list insert/reorder does not inherit the wrong index.
-func rematchNestedIdentities(plan *AiAgentModel, state AiAgentModel) {
-	usedBehaviors := make([]bool, len(state.Behaviors))
-	for behaviorIndex := range plan.Behaviors {
-		planBehavior := &plan.Behaviors[behaviorIndex]
-		stateBehavior, ok := matchBehavior(planBehavior, state.Behaviors, usedBehaviors)
-		if !ok {
-			clearNestedIdentities(planBehavior)
-			continue
-		}
-		planBehavior.ID = stateBehavior.ID
-		rematchActions(planBehavior, stateBehavior)
-	}
-}
-
-func clearNestedIdentities(behavior *AiAgentBehaviorModel) {
-	behavior.ID = types.StringUnknown()
-	for index := range behavior.Actions {
-		behavior.Actions[index].ID = types.StringUnknown()
-		behavior.Actions[index].ReferenceID = types.StringUnknown()
-	}
-}
-
-func rematchActions(planBehavior *AiAgentBehaviorModel, stateBehavior AiAgentBehaviorModel) {
-	used := make([]bool, len(stateBehavior.Actions))
-	for index := range planBehavior.Actions {
-		planAction := &planBehavior.Actions[index]
-		stateAction, ok := matchAction(planAction, stateBehavior.Actions, used)
-		if !ok {
-			planAction.ID = types.StringUnknown()
-			planAction.ReferenceID = types.StringUnknown()
-			continue
-		}
-		planAction.ID = stateAction.ID
-		planAction.ReferenceID = stateAction.ReferenceID
-	}
-}
-
-func matchBehavior(
-	plan *AiAgentBehaviorModel,
-	state []AiAgentBehaviorModel,
-	used []bool,
-) (AiAgentBehaviorModel, bool) {
-	for index, candidate := range state {
-		if used[index] {
-			continue
-		}
-		if candidate.Name.Equal(plan.Name) && candidate.EventID.Equal(plan.EventID) {
-			used[index] = true
-			return candidate, true
-		}
-	}
-	return AiAgentBehaviorModel{}, false
-}
-
-func matchAction(
-	plan *AiAgentActionModel,
-	state []AiAgentActionModel,
-	used []bool,
-) (AiAgentActionModel, bool) {
-	for index, candidate := range state {
-		if used[index] {
-			continue
-		}
-		if actionIdentityEqual(*plan, candidate) {
-			used[index] = true
-			return candidate, true
-		}
-	}
-	return AiAgentActionModel{}, false
-}
-
-func actionIdentityEqual(left, right AiAgentActionModel) bool {
-	return left.Name.Equal(right.Name) &&
-		left.ActionType.Equal(right.ActionType) &&
-		optionalStringEqual(left.DestinationPhaseID, right.DestinationPhaseID) &&
-		optionalStringEqual(left.PipeID, right.PipeID)
-}
-
-func optionalStringEqual(left, right types.String) bool {
-	leftEmpty := !hasString(left)
-	rightEmpty := !hasString(right)
-	if leftEmpty || rightEmpty {
-		return leftEmpty && rightEmpty
-	}
-	return left.ValueString() == right.ValueString()
 }
 
 func stringsToSet(values []string) types.Set {

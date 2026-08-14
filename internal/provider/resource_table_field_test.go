@@ -274,7 +274,6 @@ resource "pipefy_table_field" "test" {
 	})
 }
 
-// A rule set in config must survive the server reporting it back as null.
 func TestUnit_TableFieldResource_EmptyCustomValidationFromConfig(t *testing.T) {
 	st := &tableFieldState{}
 	srv := httptest.NewServer(tableFieldMockHandler(st))
@@ -384,8 +383,8 @@ resource "pipefy_table_field" "test" {
 	})
 }
 
-// A non-empty rule the API drops must fail apply. Keeping the planned value
-// would convert this into a perpetual plan with no diagnostic.
+// Keeping the planned value would convert a dropped rule into a perpetual plan
+// with no diagnostic.
 func TestUnit_TableFieldResource_UnsupportedCustomValidationRejectedAfterApply(t *testing.T) {
 	st := &tableFieldState{}
 	srv := httptest.NewServer(tableFieldMockHandler(st))

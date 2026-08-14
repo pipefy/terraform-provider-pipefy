@@ -59,8 +59,9 @@ func (r *AiAgentResource) Create(
 	req resource.CreateRequest,
 	resp *resource.CreateResponse,
 ) {
-	model, configuredActive, ok := loadCreateModel(ctx, req, resp)
-	if !ok {
+	var model AiAgentModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &model)...)
+	if resp.Diagnostics.HasError() {
 		return
 	}
 	repoUUID, err := r.api.Pipes.UUID(ctx, model.PipeID.ValueString())
@@ -72,7 +73,7 @@ func (r *AiAgentResource) Create(
 		resp.Diagnostics.AddError("create AI agent failed", "generate action reference IDs: "+err.Error())
 		return
 	}
-	if err := r.createAgent(ctx, &model, repoUUID, configuredActive); err != nil {
+	if err := r.createAgent(ctx, &model, repoUUID); err != nil {
 		resp.Diagnostics.AddError("create AI agent failed", err.Error())
 		return
 	}
@@ -82,31 +83,19 @@ func (r *AiAgentResource) Create(
 		r.rollbackCreate(ctx, model.ID.ValueString(), fmt.Errorf("persist created agent state"), resp)
 		return
 	}
-	r.finishCreate(ctx, &model, configuredActive, resp)
+	r.finishCreate(ctx, &model, resp)
 }
 
-func loadCreateModel(
-	ctx context.Context,
-	req resource.CreateRequest,
-	resp *resource.CreateResponse,
-) (AiAgentModel, types.Bool, bool) {
-	var model AiAgentModel
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &model)...)
-	var configuredActive types.Bool
-	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("active"), &configuredActive)...)
-	return model, configuredActive, !resp.Diagnostics.HasError()
-}
-
-// createAgent sends disabledAt when the agent should start inactive so create
-// never enables it and then toggles it off.
+// createAgent sets disabledAt so the happy path needs no follow-up status call.
 func (r *AiAgentResource) createAgent(
 	ctx context.Context,
 	model *AiAgentModel,
 	repoUUID string,
-	configuredActive types.Bool,
 ) error {
-	input := model.graphQLInput(repoUUID)
-	if wantsInactive(configuredActive) {
+	input := model.graphQLInput(repoUUID, omitBehaviorActive)
+	if model.Active.ValueBool() {
+		input["disabledAt"] = nil
+	} else {
 		input["disabledAt"] = disabledAtNow()
 	}
 	uuid, err := r.api.AiAgents.Create(ctx, input)
@@ -117,12 +106,11 @@ func (r *AiAgentResource) createAgent(
 	return nil
 }
 
-// finishCreate verifies the agent and enforces configured status. Status stays a
-// separate mutation because createAiAgent does not accept the active flag.
+// A status mismatch fails the apply and leaves the agent in state; deleting it
+// here would destroy a resource the create mutation already succeeded on.
 func (r *AiAgentResource) finishCreate(
 	ctx context.Context,
 	model *AiAgentModel,
-	configuredActive types.Bool,
 	resp *resource.CreateResponse,
 ) {
 	agent, err := r.requireAgent(ctx, model.ID.ValueString())
@@ -130,16 +118,32 @@ func (r *AiAgentResource) finishCreate(
 		r.rollbackCreate(ctx, model.ID.ValueString(), err, resp)
 		return
 	}
-	agent, err = r.enforceStatus(ctx, model.ID.ValueString(), configuredActive, agent)
+	agent, err = r.enforceStatus(ctx, model.ID.ValueString(), model.Active, agent)
 	if err != nil {
-		r.rollbackCreate(ctx, model.ID.ValueString(), err, resp)
+		resp.Diagnostics.AddError("create AI agent failed", err.Error())
+		r.persistCreated(ctx, model, agent, resp)
 		return
 	}
-	model.fillFromAgent(*agent)
+	if err := model.fillFromAgent(*agent); err != nil {
+		resp.Diagnostics.AddError("create AI agent failed", err.Error())
+		return
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, model)...)
 	if resp.Diagnostics.HasError() {
 		r.rollbackCreate(ctx, model.ID.ValueString(), fmt.Errorf("persist created agent state"), resp)
 	}
+}
+
+func (r *AiAgentResource) persistCreated(
+	ctx context.Context,
+	model *AiAgentModel,
+	agent *pipefy.Agent,
+	resp *resource.CreateResponse,
+) {
+	if err := model.fillFromAgent(*agent); err != nil {
+		return
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, model)...)
 }
 
 func (r *AiAgentResource) rollbackCreate(
@@ -213,7 +217,7 @@ func (r *AiAgentResource) Update(
 }
 
 // applyUpdate enforces the planned status, not the change between config and
-// prior state, because updateAiAgent disables the agent unless a behavior is active.
+// prior state. updateAiAgent keeps the agent on when one behavior is active.
 func (r *AiAgentResource) applyUpdate(
 	ctx context.Context,
 	plan *AiAgentModel,
@@ -221,11 +225,20 @@ func (r *AiAgentResource) applyUpdate(
 	resp *resource.UpdateResponse,
 ) {
 	desired := plan.Active
-	input, err := r.updateInput(ctx, *plan, repoUUID, desired)
+	current, err := r.fetchAgent(ctx, plan.ID.ValueString())
 	if err != nil {
-		resp.Diagnostics.AddError("update AI agent failed", err.Error())
+		resp.Diagnostics.AddError("read AI agent before update failed", err.Error())
 		return
 	}
+	if current == nil {
+		resp.State.RemoveResource(ctx)
+		resp.Diagnostics.AddError(
+			"read AI agent before update failed",
+			fmt.Sprintf("AI agent %q no longer exists", plan.ID.ValueString()),
+		)
+		return
+	}
+	input := updateInput(*plan, repoUUID, desired, *current)
 	if err := r.api.AiAgents.Update(ctx, plan.ID.ValueString(), input); err != nil {
 		resp.Diagnostics.AddError("update AI agent failed", err.Error())
 		return
@@ -237,59 +250,63 @@ func (r *AiAgentResource) applyUpdate(
 	}
 	agent, err = r.enforceStatus(ctx, plan.ID.ValueString(), desired, agent)
 	if err != nil {
-		r.refreshStateAfterPartialUpdate(ctx, plan, resp)
 		resp.Diagnostics.AddError("update AI agent status failed", err.Error())
+		r.refreshStateAfterPartialUpdate(ctx, plan, agent, resp)
 		return
 	}
-	plan.fillFromAgent(*agent)
+	if err := plan.fillFromAgent(*agent); err != nil {
+		resp.Diagnostics.AddError("update AI agent failed", err.Error())
+		return
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
 
-// updateInput re-sends the current disabledAt for an agent that should stay
-// disabled, which is what keeps the update from stamping a fresh one.
-func (r *AiAgentResource) updateInput(
-	ctx context.Context,
+// updateInput sends active:true on one already-active behavior when the plan
+// wants the agent on, and re-sends disabledAt (never behavior active=false)
+// when it wants the agent off.
+func updateInput(
 	model AiAgentModel,
 	repoUUID string,
 	desired types.Bool,
-) (map[string]any, error) {
-	input := model.graphQLInput(repoUUID)
-	if !wantsInactive(desired) {
-		return input, nil
+	current pipefy.Agent,
+) map[string]any {
+	keepAlive := omitBehaviorActive
+	if desired.ValueBool() {
+		keepAlive = keepAliveBehaviorIndex(model.Behaviors, current)
 	}
-	current, err := r.fetchAgent(ctx, model.ID.ValueString())
-	if err != nil {
-		return nil, err
+	input := model.graphQLInput(repoUUID, keepAlive)
+	if desired.ValueBool() {
+		return input
 	}
-	if current != nil && current.DisabledAt != nil {
+	if current.DisabledAt != nil {
 		input["disabledAt"] = *current.DisabledAt
-		return input, nil
+		return input
 	}
 	input["disabledAt"] = disabledAtNow()
-	return input, nil
+	return input
 }
 
-// enforceStatus corrects a mismatched status once and errors if the API still
-// disagrees, so state never claims a status the remote does not report.
+// enforceStatus corrects a mismatch once so state never claims a status the
+// remote does not report.
 func (r *AiAgentResource) enforceStatus(
 	ctx context.Context,
 	id string,
 	desired types.Bool,
 	agent *pipefy.Agent,
 ) (*pipefy.Agent, error) {
-	if !isConfiguredBool(desired) || agentIsActive(*agent) == desired.ValueBool() {
+	if agentIsActive(*agent) == desired.ValueBool() {
 		return agent, nil
 	}
 	if err := r.updateStatus(ctx, id, desired.ValueBool()); err != nil {
-		return nil, err
+		return agent, err
 	}
 	corrected, err := r.requireAgent(ctx, id)
 	if err != nil {
-		return nil, err
+		return agent, err
 	}
 	if agentIsActive(*corrected) != desired.ValueBool() {
-		return nil, fmt.Errorf(
-			"AI agent %q reports active=%t after applying the configured active=%t",
+		return corrected, fmt.Errorf(
+			"AI agent %q reports active=%t after applying the planned active=%t",
 			id, agentIsActive(*corrected), desired.ValueBool(),
 		)
 	}
@@ -307,18 +324,18 @@ func (r *AiAgentResource) requireAgent(ctx context.Context, id string) (*pipefy.
 	return agent, nil
 }
 
-// refreshStateAfterPartialUpdate persists the remote config after updateAiAgent
-// succeeded but a later status call failed, so the next apply only retries status.
+// refreshStateAfterPartialUpdate persists planned values plus grafted ids after
+// updateAiAgent succeeded but a later status call failed, so the next apply
+// only retries status and does not revert Required attributes.
 func (r *AiAgentResource) refreshStateAfterPartialUpdate(
 	ctx context.Context,
 	plan *AiAgentModel,
+	agent *pipefy.Agent,
 	resp *resource.UpdateResponse,
 ) {
-	agent, err := r.fetchAgent(ctx, plan.ID.ValueString())
-	if err != nil || agent == nil {
+	if err := plan.fillFromAgent(*agent); err != nil {
 		return
 	}
-	plan.applyGraphQL(*agent)
 	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
 
@@ -344,8 +361,7 @@ func (r *AiAgentResource) updateStatus(ctx context.Context, id string, active bo
 	return r.api.AiAgents.UpdateStatus(ctx, id, active)
 }
 
-// fetchAgent maps ErrNotFound to a nil agent, which is the contract its five
-// call sites are written against.
+// fetchAgent maps ErrNotFound to a nil agent.
 func (r *AiAgentResource) fetchAgent(
 	ctx context.Context,
 	id string,
@@ -394,14 +410,6 @@ func (r *AiAgentResource) ImportState(
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("pipe_id"), parts[0])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[1])...)
-}
-
-func isConfiguredBool(value types.Bool) bool {
-	return !value.IsNull() && !value.IsUnknown()
-}
-
-func wantsInactive(value types.Bool) bool {
-	return isConfiguredBool(value) && !value.ValueBool()
 }
 
 func agentIsActive(agent pipefy.Agent) bool {

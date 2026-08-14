@@ -386,14 +386,12 @@ resource "pipefy_field" "test" {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{Config: cfg},
-			// A UI edit that only sets "" is not a change the provider should see.
 			{
 				PreConfig:         uiEdit,
 				Config:            cfg,
 				ConfigPlanChecks:  resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
 				ConfigStateChecks: []statecheck.StateCheck{statecheck.ExpectKnownValue("pipefy_field.test", tfjsonpath.New("custom_validation"), knownvalue.Null())},
 			},
-			// Applying a real change while the server holds "" must still succeed.
 			{
 				PreConfig:         uiEdit,
 				Config:            withOption,
@@ -483,7 +481,6 @@ resource "pipefy_field" "test" {
 	})
 }
 
-// A rule set in config must survive the server reporting it back as null.
 func TestUnit_FieldResource_EmptyCustomValidationFromConfig(t *testing.T) {
 	st := &fieldState{}
 	srv := httptest.NewServer(fieldMockHandler(st))
@@ -514,8 +511,8 @@ resource "pipefy_field" "test" {
 	})
 }
 
-// A non-empty rule the API drops must fail apply. Keeping the planned value
-// would convert this into a perpetual plan with no diagnostic.
+// Keeping the planned value would convert a dropped rule into a perpetual plan
+// with no diagnostic.
 func TestUnit_FieldResource_UnsupportedCustomValidationRejectedAfterApply(t *testing.T) {
 	st := &fieldState{}
 	srv := httptest.NewServer(fieldMockHandler(st))
