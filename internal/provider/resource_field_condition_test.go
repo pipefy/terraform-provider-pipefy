@@ -31,12 +31,7 @@ type fieldConditionState struct {
 // GraphQL selection: a single all_of comparison and one action with only its
 // true branch set.
 func fieldConditionBody(name string) string {
-	return fieldConditionBodyOnPhase(name, "phase_1")
-}
-
-// fieldConditionBodyOnPhase is fieldConditionBody with an explicit owning phase.
-func fieldConditionBodyOnPhase(name, phaseID string) string {
-	return fieldConditionBodyOnPhaseRepo(name, phaseID, "123")
+	return fieldConditionBodyOnPhaseRepo(name, "phase_1", "123")
 }
 
 func fieldConditionBodyOnPhaseRepo(name, phaseID, repoID string) string {

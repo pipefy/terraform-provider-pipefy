@@ -196,9 +196,6 @@ func (r *FieldConditionResource) Update(ctx context.Context, req resource.Update
 		resp.Diagnostics.AddError("update field condition failed", err.Error())
 		return
 	}
-	// id and phase_id carry UseStateForUnknown, so every attribute is known
-	// today and this is a no-op. It stays so a future Computed unknown still
-	// gets filled from the response.
 	applyFieldConditionToModel(&data, &fc, true, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
@@ -259,8 +256,6 @@ func (m *FieldConditionModel) actionsInput() []map[string]any {
 	return actions
 }
 
-// applyFieldConditionToModel maps a fetched field condition onto the model.
-// onlyUnknown fills attributes the plan left unknown; Read passes false.
 func applyFieldConditionToModel(data *FieldConditionModel, fc *pipefy.FieldCondition, onlyUnknown bool, diags *diag.Diagnostics) {
 	if !onlyUnknown || data.Id.IsUnknown() {
 		data.Id = types.StringValue(fc.ID)
