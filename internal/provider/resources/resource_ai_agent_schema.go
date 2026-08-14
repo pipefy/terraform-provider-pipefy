@@ -13,7 +13,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -65,11 +64,13 @@ func (r *AiAgentResource) Schema(ctx context.Context, req resource.SchemaRequest
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages an AI agent and its ordered behaviors for a Pipefy pipe. " +
 			"Behavior configuration is replaced in full on each update. Pipefy keeps the agent " +
-			"active when the update includes an active behavior; the provider sets each " +
-			"behavior's `active` flag from the agent's `active` value, then reads the status " +
-			"back and corrects it if the API disagrees. An agent configured inactive keeps " +
-			"the timestamp it was disabled at. If a later status call fails, the configuration " +
-			"change has already been applied and only the status is left to retry.",
+			"active when the update includes an active behavior; the provider sends `active: true` " +
+			"on one already-active behavior and omits the flag on the rest, then reads the status " +
+			"back and corrects it if the API disagrees. An inactive agent is kept off via " +
+			"`disabledAt`, without sending `active: false` on behaviors. Create with " +
+			"`active = true` sends `disabledAt: null` so the agent is born enabled. If a later " +
+			"status call fails, the configuration change has already been applied and only the " +
+			"status is left to retry.",
 		Attributes: aiAgentAttributes(),
 	}
 }
@@ -87,11 +88,12 @@ func aiAgentAttributes() map[string]schema.Attribute {
 		"name":        requiredNonEmptyString("The display name of the AI agent."),
 		"instruction": requiredNonEmptyString("The agent-level purpose shown as its description."),
 		"active": schema.BoolAttribute{
-			Optional: true, Computed: true,
-			Description: "Whether the AI agent is active. Sent as each behavior's `active` flag " +
-				"and verified after every create and update. An agent created with " +
-				"`active = false` is never switched on.",
-			PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
+			Required: true,
+			Description: "Whether the AI agent is active. An update that should keep the agent " +
+				"on sends `active: true` on one already-active behavior and omits the flag on " +
+				"the rest. An inactive agent is kept off via `disabledAt`, without sending " +
+				"`active: false` on behaviors. Create with `active = true` sends `disabledAt: null` " +
+				"so the agent is born enabled.",
 		},
 		"data_source_ids": stringSetWithEmptyDefault(
 			"Knowledge-source IDs managed as the complete unordered agent-level set.",
@@ -102,7 +104,9 @@ func aiAgentAttributes() map[string]schema.Attribute {
 
 func behaviorListAttribute() schema.ListNestedAttribute {
 	return schema.ListNestedAttribute{
-		Required: true, Description: "Ordered AI-agent behaviors, managed as a complete list.",
+		Required: true, Description: "Ordered AI-agent behaviors, managed as a complete list. " +
+			"The API stores and returns behaviors in creation order; Read reorders that list " +
+			"to match this configuration by name and event so inserting or reordering converges.",
 		Validators: []validator.List{listvalidator.SizeAtLeast(1)},
 		NestedObject: schema.NestedAttributeObject{Attributes: map[string]schema.Attribute{
 			"id":   computedStableString("The API identifier of the behavior."),
@@ -168,7 +172,10 @@ func fieldListAttribute() schema.ListNestedAttribute {
 					"see the Pipefy API reference (https://developers.pipefy.com/reference).",
 			),
 			"value": schema.StringAttribute{
-				Optional: true, Description: "Optional fixed value or source-field reference.",
+				Optional: true, Description: "Optional fixed value or source-field reference. " +
+					"Omit the attribute rather than setting an empty string; Pipefy returns a blank " +
+					"that Read maps to null, so `value = \"\"` cannot converge.",
+				Validators: []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
 		}},
 	}

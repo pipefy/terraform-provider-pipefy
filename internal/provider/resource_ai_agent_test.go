@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
@@ -45,13 +46,16 @@ type aiAgentMock struct {
 	failDelete           bool
 	deleteCalls          int
 	forceDisableOnUpdate bool
+	forceDisableOnCreate bool
+	storedBehaviorActive []bool
+	behaviorOrder        []string
 }
 
 // nextDisabledAt hands out a distinct timestamp per call so a test can tell a
 // preserved disabledAt from one the server rewrote.
 func (mock *aiAgentMock) nextDisabledAt() string {
 	mock.disabledAtSeq++
-	return fmt.Sprintf("2026-01-%02dT00:00:00Z", mock.disabledAtSeq)
+	return time.Date(2026, 1, 1, 0, 0, mock.disabledAtSeq, 0, time.UTC).Format(time.RFC3339)
 }
 
 // disable stamps "now" when the caller passed no timestamp, as the API does.
@@ -81,6 +85,10 @@ func anyActiveBehavior(agent map[string]any) bool {
 // applyCreateStatus matches createAiAgent: omitted disabledAt disables; an
 // explicit timestamp is kept; an explicit null creates the agent enabled.
 func (mock *aiAgentMock) applyCreateStatus(agent map[string]any) {
+	if mock.forceDisableOnCreate {
+		mock.disable(inputDisabledAt(agent))
+		return
+	}
 	if _, present := agent["disabledAt"]; !present {
 		mock.disable("")
 		return
@@ -168,7 +176,8 @@ func (mock *aiAgentMock) create(variables map[string]any) string {
 	mock.exists = true
 	mock.name, _ = agent["name"].(string)
 	mock.instruction, _ = agent["instruction"].(string)
-	mock.behaviors, _ = agent["behaviors"].([]any)
+	behaviors, _ := agent["behaviors"].([]any)
+	mock.persistBehaviors(behaviors)
 	mock.dataSourceIDs, _ = agent["dataSourceIds"].([]any)
 	mock.referenceHistory = append(mock.referenceHistory, actionReferences(mock.behaviors))
 	mock.applyCreateStatus(agent)
@@ -182,7 +191,8 @@ func (mock *aiAgentMock) update(variables map[string]any) string {
 	agent := aiAgentInput(variables)
 	mock.name, _ = agent["name"].(string)
 	mock.instruction, _ = agent["instruction"].(string)
-	mock.behaviors, _ = agent["behaviors"].([]any)
+	behaviors, _ := agent["behaviors"].([]any)
+	mock.persistBehaviors(behaviors)
 	mock.dataSourceIDs, _ = agent["dataSourceIds"].([]any)
 	mock.referenceHistory = append(mock.referenceHistory, actionReferences(mock.behaviors))
 	mock.applyUpdateStatus(agent)
@@ -240,7 +250,7 @@ func (mock *aiAgentMock) agentPayload() map[string]any {
 		"uuid": "agent-uuid", "repoUuid": "pipe-uuid", "name": mock.name,
 		"instruction": mock.instruction, "disabledAt": disabledAt,
 		"dataSourceIds": reversedAnySlice(mock.dataSourceIDs),
-		"behaviors":     responseBehaviors(mock.behaviors),
+		"behaviors":     mock.responseBehaviors(),
 	}
 }
 
@@ -252,17 +262,83 @@ func reversedAnySlice(values []any) []any {
 	return result
 }
 
-func responseBehaviors(behaviors []any) []any {
-	result := make([]any, len(behaviors))
-	for index, raw := range behaviors {
+func behaviorIdentity(behavior map[string]any) string {
+	name, _ := behavior["name"].(string)
+	eventID, _ := behavior["eventId"].(string)
+	return name + "\x1e" + eventID
+}
+
+func (mock *aiAgentMock) persistBehaviors(behaviors []any) {
+	byID := make(map[string]map[string]any, len(behaviors))
+	requested := make([]string, 0, len(behaviors))
+	for _, raw := range behaviors {
+		behavior, _ := raw.(map[string]any)
+		id := behaviorIdentity(behavior)
+		byID[id] = behavior
+		requested = append(requested, id)
+	}
+	order := make([]string, 0, len(behaviors))
+	seen := make(map[string]bool, len(behaviors))
+	for _, id := range mock.behaviorOrder {
+		if _, ok := byID[id]; !ok || seen[id] {
+			continue
+		}
+		order = append(order, id)
+		seen[id] = true
+	}
+	for _, id := range requested {
+		if seen[id] {
+			continue
+		}
+		order = append(order, id)
+		seen[id] = true
+	}
+	stored := make([]any, len(order))
+	active := make([]bool, len(order))
+	for index, id := range order {
+		behavior := byID[id]
+		stored[index] = behavior
+		if flag, ok := behavior["active"].(bool); ok {
+			active[index] = flag
+			continue
+		}
+		active[index] = mock.previousBehaviorActive(behavior)
+	}
+	mock.behaviorOrder = order
+	mock.behaviors = stored
+	mock.storedBehaviorActive = active
+}
+
+func (mock *aiAgentMock) previousBehaviorActive(behavior map[string]any) bool {
+	name, _ := behavior["name"].(string)
+	eventID, _ := behavior["eventId"].(string)
+	for index, raw := range mock.behaviors {
+		previous, _ := raw.(map[string]any)
+		if previous["name"] != name || previous["eventId"] != eventID {
+			continue
+		}
+		if index < len(mock.storedBehaviorActive) {
+			return mock.storedBehaviorActive[index]
+		}
+	}
+	return true
+}
+
+func (mock *aiAgentMock) responseBehaviors() []any {
+	result := make([]any, len(mock.behaviors))
+	for index, raw := range mock.behaviors {
 		behavior, _ := raw.(map[string]any)
 		params := aiBehaviorParams(behavior)
 		actions, _ := params["actionsAttributes"].([]any)
 		responseParams := cloneMap(params)
 		responseParams["actionsAttributes"] = responseActions(actions)
+		active := index < len(mock.storedBehaviorActive) && mock.storedBehaviorActive[index]
+		if !mock.active {
+			active = false
+		}
 		result[index] = map[string]any{
 			"id": "behavior-" + string(rune('1'+index)), "name": behavior["name"],
-			"event_id": behavior["eventId"], "event_params": behavior["eventParams"],
+			"active": active, "event_id": behavior["eventId"], "event_params": behavior["eventParams"],
 			"action_params": map[string]any{"aiBehaviorParams": responseParams},
 		}
 	}
@@ -366,7 +442,7 @@ func aiAgentConfig(endpoint string, active string, secondBehavior bool) string {
 	if secondBehavior {
 		behaviors += "," + aiAgentBehaviorUpdate()
 	}
-	activeLine := ""
+	activeLine := "active = true"
 	if active != "" {
 		activeLine = "active = " + active
 	}
@@ -406,6 +482,51 @@ func aiAgentBehaviorUpdate() string {
 			pipe_id = "42"
 			fields = [{ field_id = "title", input_mode = "fill_with_ai" }]
 		}]
+	}`
+}
+
+func aiAgentBehaviorMoved() string {
+	return `{
+		name = "On move"
+		event_id = "card_moved"
+		instruction = "Note the move"
+		actions = [{
+			name = "Move along"
+			action_type = "move_card"
+			destination_phase_id = "phase-2"
+		}]
+	}`
+}
+
+func aiAgentConfigWithEmptyFieldValue(endpoint string) string {
+	return aiAgentProvider(endpoint) + `
+	resource "pipefy_ai_agent" "test" {
+		pipe_id = "42"
+		name = "Triage"
+		instruction = "Classify cards"
+		active = true
+		behaviors = [{
+			name = "On field update"
+			event_id = "field_updated"
+			instruction = "Rewrite title"
+			actions = [{
+				name = "Update"
+				action_type = "update_card"
+				pipe_id = "42"
+				fields = [{ field_id = "title", input_mode = "fixed_value", value = "" }]
+			}]
+		}]
+	}`
+}
+
+func aiAgentConfigWithBehaviors(endpoint string, behaviors ...string) string {
+	return aiAgentProvider(endpoint) + `
+	resource "pipefy_ai_agent" "test" {
+		pipe_id = "42"
+		name = "Triage"
+		instruction = "Classify cards"
+		active = true
+		behaviors = [` + strings.Join(behaviors, ",") + `]
 	}`
 }
 
@@ -459,7 +580,7 @@ func aiAgentStateChecks() []statecheck.StateCheck {
 
 func assertAiAgentCRUD(t *testing.T, mock *aiAgentMock) {
 	t.Helper()
-	wantPrefix := []string{"GetPipeUuid", "Create", "Read", "Status", "Read"}
+	wantPrefix := []string{"GetPipeUuid", "Create", "Read"}
 	if len(mock.operations) < len(wantPrefix) {
 		t.Fatalf("operations = %v, want prefix %v", mock.operations, wantPrefix)
 	}
@@ -527,8 +648,8 @@ func TestUnit_AiAgentResource_ActiveSurvivesRepeatedUpdates(t *testing.T) {
 		})
 	}
 	resource.UnitTest(t, aiAgentTestCase(steps))
-	if countOperations(mock.operations, "Status") != 1 {
-		t.Fatalf("status mutations = %v, want one create-time Status", mock.operations)
+	if countOperations(mock.operations, "Status") != 0 {
+		t.Fatalf("status mutations = %v, want none after create with disabledAt null", mock.operations)
 	}
 }
 
@@ -555,6 +676,10 @@ func TestUnit_AiAgentResource_InactiveUpdatePreservesDisabledAt(t *testing.T) {
 			Check: func(*terraform.State) error {
 				if mock.disabledAt != created {
 					return fmt.Errorf("update rewrote disabledAt: %q became %q", created, mock.disabledAt)
+				}
+				setTrue, setFalse, _ := countBehaviorActiveFlags(mock.behaviors)
+				if setTrue != 0 || setFalse != 0 {
+					return fmt.Errorf("inactive update sent behavior active true=%d false=%d", setTrue, setFalse)
 				}
 				return nil
 			},
@@ -587,61 +712,89 @@ func TestUnit_AiAgentResource_InactiveToActive(t *testing.T) {
 			},
 		},
 	}))
-	if countOperations(mock.operations, "Status") != 0 {
-		t.Fatalf("status mutation called on inactive→active: %v", mock.operations)
+	if countOperations(mock.operations, "Status") != 1 {
+		t.Fatalf("status mutations = %v, want one activate Status", mock.operations)
+	}
+	setTrue, setFalse, _ := countBehaviorActiveFlags(mock.behaviors)
+	if setFalse != 0 {
+		t.Fatalf("activate update sent behavior active=false (true=%d false=%d)", setTrue, setFalse)
 	}
 }
 
-func TestUnit_AiAgentResource_OmittedActiveAfterPriorTrueKeepsAgentActive(t *testing.T) {
+func TestUnit_AiAgentResource_UpdateSendsActiveOnOneBehavior(t *testing.T) {
 	mock := &aiAgentMock{}
 	server := newAiAgentServer(mock)
 	defer server.Close()
+	first := aiAgentConfig(server.URL, "true", true)
+	updated := strings.ReplaceAll(first, `instruction = "Classify cards"`, `instruction = "Classify cards v2"`)
 	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{
+		{Config: first, ConfigStateChecks: aiAgentActiveCheck(true)},
 		{
-			Config:            aiAgentConfigWithInstruction(server.URL, "true", "Classify cards"),
-			ConfigStateChecks: aiAgentActiveCheck(true),
-		},
-		{
-			Config:            aiAgentConfigWithInstruction(server.URL, "", "Classify cards v2"),
+			Config:            updated,
 			ConfigStateChecks: aiAgentActiveCheck(true),
 			Check: func(*terraform.State) error {
+				setTrue, setFalse, omitted := countBehaviorActiveFlags(mock.behaviors)
+				if setTrue != 1 || setFalse != 0 || omitted != 1 {
+					return fmt.Errorf(
+						"behavior active flags true=%d false=%d omitted=%d, want 1, 0, 1",
+						setTrue, setFalse, omitted,
+					)
+				}
 				if !mock.active {
-					return fmt.Errorf("omitted active left agent disabled after update (disabledAt %q)", mock.disabledAt)
+					return fmt.Errorf("agent left disabled after apply (disabledAt %q)", mock.disabledAt)
 				}
 				return nil
 			},
 		},
 	}))
-	if countOperations(mock.operations, "Update") == 0 || countOperations(mock.operations, "Status") != 1 {
-		t.Fatalf("expected one create-time Status and an Update, got %v", mock.operations)
+	if countOperations(mock.operations, "Status") != 0 {
+		t.Fatalf("status mutations = %v, want none after create with disabledAt null", mock.operations)
 	}
 }
 
-func TestUnit_AiAgentResource_OmittedActiveSkipsStatus(t *testing.T) {
-	mock := &aiAgentMock{}
-	server := newAiAgentServer(mock)
-	defer server.Close()
-	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{{
-		Config: aiAgentConfig(server.URL, "", false),
-	}}))
-	for _, operation := range mock.operations {
-		if operation == "Status" {
-			t.Fatalf("status mutation called with omitted active: %v", mock.operations)
+func countBehaviorActiveFlags(behaviors []any) (setTrue, setFalse, omitted int) {
+	for _, raw := range behaviors {
+		behavior, _ := raw.(map[string]any)
+		value, present := behavior["active"]
+		if !present {
+			omitted++
+			continue
 		}
+		if active, _ := value.(bool); active {
+			setTrue++
+			continue
+		}
+		setFalse++
 	}
+	return
 }
 
 func TestUnit_AiAgentResource_RemoteDeletion(t *testing.T) {
 	mock := &aiAgentMock{}
 	server := newAiAgentServer(mock)
 	defer server.Close()
-	config := aiAgentConfig(server.URL, "", false)
+	config := aiAgentConfig(server.URL, "true", false)
 	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{
 		{Config: config},
 		{
 			PreConfig: func() { mock.exists = false },
 			Config:    config, PlanOnly: true, ExpectNonEmptyPlan: true,
 		},
+	}))
+}
+
+func TestUnit_AiAgentResource_InsertedBehaviorOrderConverges(t *testing.T) {
+	mock := &aiAgentMock{}
+	server := newAiAgentServer(mock)
+	defer server.Close()
+	first := aiAgentConfigWithBehaviors(server.URL, aiAgentBehaviorMove(), aiAgentBehaviorUpdate())
+	inserted := aiAgentConfigWithBehaviors(
+		server.URL, aiAgentBehaviorMove(), aiAgentBehaviorMoved(), aiAgentBehaviorUpdate(),
+	)
+	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{
+		{Config: first},
+		{Config: inserted},
+		{Config: inserted, PlanOnly: true, ExpectNonEmptyPlan: false},
 	}))
 }
 
@@ -694,6 +847,7 @@ func aiAgentValidationConfig(behaviors string) string {
 		pipe_id = "42"
 		name = "Agent"
 		instruction = "Instruction"
+		active = true
 		behaviors = ` + behaviors + `
 	}`
 }
