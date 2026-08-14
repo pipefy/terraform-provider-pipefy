@@ -15,7 +15,7 @@ import (
 func TestFieldConditionsGet(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		respondJSON(w, `{"data":{"fieldCondition":{
-			"id":"fc1","name":"Hide unless urgent","phase":{"id":"900"},
+			"id":"fc1","name":"Hide unless urgent","phase":{"id":"900","repo_id":123},
 			"condition":{"expressions":[{"structure_id":"0","field_address":"1001","operation":"equals","value":"urgent"}],
 			             "expressions_structure":[["0"]]},
 			"actions":[{"actionId":"show","phaseField":{"internal_id":"1002"},"whenEvaluator":true},
@@ -30,7 +30,7 @@ func TestFieldConditionsGet(t *testing.T) {
 	if fc.ID != "fc1" || fc.Name != "Hide unless urgent" {
 		t.Errorf("condition = %+v", fc)
 	}
-	if fc.Phase == nil || fc.Phase.ID != "900" {
+	if fc.Phase == nil || fc.Phase.ID != "900" || fc.Phase.PipeID() != "123" {
 		t.Errorf("Phase = %+v", fc.Phase)
 	}
 	if len(fc.Actions) != 2 {
@@ -62,15 +62,10 @@ func TestFieldConditionsGetMissingIsNotFound(t *testing.T) {
 // condition the API may well have created.
 func TestFieldConditionsCreateNilPayloadIsNoFieldCondition(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		q := capture(t, r).Query
-		if strings.Contains(q, "GetPhaseRepoId_tf") {
-			respondJSON(w, `{"data":{"phase":{"repo_id":302825965}}}`)
-			return
-		}
 		respondJSON(w, `{"data":{"createFieldCondition":{"fieldCondition":null}}}`)
 	})
 
-	_, err := c.FieldConditions.Create(t.Context(), "900", map[string]any{"name": "X"})
+	_, err := c.FieldConditions.Create(t.Context(), "123", map[string]any{"name": "X"})
 	if !errors.Is(err, ErrNoFieldCondition) {
 		t.Fatalf("err = %v, want ErrNoFieldCondition", err)
 	}
@@ -81,15 +76,10 @@ func TestFieldConditionsCreateNilPayloadIsNoFieldCondition(t *testing.T) {
 
 func TestFieldConditionsUpdateNilPayloadIsNoFieldCondition(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		q := capture(t, r).Query
-		if strings.Contains(q, "GetPhaseRepoId_tf") {
-			respondJSON(w, `{"data":{"phase":{"repo_id":302825965}}}`)
-			return
-		}
 		respondJSON(w, `{"data":{"updateFieldCondition":{"fieldCondition":null}}}`)
 	})
 
-	_, err := c.FieldConditions.Update(t.Context(), "900", map[string]any{"id": "fc1"})
+	_, err := c.FieldConditions.Update(t.Context(), "123", map[string]any{"id": "fc1"})
 	if !errors.Is(err, ErrNoFieldCondition) {
 		t.Fatalf("err = %v, want ErrNoFieldCondition", err)
 	}
@@ -98,17 +88,23 @@ func TestFieldConditionsUpdateNilPayloadIsNoFieldCondition(t *testing.T) {
 	}
 }
 
-// fieldConditionPeak runs 8 concurrent calls against a handler that answers the
-// repo lookup instantly and holds the mutation, then reports the peak overlap.
+func TestFieldConditionsCreateEmptyPipeID(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("Create with an empty pipe_id must not call the API")
+	})
+	_, err := c.FieldConditions.Create(t.Context(), "", map[string]any{"name": "X"})
+	if err == nil || !strings.Contains(err.Error(), "empty pipe_id") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// fieldConditionPeak runs 8 concurrent calls against a handler that holds the
+// mutation, then reports the peak overlap.
 func fieldConditionPeak(t *testing.T, body string, call func(c *Client)) int {
 	t.Helper()
 	var mu sync.Mutex
 	inFlight, peak := 0, 0
-	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(capture(t, r).Query, "GetPhaseRepoId_tf") {
-			respondJSON(w, `{"data":{"phase":{"repo_id":302825965}}}`)
-			return
-		}
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		mu.Lock()
 		inFlight++
 		if inFlight > peak {
@@ -139,17 +135,16 @@ func fieldConditionPeak(t *testing.T, body string, call func(c *Client)) int {
 
 func TestFieldConditionsCreateSerializesPerRepo(t *testing.T) {
 	peak := fieldConditionPeak(t, `{"data":{"createFieldCondition":{"fieldCondition":{"id":"fc1"}}}}`, func(c *Client) {
-		_, _ = c.FieldConditions.Create(t.Context(), "900", map[string]any{"name": "X"})
+		_, _ = c.FieldConditions.Create(t.Context(), "123", map[string]any{"name": "X"})
 	})
 	if peak != 1 {
 		t.Errorf("peak concurrent creates = %d, want 1", peak)
 	}
 }
 
-// Unlike a phase field, a field condition's Update takes the lock too.
 func TestFieldConditionsUpdateSerializesPerRepo(t *testing.T) {
 	peak := fieldConditionPeak(t, `{"data":{"updateFieldCondition":{"fieldCondition":{"id":"fc1"}}}}`, func(c *Client) {
-		_, _ = c.FieldConditions.Update(t.Context(), "900", map[string]any{"id": "fc1"})
+		_, _ = c.FieldConditions.Update(t.Context(), "123", map[string]any{"id": "fc1"})
 	})
 	if peak != 1 {
 		t.Errorf("peak concurrent updates = %d, want 1", peak)
@@ -158,94 +153,47 @@ func TestFieldConditionsUpdateSerializesPerRepo(t *testing.T) {
 
 func TestFieldConditionsDeleteSerializesPerRepo(t *testing.T) {
 	peak := fieldConditionPeak(t, `{"data":{"deleteFieldCondition":{"success":true}}}`, func(c *Client) {
-		_ = c.FieldConditions.Delete(t.Context(), "900", "fc1")
+		_ = c.FieldConditions.Delete(t.Context(), "123", "fc1")
 	})
 	if peak != 1 {
 		t.Errorf("peak concurrent deletes = %d, want 1", peak)
 	}
 }
 
-// A condition whose phase was deleted out of band has nothing to lock, and must
-// still be removable rather than stuck in state.
-func TestFieldConditionsDeleteMissingPhaseStillDeletes(t *testing.T) {
-	for name, repoBody := range map[string]string{
-		"nil phase":    `{"data":{"phase":null}}`,
-		"zero repo id": `{"data":{"phase":{"repo_id":0}}}`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			deleted := false
-			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-				if strings.Contains(capture(t, r).Query, "GetPhaseRepoId_tf") {
-					respondJSON(w, repoBody)
-					return
-				}
-				deleted = true
-				respondJSON(w, `{"data":{"deleteFieldCondition":{"success":true}}}`)
-			})
-
-			if err := c.FieldConditions.Delete(t.Context(), "900", "fc1"); err != nil {
-				t.Fatalf("Delete: %v", err)
-			}
-			if !deleted {
-				t.Error("the delete mutation never went out")
-			}
-		})
-	}
-}
-
-// A failure of the lookup query itself is still an error, unlike an unresolvable
-// phase.
-func TestFieldConditionsDeletePhaseQueryFailureIsError(t *testing.T) {
-	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		respondJSON(w, `{"errors":[{"message":"boom"}]}`)
+func TestFieldConditionsDeleteEmptyPipeIDStillDeletes(t *testing.T) {
+	deleted := false
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		deleted = true
+		respondJSON(w, `{"data":{"deleteFieldCondition":{"success":true}}}`)
 	})
 
-	err := c.FieldConditions.Delete(t.Context(), "900", "fc1")
-	if err == nil || !strings.HasPrefix(err.Error(), "failed to fetch phase repo_id: ") {
-		t.Fatalf("err = %v", err)
+	if err := c.FieldConditions.Delete(t.Context(), "", "fc1"); err != nil {
+		t.Fatalf("Delete: %v", err)
 	}
-}
-
-// Create and Update collapse both unresolvable-phase cases into one message,
-// matching the resource they replace.
-func TestFieldConditionsCreateCollapsesPhaseMessages(t *testing.T) {
-	for name, body := range map[string]string{
-		"nil phase":    `{"data":{"phase":null}}`,
-		"zero repo id": `{"data":{"phase":{"repo_id":0}}}`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-				respondJSON(w, body)
-			})
-			_, err := c.FieldConditions.Create(t.Context(), "900", map[string]any{"name": "X"})
-			if err == nil || err.Error() != "could not resolve valid phase repo_id from phase query" {
-				t.Fatalf("err = %v", err)
-			}
-		})
+	if !deleted {
+		t.Error("the delete mutation never went out")
 	}
 }
 
 // The two mutations disagree on the phase key: create takes phaseId, update takes
-// phase_id. The caller spells each, so this only pins that the SDK passes the map
-// through untouched.
+// phase_id. The resource omits phase_id on update so the listing does not move,
+// and this pins that a resource-shaped map is passed through without one.
 func TestFieldConditionsPassesInputThrough(t *testing.T) {
 	var mutation capturedRequest
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		got := capture(t, r)
-		if strings.Contains(got.Query, "GetPhaseRepoId_tf") {
-			respondJSON(w, `{"data":{"phase":{"repo_id":302825965}}}`)
-			return
-		}
-		mutation = got
+		mutation = capture(t, r)
 		respondJSON(w, `{"data":{"updateFieldCondition":{"fieldCondition":{"id":"fc1"}}}}`)
 	})
 
-	input := map[string]any{"id": "fc1", "phase_id": "900", "name": "X"}
-	if _, err := c.FieldConditions.Update(t.Context(), "900", input); err != nil {
+	input := map[string]any{"id": "fc1", "name": "X"}
+	if _, err := c.FieldConditions.Update(t.Context(), "123", input); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	sent, ok := mutation.Variables["input"].(map[string]any)
-	if !ok || sent["phase_id"] != "900" || sent["id"] != "fc1" {
+	if !ok || sent["id"] != "fc1" || sent["name"] != "X" {
 		t.Errorf("variables = %+v", mutation.Variables)
+	}
+	if _, ok := sent["phase_id"]; ok {
+		t.Errorf("Update sent phase_id: %+v", sent)
 	}
 }

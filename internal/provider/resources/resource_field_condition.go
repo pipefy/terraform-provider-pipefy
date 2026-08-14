@@ -30,6 +30,7 @@ type FieldConditionResource struct{ api *pipefy.Client }
 
 type FieldConditionModel struct {
 	Id        types.String                `tfsdk:"id"`
+	PipeId    types.String                `tfsdk:"pipe_id"`
 	PhaseId   types.String                `tfsdk:"phase_id"`
 	Name      types.String                `tfsdk:"name"`
 	Condition *conditionschema.Condition  `tfsdk:"condition"`
@@ -48,17 +49,22 @@ func (r *FieldConditionResource) Metadata(ctx context.Context, req resource.Meta
 
 func (r *FieldConditionResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Conditional show/hide (and enable/disable) logic for a phase form. A field condition evaluates a set of comparisons and, when they hold, runs actions against phase fields.",
+		MarkdownDescription: "Conditional show/hide (and enable/disable) logic for fields in a pipe. A field condition evaluates a set of comparisons and, when they hold, runs actions against fields. Pipefy currently lists every condition under the pipe's start form phase; evaluation is pipe-scoped, so the condition still governs the fields it names. See the API reference (https://developers.pipefy.com/reference).",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:      true,
 				Description:   "The ID of the field condition",
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
-			"phase_id": schema.StringAttribute{
+			"pipe_id": schema.StringAttribute{
 				Required:      true,
-				Description:   "The ID of the phase the condition belongs to. Changing it forces a new field condition.",
+				Description:   "The ID of the pipe that owns the field condition. Changing it forces a new field condition.",
 				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
+			},
+			"phase_id": schema.StringAttribute{
+				Computed:      true,
+				Description:   "The ID of the phase the API listed the condition under. Pipefy currently attaches every field condition to the pipe's start form phase. Evaluation is pipe-scoped: the condition still governs the fields it names. See the API reference (https://developers.pipefy.com/reference).",
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"name": schema.StringAttribute{Required: true, Description: "Name that describes what this condition does"},
 			"condition": schema.SingleNestedAttribute{
@@ -68,13 +74,13 @@ func (r *FieldConditionResource) Schema(ctx context.Context, req resource.Schema
 			},
 			"actions": schema.ListNestedAttribute{
 				Required:    true,
-				Description: "What happens to each phase field when the condition holds. One entry per target field.",
+				Description: "What happens to each field when the condition holds. One entry per target field.",
 				Validators:  []validator.List{validators.FieldConditionActionsUniqueField()},
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
 						"field": schema.StringAttribute{
 							Required:    true,
-							Description: "The internal_id of the phase field affected by this action.",
+							Description: "The internal_id of the field affected by this action.",
 						},
 						"when_true": schema.StringAttribute{
 							Optional:    true,
@@ -111,14 +117,21 @@ func (r *FieldConditionResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
+	pipeID := data.PipeId.ValueString()
+	startForm, err := r.startFormPhaseID(ctx, pipeID)
+	if err != nil {
+		resp.Diagnostics.AddError("create field condition failed", err.Error())
+		return
+	}
+
 	input := map[string]any{
 		"name":    data.Name.ValueString(),
-		"phaseId": data.PhaseId.ValueString(),
+		"phaseId": startForm,
 	}
 	input["condition"] = data.Condition.Input()
 	input["actions"] = data.actionsInput()
 
-	fc, err := r.api.FieldConditions.Create(ctx, data.PhaseId.ValueString(), input)
+	fc, err := r.api.FieldConditions.Create(ctx, pipeID, input)
 	if errors.Is(err, pipefy.ErrNoFieldCondition) {
 		resp.Diagnostics.AddError("create field condition failed", "the API returned no field condition")
 		return
@@ -127,7 +140,7 @@ func (r *FieldConditionResource) Create(ctx context.Context, req resource.Create
 		resp.Diagnostics.AddError("create field condition failed", err.Error())
 		return
 	}
-	applyFieldConditionToModel(&data, &fc, &resp.Diagnostics)
+	applyFieldConditionToModel(&data, &fc, true, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -153,7 +166,7 @@ func (r *FieldConditionResource) Read(ctx context.Context, req resource.ReadRequ
 		resp.Diagnostics.AddError("read field condition failed", err.Error())
 		return
 	}
-	applyFieldConditionToModel(&data, &fc, &resp.Diagnostics)
+	applyFieldConditionToModel(&data, &fc, false, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -168,14 +181,13 @@ func (r *FieldConditionResource) Update(ctx context.Context, req resource.Update
 	}
 
 	input := map[string]any{
-		"id":       data.Id.ValueString(),
-		"name":     data.Name.ValueString(),
-		"phase_id": data.PhaseId.ValueString(),
+		"id":   data.Id.ValueString(),
+		"name": data.Name.ValueString(),
 	}
 	input["condition"] = data.Condition.Input()
 	input["actions"] = data.actionsInput()
 
-	fc, err := r.api.FieldConditions.Update(ctx, data.PhaseId.ValueString(), input)
+	fc, err := r.api.FieldConditions.Update(ctx, data.PipeId.ValueString(), input)
 	if errors.Is(err, pipefy.ErrNoFieldCondition) {
 		resp.Diagnostics.AddError("update field condition failed", "the API returned no field condition")
 		return
@@ -184,7 +196,7 @@ func (r *FieldConditionResource) Update(ctx context.Context, req resource.Update
 		resp.Diagnostics.AddError("update field condition failed", err.Error())
 		return
 	}
-	applyFieldConditionToModel(&data, &fc, &resp.Diagnostics)
+	applyFieldConditionToModel(&data, &fc, true, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -198,16 +210,28 @@ func (r *FieldConditionResource) Delete(ctx context.Context, req resource.Delete
 		return
 	}
 
-	if err := r.api.FieldConditions.Delete(ctx, data.PhaseId.ValueString(), data.Id.ValueString()); err != nil {
+	if err := r.api.FieldConditions.Delete(ctx, data.PipeId.ValueString(), data.Id.ValueString()); err != nil {
 		resp.Diagnostics.AddError("delete field condition failed", err.Error())
 		return
 	}
 }
 
 func (r *FieldConditionResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	// The field condition id is enough; Read resolves phase_id, name, condition,
-	// and actions from the API (phase_id comes from the payload's phase.id).
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+func (r *FieldConditionResource) startFormPhaseID(ctx context.Context, pipeID string) (string, error) {
+	pipe, err := r.api.Pipes.Get(ctx, pipeID)
+	if errors.Is(err, pipefy.ErrNotFound) {
+		return "", fmt.Errorf("pipe %q was not found", pipeID)
+	}
+	if err != nil {
+		return "", err
+	}
+	if pipe.StartFormPhaseID == "" {
+		return "", fmt.Errorf("pipe %q has no start form phase", pipeID)
+	}
+	return pipe.StartFormPhaseID, nil
 }
 
 func (m *FieldConditionModel) actionsInput() []map[string]any {
@@ -232,17 +256,27 @@ func (m *FieldConditionModel) actionsInput() []map[string]any {
 	return actions
 }
 
-// applyFieldConditionToModel maps a fetched field condition onto the model.
-func applyFieldConditionToModel(data *FieldConditionModel, fc *pipefy.FieldCondition, diags *diag.Diagnostics) {
-	data.Id = types.StringValue(fc.ID)
-	data.Name = types.StringValue(fc.Name)
-	// Observed against the live API: the field condition is associated with
-	// the pipe's start-form phase regardless of the phaseId passed to
-	// createFieldCondition, so fc.Phase.Id can legitimately differ from the
-	// phase_id the config requested. This assigns whatever the API reports
-	// rather than trusting the request, since that's the actual owning phase.
-	if fc.Phase != nil && fc.Phase.ID != "" {
-		data.PhaseId = types.StringValue(fc.Phase.ID)
+func applyFieldConditionToModel(data *FieldConditionModel, fc *pipefy.FieldCondition, onlyUnknown bool, diags *diag.Diagnostics) {
+	if !onlyUnknown || data.Id.IsUnknown() {
+		data.Id = types.StringValue(fc.ID)
+	}
+	if !onlyUnknown || data.Name.IsUnknown() {
+		data.Name = types.StringValue(fc.Name)
+	}
+	if !onlyUnknown || data.PhaseId.IsUnknown() {
+		if fc.Phase != nil && fc.Phase.ID != "" {
+			data.PhaseId = types.StringValue(fc.Phase.ID)
+		} else {
+			data.PhaseId = types.StringNull()
+		}
+	}
+	if !onlyUnknown || data.PipeId.IsUnknown() {
+		if pid := fc.Phase.PipeID(); pid != "" {
+			data.PipeId = types.StringValue(pid)
+		}
+	}
+	if onlyUnknown {
+		return
 	}
 
 	cond, err := conditionschema.FromPayload(fc.Condition)
