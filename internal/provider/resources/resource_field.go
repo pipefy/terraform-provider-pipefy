@@ -287,12 +287,9 @@ func fieldWrites(ctx context.Context, data FieldModel, diags *diag.Diagnostics) 
 	return writes
 }
 
-// fillFieldFromAPI is the Create and Update mapping: take from the response
-// only what the plan could not know. label and type are Required, so they stay
-// as planned. options and index always take the API value; preserving the plan
-// would silence a server-side change. custom_validation always goes through
-// mergeEmptyish, including when the plan already knew the value, so a rule the
-// API drops fails apply instead of looping as a perpetual plan.
+// fillFieldFromAPI takes unknowns from the response. options and index always
+// take the API value. custom_validation always goes through mergeEmptyish so a
+// dropped rule fails apply.
 func fillFieldFromAPI(ctx context.Context, data *FieldModel, f pipefy.Field, diags *diag.Diagnostics) {
 	data.Id = fillUnknownString(data.Id, types.StringValue(f.ID))
 	data.InternalId = fillUnknownString(data.InternalId, types.StringValue(f.InternalID))
@@ -307,9 +304,8 @@ func fillFieldFromAPI(ctx context.Context, data *FieldModel, f pipefy.Field, dia
 	data.Options = optionsToList(ctx, f.Options, diags)
 }
 
-// applyFieldToModel is the Read mapping. It overwrites every attribute so
-// drift surfaces. phase_id is not in the payload; it is set at create/import
-// and left untouched here.
+// applyFieldToModel maps a fetched field onto the model. phase_id is not in the
+// payload; it is set at create/import and left untouched here.
 func applyFieldToModel(ctx context.Context, data *FieldModel, f pipefy.Field, diags *diag.Diagnostics) {
 	data.Id = types.StringValue(f.ID)
 	data.InternalId = types.StringValue(f.InternalID)
