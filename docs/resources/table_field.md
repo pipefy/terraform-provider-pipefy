@@ -49,7 +49,7 @@ resource "pipefy_table_field" "priority" {
 
 ### Optional
 
-- `custom_validation` (String) Custom validation rule applied to the field value. The API stores an empty rule as null, and a field last written outside GraphQL can still read back as an empty string; the provider treats empty and null as the same value for this attribute so refresh and apply stay consistent. See the API reference (https://developers.pipefy.com/reference).
+- `custom_validation` (String) Custom validation rule applied to the field value. Empty string and null are equivalent, and the API honours this attribute only on field types that support custom validation. See https://developers.pipefy.com/reference.
 - `description` (String) Helper description shown under the field
 - `help` (String) Help text shown for the field
 - `minimal_view` (Boolean) Whether the field is shown in the record's minimal (summary) view

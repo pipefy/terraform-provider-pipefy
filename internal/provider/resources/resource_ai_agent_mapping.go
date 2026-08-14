@@ -245,13 +245,6 @@ func pairByIdentity[T any](
 	return matched
 }
 
-func fillUnknownString(planned, fromAPI types.String) types.String {
-	if planned.IsUnknown() {
-		return fromAPI
-	}
-	return planned
-}
-
 func (model *AiAgentModel) applyGraphQL(agent pipefy.Agent) {
 	model.ID = types.StringValue(agent.UUID)
 	model.Name = types.StringValue(agent.Name)

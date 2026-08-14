@@ -47,6 +47,21 @@ func optionalFloat64(v types.Float64) *float64 {
 
 func hasValue(v attr.Value) bool { return !v.IsNull() && !v.IsUnknown() }
 
+// fillUnknownString takes fromAPI only when the plan could not know the value.
+func fillUnknownString(planned, fromAPI types.String) types.String {
+	if planned.IsUnknown() {
+		return fromAPI
+	}
+	return planned
+}
+
+func fillUnknownBool(planned, fromAPI types.Bool) types.Bool {
+	if planned.IsUnknown() {
+		return fromAPI
+	}
+	return planned
+}
+
 // mergeEmptyish keeps the model's value when it and the API's are both empty or
 // null. The API stores a written "" for custom_validation as NULL, yet a field
 // last written outside the GraphQL API still reads back as "", and the two mean
