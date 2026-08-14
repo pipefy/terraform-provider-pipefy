@@ -104,8 +104,7 @@ func fieldConditionPeak(t *testing.T, body string, call func(c *Client)) int {
 	t.Helper()
 	var mu sync.Mutex
 	inFlight, peak := 0, 0
-	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		_ = r
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		mu.Lock()
 		inFlight++
 		if inFlight > peak {
@@ -163,8 +162,7 @@ func TestFieldConditionsDeleteSerializesPerRepo(t *testing.T) {
 
 func TestFieldConditionsDeleteEmptyPipeIDStillDeletes(t *testing.T) {
 	deleted := false
-	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		_ = r
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		deleted = true
 		respondJSON(w, `{"data":{"deleteFieldCondition":{"success":true}}}`)
 	})
@@ -178,8 +176,8 @@ func TestFieldConditionsDeleteEmptyPipeIDStillDeletes(t *testing.T) {
 }
 
 // The two mutations disagree on the phase key: create takes phaseId, update takes
-// phase_id. The caller spells each, so this only pins that the SDK passes the map
-// through untouched.
+// phase_id. The resource omits phase_id on update so the listing does not move,
+// and this pins that a resource-shaped map is passed through without one.
 func TestFieldConditionsPassesInputThrough(t *testing.T) {
 	var mutation capturedRequest
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -194,5 +192,8 @@ func TestFieldConditionsPassesInputThrough(t *testing.T) {
 	sent, ok := mutation.Variables["input"].(map[string]any)
 	if !ok || sent["id"] != "fc1" || sent["name"] != "X" {
 		t.Errorf("variables = %+v", mutation.Variables)
+	}
+	if _, ok := sent["phase_id"]; ok {
+		t.Errorf("Update sent phase_id: %+v", sent)
 	}
 }

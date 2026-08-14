@@ -51,6 +51,7 @@ func writeFieldConditionPipe(w http.ResponseWriter) {
 
 func TestUnit_FieldConditionResource_CRUD(t *testing.T) {
 	st := &fieldConditionState{}
+	var lastUpdate map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer testtoken" {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -75,6 +76,7 @@ func TestUnit_FieldConditionResource_CRUD(t *testing.T) {
 			_, _ = io.WriteString(w, `{"data":{"createFieldCondition":{"fieldCondition":`+fieldConditionBody(st.Name)+`}}}`)
 		case strings.Contains(q, "updateFieldCondition"):
 			if v, ok := gr.Variables["input"].(map[string]any); ok {
+				lastUpdate = v
 				if n, ok := v["name"].(string); ok {
 					st.Name = n
 				}
@@ -196,6 +198,12 @@ func TestUnit_FieldConditionResource_CRUD(t *testing.T) {
 
 	if st.DeletedCt == 0 {
 		t.Fatalf("expected deleteFieldCondition mutation to be called")
+	}
+	if lastUpdate == nil {
+		t.Fatal("updateFieldCondition was never called")
+	}
+	if _, ok := lastUpdate["phase_id"]; ok {
+		t.Errorf("Update sent phase_id: %+v", lastUpdate)
 	}
 }
 

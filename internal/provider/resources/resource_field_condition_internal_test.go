@@ -137,6 +137,37 @@ func TestApplyFieldConditionToModelCondition(t *testing.T) {
 			t.Fatalf("expected the planned name to survive the write, got %q", data.Name.ValueString())
 		}
 	})
+
+	t.Run("onlyUnknown settles an omitted phase to null", func(t *testing.T) {
+		for name, phase := range map[string]*pipefy.FieldConditionPhase{
+			"nil phase": nil,
+			"empty id":  {ID: "", RepoID: 123},
+		} {
+			t.Run(name, func(t *testing.T) {
+				fc := base()
+				fc.Phase = phase
+				data := FieldConditionModel{
+					Id:      types.StringUnknown(),
+					PipeId:  types.StringValue("123"),
+					PhaseId: types.StringUnknown(),
+					Name:    types.StringValue("rule"),
+					Actions: []fieldConditionActionModel{{
+						Field:     types.StringValue("1002"),
+						WhenTrue:  types.StringValue("show"),
+						WhenFalse: types.StringNull(),
+					}},
+				}
+				var diags diag.Diagnostics
+				applyFieldConditionToModel(&data, fc, true, &diags)
+				if diags.HasError() {
+					t.Fatalf("unexpected diagnostics: %v", diags)
+				}
+				if !data.PhaseId.IsNull() {
+					t.Fatalf("expected null phase_id when the API omitted the phase, got %#v", data.PhaseId)
+				}
+			})
+		}
+	})
 }
 
 func boolValue(b bool) *bool { return &b }
