@@ -180,8 +180,6 @@ func TestUnit_AiAgentResource_OmittedFieldValueNoPerpetualDiff(t *testing.T) {
 	}))
 }
 
-// A status mutation reporting success without changing anything must surface as
-// an error, not as state claiming the agent is active.
 func TestUnit_AiAgentResource_UpdateReportsUnenforcedStatus(t *testing.T) {
 	mock := &aiAgentMock{}
 	server := newAiAgentServer(mock)
@@ -189,7 +187,7 @@ func TestUnit_AiAgentResource_UpdateReportsUnenforcedStatus(t *testing.T) {
 	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{
 		{Config: aiAgentConfig(server.URL, "true", false)},
 		{
-			PreConfig:   func() { mock.failStatusSilently = true },
+			PreConfig:   func() { mock.failStatusSilently = true; mock.forceDisableOnUpdate = true },
 			Config:      aiAgentConfig(server.URL, "true", true),
 			ExpectError: regexp.MustCompile(`(?s)reports active=false.*configured\s+active=true`),
 			ConfigStateChecks: []statecheck.StateCheck{
@@ -208,7 +206,7 @@ func TestUnit_AiAgentResource_UpdateStatusFailureKeepsConfigState(t *testing.T) 
 	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{
 		{Config: aiAgentConfig(server.URL, "false", false)},
 		{
-			PreConfig:   func() { mock.failStatus = true },
+			PreConfig:   func() { mock.failStatus = true; mock.forceDisableOnUpdate = true },
 			Config:      aiAgentConfig(server.URL, "true", true),
 			ExpectError: regexp.MustCompile("update AI agent status failed"),
 			ConfigStateChecks: []statecheck.StateCheck{

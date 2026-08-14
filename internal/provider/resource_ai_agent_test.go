@@ -23,27 +23,28 @@ import (
 )
 
 type aiAgentMock struct {
-	mu                 sync.Mutex
-	exists             bool
-	active             bool
-	disabledAt         string
-	disabledAtSeq      int
-	name               string
-	instruction        string
-	behaviors          []any
-	dataSourceIDs      []any
-	operations         []string
-	referenceHistory   [][]string
-	pipeUUIDByID       map[string]string
-	failCreate         bool
-	failUpdate         bool
-	failStatus         bool
-	failStatusSilently bool
-	failRead           bool
-	readNull           bool
-	nullAfterUpdate    bool
-	failDelete         bool
-	deleteCalls        int
+	mu                   sync.Mutex
+	exists               bool
+	active               bool
+	disabledAt           string
+	disabledAtSeq        int
+	name                 string
+	instruction          string
+	behaviors            []any
+	dataSourceIDs        []any
+	operations           []string
+	referenceHistory     [][]string
+	pipeUUIDByID         map[string]string
+	failCreate           bool
+	failUpdate           bool
+	failStatus           bool
+	failStatusSilently   bool
+	failRead             bool
+	readNull             bool
+	nullAfterUpdate      bool
+	failDelete           bool
+	deleteCalls          int
+	forceDisableOnUpdate bool
 }
 
 // nextDisabledAt hands out a distinct timestamp per call so a test can tell a
@@ -60,6 +61,55 @@ func (mock *aiAgentMock) disable(at string) {
 		at = mock.nextDisabledAt()
 	}
 	mock.disabledAt = at
+}
+
+func anyActiveBehavior(agent map[string]any) bool {
+	behaviors, _ := agent["behaviors"].([]any)
+	for _, raw := range behaviors {
+		behavior, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		active, _ := behavior["active"].(bool)
+		if active {
+			return true
+		}
+	}
+	return false
+}
+
+// applyCreateStatus matches createAiAgent: omitted disabledAt disables; an
+// explicit timestamp is kept; an explicit null creates the agent enabled.
+func (mock *aiAgentMock) applyCreateStatus(agent map[string]any) {
+	if _, present := agent["disabledAt"]; !present {
+		mock.disable("")
+		return
+	}
+	if at := inputDisabledAt(agent); at != "" {
+		mock.disable(at)
+		return
+	}
+	mock.active = true
+	mock.disabledAt = ""
+}
+
+// applyUpdateStatus matches updateAiAgent: a timestamp wins; otherwise any
+// behavior with active true keeps the agent on, and the rest disable it.
+func (mock *aiAgentMock) applyUpdateStatus(agent map[string]any) {
+	if mock.forceDisableOnUpdate {
+		mock.disable(inputDisabledAt(agent))
+		return
+	}
+	if at := inputDisabledAt(agent); at != "" {
+		mock.disable(at)
+		return
+	}
+	if anyActiveBehavior(agent) {
+		mock.active = true
+		mock.disabledAt = ""
+		return
+	}
+	mock.disable("")
 }
 
 func inputDisabledAt(agent map[string]any) string {
@@ -121,8 +171,7 @@ func (mock *aiAgentMock) create(variables map[string]any) string {
 	mock.behaviors, _ = agent["behaviors"].([]any)
 	mock.dataSourceIDs, _ = agent["dataSourceIds"].([]any)
 	mock.referenceHistory = append(mock.referenceHistory, actionReferences(mock.behaviors))
-	// createAiAgent returns a disabled agent, honouring an explicit disabledAt.
-	mock.disable(inputDisabledAt(agent))
+	mock.applyCreateStatus(agent)
 	return `{"data":{"createAiAgent":{"agent":{"uuid":"agent-uuid"}}}}`
 }
 
@@ -136,9 +185,7 @@ func (mock *aiAgentMock) update(variables map[string]any) string {
 	mock.behaviors, _ = agent["behaviors"].([]any)
 	mock.dataSourceIDs, _ = agent["dataSourceIds"].([]any)
 	mock.referenceHistory = append(mock.referenceHistory, actionReferences(mock.behaviors))
-	// updateAiAgent disables the agent on every call, keeping an explicit
-	// disabledAt verbatim and stamping "now" otherwise.
-	mock.disable(inputDisabledAt(agent))
+	mock.applyUpdateStatus(agent)
 	if mock.nullAfterUpdate {
 		mock.readNull = true
 	}
@@ -381,7 +428,16 @@ func TestUnit_AiAgentResource_CRUD(t *testing.T) {
 	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{
 		{Config: first, ConfigStateChecks: aiAgentStateChecks()},
 		{Config: first},
-		{Config: updated},
+		{
+			Config:            updated,
+			ConfigStateChecks: aiAgentActiveCheck(false),
+			Check: func(*terraform.State) error {
+				if mock.active {
+					return fmt.Errorf("agent left active after deactivate update")
+				}
+				return nil
+			},
+		},
 	}))
 	assertAiAgentCRUD(t, mock)
 }
@@ -403,7 +459,7 @@ func aiAgentStateChecks() []statecheck.StateCheck {
 
 func assertAiAgentCRUD(t *testing.T, mock *aiAgentMock) {
 	t.Helper()
-	wantPrefix := []string{"GetPipeUuid", "Create", "Status", "Read"}
+	wantPrefix := []string{"GetPipeUuid", "Create", "Read", "Status", "Read"}
 	if len(mock.operations) < len(wantPrefix) {
 		t.Fatalf("operations = %v, want prefix %v", mock.operations, wantPrefix)
 	}
@@ -416,6 +472,16 @@ func assertAiAgentCRUD(t *testing.T, mock *aiAgentMock) {
 		t.Fatalf("behaviors=%d deleteCalls=%d, want 2 and 1", len(mock.behaviors), mock.deleteCalls)
 	}
 	assertStableReferences(t, mock.referenceHistory)
+}
+
+func countOperations(operations []string, name string) int {
+	count := 0
+	for _, operation := range operations {
+		if operation == name {
+			count++
+		}
+	}
+	return count
 }
 
 func assertStableReferences(t *testing.T, history [][]string) {
@@ -441,8 +507,6 @@ func aiAgentActiveCheck(active bool) []statecheck.StateCheck {
 	)}
 }
 
-// Without the status reapplied after each update, the second apply fails with
-// "inconsistent result after apply: .active" and leaves the agent switched off.
 func TestUnit_AiAgentResource_ActiveSurvivesRepeatedUpdates(t *testing.T) {
 	mock := &aiAgentMock{}
 	server := newAiAgentServer(mock)
@@ -463,9 +527,11 @@ func TestUnit_AiAgentResource_ActiveSurvivesRepeatedUpdates(t *testing.T) {
 		})
 	}
 	resource.UnitTest(t, aiAgentTestCase(steps))
+	if countOperations(mock.operations, "Status") != 1 {
+		t.Fatalf("status mutations = %v, want one create-time Status", mock.operations)
+	}
 }
 
-// An agent configured inactive keeps the disabledAt it was created with.
 func TestUnit_AiAgentResource_InactiveUpdatePreservesDisabledAt(t *testing.T) {
 	mock := &aiAgentMock{}
 	server := newAiAgentServer(mock)
@@ -494,11 +560,60 @@ func TestUnit_AiAgentResource_InactiveUpdatePreservesDisabledAt(t *testing.T) {
 			},
 		},
 	}))
-	// The payload disables it, so nothing switches it on and off again.
 	for _, operation := range mock.operations {
 		if operation == "Status" {
 			t.Fatalf("status mutation called for an inactive agent: %v", mock.operations)
 		}
+	}
+}
+
+func TestUnit_AiAgentResource_InactiveToActive(t *testing.T) {
+	mock := &aiAgentMock{}
+	server := newAiAgentServer(mock)
+	defer server.Close()
+	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{
+		{
+			Config:            aiAgentConfigWithInstruction(server.URL, "false", "Classify cards"),
+			ConfigStateChecks: aiAgentActiveCheck(false),
+		},
+		{
+			Config:            aiAgentConfigWithInstruction(server.URL, "true", "Classify cards v2"),
+			ConfigStateChecks: aiAgentActiveCheck(true),
+			Check: func(*terraform.State) error {
+				if !mock.active {
+					return fmt.Errorf("agent left disabled after activate update (disabledAt %q)", mock.disabledAt)
+				}
+				return nil
+			},
+		},
+	}))
+	if countOperations(mock.operations, "Status") != 0 {
+		t.Fatalf("status mutation called on inactive→active: %v", mock.operations)
+	}
+}
+
+func TestUnit_AiAgentResource_OmittedActiveAfterPriorTrueKeepsAgentActive(t *testing.T) {
+	mock := &aiAgentMock{}
+	server := newAiAgentServer(mock)
+	defer server.Close()
+	resource.UnitTest(t, aiAgentTestCase([]resource.TestStep{
+		{
+			Config:            aiAgentConfigWithInstruction(server.URL, "true", "Classify cards"),
+			ConfigStateChecks: aiAgentActiveCheck(true),
+		},
+		{
+			Config:            aiAgentConfigWithInstruction(server.URL, "", "Classify cards v2"),
+			ConfigStateChecks: aiAgentActiveCheck(true),
+			Check: func(*terraform.State) error {
+				if !mock.active {
+					return fmt.Errorf("omitted active left agent disabled after update (disabledAt %q)", mock.disabledAt)
+				}
+				return nil
+			},
+		},
+	}))
+	if countOperations(mock.operations, "Update") == 0 || countOperations(mock.operations, "Status") != 1 {
+		t.Fatalf("expected one create-time Status and an Update, got %v", mock.operations)
 	}
 }
 
