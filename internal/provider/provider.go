@@ -7,7 +7,6 @@ import (
 	"context"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/ephemeral"
@@ -15,10 +14,13 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/pipefy/terraform-provider-pipefy/internal/pipefy"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/client"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/datasources"
 	"github.com/pipefy/terraform-provider-pipefy/internal/provider/resources"
+	"github.com/pipefy/terraform-provider-pipefy/internal/ratelimit"
+	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 )
 
@@ -117,9 +119,16 @@ func (p *PipefyProvider) Configure(ctx context.Context, req provider.ConfigureRe
 	var httpClient *http.Client
 	var apiToken string
 
+	// The transport paces requests and retries HTTP 429, and carries a 30 second
+	// per-attempt deadline. Both auth paths share one instance, so the token
+	// request is paced with everything else.
+	pacedClient := &http.Client{Transport: ratelimit.NewTransport(func(ctx context.Context, msg string, fields map[string]any) {
+		tflog.Warn(ctx, msg, fields)
+	})}
+
 	// Prefer static token when provided; otherwise use OAuth client credentials if configured
 	if token != "" {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
+		httpClient = pacedClient
 		apiToken = token
 	} else if clientID != "" && clientSecret != "" {
 		cfg := &clientcredentials.Config{
@@ -129,7 +138,7 @@ func (p *PipefyProvider) Configure(ctx context.Context, req provider.ConfigureRe
 			Scopes:       []string{},
 		}
 
-		httpClient = cfg.Client(context.Background())
+		httpClient = cfg.Client(context.WithValue(context.Background(), oauth2.HTTPClient, pacedClient))
 	} else {
 		resp.Diagnostics.AddError(
 			"Authentication configuration error",
